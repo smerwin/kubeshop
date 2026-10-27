@@ -1,0 +1,3 @@
+shots/*.png
+.claude/
+__pycache__/

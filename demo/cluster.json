@@ -1,0 +1,41 @@
+{
+ "context": "demo-yard",
+ "fetched": "2026-10-26T12:00:00",
+ "nodes": [
+  { "name": "node-a", "ready": true, "cordoned": false },
+  { "name": "node-b", "ready": true, "cordoned": false },
+  { "name": "node-c", "ready": true, "cordoned": false }
+ ],
+ "pods": [
+  { "name": "web-6b8fd-xk2p9", "namespace": "default", "node": "node-a", "app": "web", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "nginx", "image": "nginx:1.27" }], "version": "v1", "configMap": "web-config", "system": false },
+  { "name": "web-6b8fd-q7m2c", "namespace": "default", "node": "node-b", "app": "web", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "nginx", "image": "nginx:1.27" }], "version": "v1", "configMap": "web-config", "system": false },
+  { "name": "web-6b8fd-z4hr8", "namespace": "default", "node": "node-c", "app": "web", "phase": "Running", "ready": false, "restarts": 2,
+    "containers": [{ "name": "nginx", "image": "nginx:1.27" }], "version": "v1", "configMap": "web-config", "system": false },
+  { "name": "api-8de9n-c9kvk", "namespace": "default", "node": "node-a", "app": "api", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "api", "image": "yard/api:1.4" }, { "name": "log-shipper", "image": "fluent-bit:3" }], "version": "v1", "secret": "api-keys", "system": false },
+  { "name": "api-8de9n-ttq4w", "namespace": "default", "node": "node-b", "app": "api", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "api", "image": "yard/api:1.4" }, { "name": "log-shipper", "image": "fluent-bit:3" }], "version": "v1", "secret": "api-keys", "system": false },
+  { "name": "db-0", "namespace": "default", "node": "node-c", "app": "db", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "postgres", "image": "postgres:16" }], "version": "v1", "pvc": "data-db-0", "system": false },
+  { "name": "kube-proxy-7xk2m", "namespace": "kube-system", "node": "node-a", "app": "kube-proxy", "phase": "Running", "ready": true, "restarts": 0,
+    "containers": [{ "name": "kube-proxy", "image": "registry.k8s.io/kube-proxy:v1.34.1" }], "version": "v1.34.1", "system": true }
+ ],
+ "deployments": [
+  { "name": "web", "namespace": "default", "kind": "Deployment", "app": "web", "replicas": 3, "ready": 2, "version": "v1",
+    "containers": [{ "name": "nginx", "image": "nginx:1.27" }], "configMap": "web-config", "system": false },
+  { "name": "api", "namespace": "default", "kind": "Deployment", "app": "api", "replicas": 2, "ready": 2, "version": "v1",
+    "containers": [{ "name": "api", "image": "yard/api:1.4" }, { "name": "log-shipper", "image": "fluent-bit:3" }], "secret": "api-keys", "system": false },
+  { "name": "db", "namespace": "default", "kind": "StatefulSet", "app": "db", "replicas": 1, "ready": 1, "version": "v1",
+    "containers": [{ "name": "postgres", "image": "postgres:16" }], "pvc": "data-db-0", "system": false }
+ ],
+ "services": [
+  { "name": "web", "namespace": "default", "selector": { "app": "web" }, "ports": [80] },
+  { "name": "api", "namespace": "default", "selector": { "app": "api" }, "ports": [8080] },
+  { "name": "db", "namespace": "default", "selector": { "app": "db" }, "ports": [5432] }
+ ],
+ "ingresses": [
+  { "host": "shop.example.com", "service": "web", "port": 80 }
+ ]
+}

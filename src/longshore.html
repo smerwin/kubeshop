@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Longshore</title></head><body>
+<script src="core.js"></script>
+<script>
+/* ===== Longshore: a Kubernetes cluster drawn as a container terminal =====
+
+   How the real thing works (each button is one real step; things only move along their real path):
+   1. `kubectl apply` a Deployment: the API server (control tower) stores it in etcd; the Deployment controller makes a
+      ReplicaSet; the ReplicaSet controller makes Pods, which start Pending (still an image on the registry shelf).
+   2. The scheduler (the gantry crane) picks a node with room for each Pending pod and binds it; the kubelet on that
+      node pulls the image and starts the containers (amber lamp: ContainerCreating), then the readiness probe passes
+      (green lamp: Ready) and the pod becomes a Service endpoint.
+   3. Scale: the ReplicaSet wants N; extra pods are created, surplus pods are terminated (they fade out and the slot frees).
+   4. Rolling update: a new ReplicaSet (v2, the pale band) surges one pod; each old pod is removed only once a new one
+      is Ready (maxSurge 1, maxUnavailable 0), so the Service never has fewer than N endpoints.
+   5. A pod is deleted: the ReplicaSet sees N-1 and makes a replacement. A container crashes: the kubelet restarts it in
+      place (restarts +1). A readiness probe fails: the pod stays but the Service stops sending to it.
+   6. Drain: the node is cordoned (striped tape; the scheduler skips it) and its pods are evicted; the ReplicaSets
+      recreate them on the other nodes. Uncordon takes the tape down.
+   7. A request: in through the Ingress gate (hostname sign), to the Service kiosk, which forwards it to one Ready
+      endpoint (round robin); the reply (green) goes back out the gate. No Ready endpoint: 503.
+
+   Parts (see-through): CONTROL TOWER: etcd cabinet, API server switchboard, scheduler desk, controller manager gearbox.
+   NODE: concrete slab, kubelet booth (kubelet desk, container runtime engine, kube-proxy patch panel), capacity gauge,
+   cordon tape. POD (a 20-ft container): one crate per container, the pause (sandbox) box, the shared network socket and
+   cable to the node's trunk, ConfigMap clipboard, Secret lockbox, PersistentVolume tank on brackets, readiness lamp.
+   SCHEDULER: gantry crane on rails (legs, bridge, trolley, cable, spreader, cab). SERVICE: kiosk with an endpoint
+   board. INGRESS: gate with hostname beam and boom barrier. REGISTRY: image shelf with a stack per app. DEPLOYMENTS: the
+   status board by the tower. */
+
+/* ---------- units (x = depth, y = width, z = up) ---------- */
+const PL = 24, PW = 10, PH = 10;                 // a pod: a 20-ft container lying along y
+const SLD = 50, SLW = 66, SLH = 3;               // a node slab: 50 deep, 66 wide, 3 thick
+const ROWS = 3, COLS = 2;                        // container slots per tier: 3 along x, 2 along y
+const SX0 = 50, SY0 = 40, NGAP = 16, ROWGAP = 20;
+const REG_Y0 = 176, REG_GAP = 26, REG_MAX = 4;   // image registry shelf: a stack per app
+let W = 150, D = 284, HTOP = 70, XR0 = 44, XR1 = 106, HZT = 36, BZ = 58, LANE = 129;
+const PAPER = '#f2efe7';
+const CONC = { l:'#dedad0', m:'#c3bfb3', d:'#9d9889' };
+const YARD = { l:'#e8e3d6', m:'#d2cbbb', d:'#aba394' };
+const CRATE = { l:'#f1e6c8', m:'#d9ca9f', d:'#a8956a' };
+const GLASS = '#1d2a26';
+const LAMPC = { green:'#43c25c', amber:'#f2b230', red:'#e2483d', grey:'#9a948a' };
+const APP_PALS = { web: PALS.cobalt, api: PALS.mint, db: PALS.tomato, cache: PALS.blush, train: matOf('#f08a2b'), spark: matOf('#9b7bd6') };
+const GOLD = '#f2c230';
+const EXTRA_PALS = ['#9b7bd6', '#4fb3b3', '#f08a2b', '#b9c45a', '#d98fd4', '#8aa0b8', '#c9a066', '#6fb86f'].map(matOf);
+const palOf = app => { if (!APP_PALS[app]) APP_PALS[app] = EXTRA_PALS[Object.keys(APP_PALS).length % EXTRA_PALS.length]; return APP_PALS[app]; };
+
+/* ---------- the demo cluster (the same shape tools/longshore.py writes; a raw kubectl List loads too) ---------- */
+const DEMO = {
+  context: 'demo-yard',
+  nodes: [ { name:'node-a' }, { name:'node-b' }, { name:'node-c', gpus:2 } ],
+  deployments: [
+    { name:'web', app:'web', replicas:3, version:'v1', containers:[{ name:'nginx', image:'nginx:1.27' }], configMap:'web-config', dependsOn:'api' },
+    { name:'api', app:'api', replicas:2, version:'v1', containers:[{ name:'api', image:'yard/api:1.4' }, { name:'log-shipper', image:'fluent-bit:3' }], secret:'api-keys', dependsOn:'db' },
+    { name:'db', app:'db', kind:'StatefulSet', replicas:1, version:'v1', containers:[{ name:'postgres', image:'postgres:16' }], pvc:'data-db-0' } ],
+  services: [ { name:'web', selector:{ app:'web' }, ports:[80] }, { name:'api', selector:{ app:'api' }, ports:[8080] }, { name:'db', selector:{ app:'db' }, ports:[5432] } ],
+  ingresses: [ { host:'shop.example.com', service:'web', port:80 } ] };
+
+/* ---------- names ---------- */
+const SUF = 'abcdefghijkmnpqrstuvwxyz0123456789';
+let rseed = 7; const rnd = () => (rseed = (rseed * 48271) % 2147483647) / 2147483647;
+const suffix = n => Array.from({ length:n }, () => SUF[Math.floor(rnd()*SUF.length)]).join('');
+const rsHash = (app, ver) => { let h = 7; for (const ch of app + '/' + ver) h = (h*31 + ch.charCodeAt(0)) >>> 0; return (h.toString(36) + 'xxxxx').slice(0, 5); };
+const cornersOf = (x0,y0,z0,x1,y1,z1) => { const o = []; for (const x of [x0,x1]) for (const y of [y0,y1]) for (const z of [z0,z1]) o.push([x,y,z]); return o; };
+const bx3 = (x0,y0,z0,x1,y1,z1) => [[x0,y0,z0],[x1,y1,z1]];
+// text on any face: U = the reading direction along the face, V = down the face
+const txOn = (p, U, str, size, col = INK, weight = 700, V = [0,0,-1]) => `<text transform="${txM(P(...p), Dv(...U), Dv(...V))}" font-size="${size}" fill="${col}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="${weight}" letter-spacing=".04em">${str}</text>`;
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const lerp3 = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
+const dist3 = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
+// a wire as short pieces, each with its own box, so it sorts with the solids it passes
+const wirePieces = (pts, col, w = .6) => { const o = []; for (let i = 0; i < pts.length - 1; i++){ const a = pts[i], b = pts[i+1], d = pd([a, b], false);
+  o.push({ box: [[0,1,2].map(j => Math.min(a[j], b[j]) - .3), [0,1,2].map(j => Math.max(a[j], b[j]) + .3)],
+    svg: `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(2*w + .8)}" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${col}" stroke-width="${f(2*w)}" stroke-linecap="round"/>` }); } return o; };
+
+/* ---------- layout: where every node, rail and lane is ---------- */
+const slotPos = (n, sl) => [n.x0 + 6 + sl.r*(PW + 4), n.y0 + 6 + sl.c*(PL + 6), SLH + sl.t*PH];
+const slotKey = sl => `${sl.c},${sl.r},${sl.t}`;
+function freeSlot(n){ for (let t = 0; t < 9; t++) for (let r = ROWS - 1; r >= 0; r--) for (let c = 0; c < COLS; c++){ const sl = { c, r, t }; if (!n.used.has(slotKey(sl))) return sl; } return null; }
+function layout(st){
+  const ns = st.nodes, rows = Math.max(1, Math.ceil(ns.length / 3)), cols = Math.min(3, Math.max(1, ns.length));
+  ns.forEach((n, i) => { n.x0 = SX0 + Math.floor(i/3)*(SLD + ROWGAP); n.y0 = SY0 + (i % 3)*(SLW + NGAP); n.row = Math.floor(i/3); });
+  W = SX0 + rows*(SLD + ROWGAP) - ROWGAP + 50; D = Math.max(284, SY0 + cols*(SLW + NGAP) - NGAP + 14);
+  XR0 = SX0 - 6; XR1 = SX0 + rows*(SLD + ROWGAP) - ROWGAP + 6; LANE = W - 21;
+  let maxT = 2; for (const p of st.pods) if (p.slot) maxT = Math.max(maxT, p.slot.t);
+  HZT = SLH + (maxT + 1)*PH + 3; BZ = HZT + 22; HTOP = BZ + 12;
+  for (const p of st.pods) if (p.slot && p.node && st.crane.carry !== p && p.phase !== 'scheduled'){ const n = ns.find(n => n.name === p.node); if (n) p.pos = slotPos(n, p.slot); }
+}
+const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
+const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
+const nodeCenterY = n => n.y0 + SLW/2;
+
+/* ---------- state ---------- */
+let ui;
+const st = { t:0, mode:'demo', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
+  crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
+  live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1 }, boot:null };
+const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || (p.phase !== 'terminating')));
+const isReady = p => p.phase === 'running' && p.ready;
+const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
+const depOf = app => st.deploys.find(d => d.app === app);
+function say(key, text, ms = 2300){ if (!ui) return; const now = performance.now(); if (st.said[key] && now - st.said[key] < 2600) return; st.said[key] = now; ui.flash(text, ms); }
+
+function makePod(dep, ver){
+  ver = ver || dep.version;
+  return { id: ++st.seq, name: `${dep.name}-${rsHash(dep.app, ver)}-${suffix(5)}`, ns: dep.ns || 'default', app: dep.app, ver, band: false,
+    node: null, slot: null, phase: 'pending', phaseT: 0, ready: false, restarts: 0, alpha: 1, fire: 0, pos: null,
+    containers: dep.containers || [{ name: dep.app, image: dep.app }], pvc: dep.pvc, configMap: dep.configMap, secret: dep.secret, sys: false, born: st.t,
+    gpu: dep.gpu || 0, gang: dep.gang ? dep.app : null, job: dep.kind === 'Job', waitingOn: null, drop: null };
+}
+function placePod(p, n, sl){ p.node = n.name; p.slot = sl; n.used.add(slotKey(sl)); p.pos = slotPos(n, sl); }
+function removePod(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); if (st.crane.carry === p) st.crane.carry = null;
+  st.crane.queue = st.crane.queue.filter(j => j.pod !== p); st.pods = st.pods.filter(q => q !== p); }
+// the newest version of an app (when there is more than one) wears the pale band
+function markBands(){ for (const app of new Set(st.pods.map(p => p.app))){ const vs = [...new Set(podsOf(app, false).map(p => p.ver))];
+  if (vs.length < 2){ for (const p of podsOf(app, false)) p.band = false; continue; } vs.sort(); const top = vs[vs.length - 1]; for (const p of podsOf(app, false)) p.band = p.ver === top; } }
+function refreshRegistry(){ const count = {}; for (const p of st.pods) count[p.app] = (count[p.app] || 0) + 1; for (const d of st.deploys) count[d.app] = count[d.app] || 0;
+  const apps = Object.keys(count).sort((a, b) => count[b] - count[a] || a.localeCompare(b)); const keep = st.regApps.filter(a => apps.includes(a));
+  for (const a of apps) if (!keep.includes(a) && keep.length < REG_MAX) keep.push(a); st.regApps = keep; }
+
+/* ---------- controllers (demo mode): Deployments and ReplicaSets want N pods of the current version ---------- */
+function reconcile(){
+  for (const p of st.pods) if (!depOf(p.app) && p.phase !== 'terminating' && st.mode === 'demo') terminate(p);
+  for (const dep of st.deploys){
+    if (dep.kind === 'Job'){ if (!dep.spawned){ dep.spawned = true; for (let i = 0; i < dep.replicas; i++) st.pods.push(makePod(dep));
+        say('job-' + dep.app, dep.gang ? `Volcano PodGroup ${dep.app} (minMember ${dep.minMember || dep.replicas}): ${dep.replicas} Pods Pending until all fit at once` : `Job ${dep.app}: ${dep.replicas} Pods Pending`); } continue; }
+    const live = podsOf(dep.app), newer = live.filter(p => p.ver === dep.version), older = live.filter(p => p.ver !== dep.version);
+    const readyN = live.filter(isReady).length;
+    if (!older.length){
+      while (podsOf(dep.app).length < dep.replicas){ st.pods.push(makePod(dep)); say('rs-' + dep.app, `ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} wants ${dep.replicas}: a new Pod is Pending`); }
+      const extra = live.length - dep.replicas;
+      if (extra > 0) live.slice().sort((a, b) => b.born - a.born).slice(0, extra).forEach(p => terminate(p));
+    } else {
+      // rolling update, maxSurge 1 / maxUnavailable 0: one new pod up, then one old pod down once it is Ready
+      if (live.length < dep.replicas + 1 && newer.length < dep.replicas){ st.pods.push(makePod(dep)); say('roll-' + dep.app, `Rollout: new ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} surges one ${dep.version} Pod`); }
+      if (readyN > dep.replicas && older.length){ terminate(older.sort((a, b) => a.born - b.born)[0]); say('rolldown-' + dep.app, `A ${dep.version} Pod is Ready, so one old Pod is scaled down`); }
+    }
+  }
+  markBands(); refreshRegistry();
+}
+function terminate(p){ if (p.phase === 'terminating') return; p.phase = 'terminating'; p.phaseT = 0; p.ready = false; p.drop = null; }
+// a pod's readiness probe needs the thing it talks to: api needs a Ready db, web needs a Ready api
+const depHealthy = app => { const d = depOf(app); return !d || !d.dependsOn || podsOf(d.dependsOn).some(isReady); };
+function checkDependencies(){
+  for (const p of st.pods) if (p.phase === 'running' && p.ready && !depHealthy(p.app)){ const d = depOf(p.app);
+    p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.waitingOn = d.dependsOn; say('dep-' + p.app, `${p.app} readiness probes failing: Service ${d.dependsOn} has no Ready endpoints (${p.app} stays up but gets no traffic)`); }
+}
+const gpuUsed = n => st.pods.filter(p => p.node === n.name && p.phase !== 'terminating').reduce((a, p) => a + (p.gpu || 0), 0);
+const gpuFree = n => (n.gpus || 0) - gpuUsed(n);
+const slotsFree = n => ROWS*COLS*9 - n.used.size;
+/* scheduler: every Pending pod gets a node with a free slot (fewest pods first), then the crane delivers it */
+function schedule(){
+  scheduleGangs();
+  for (const p of st.pods){ if (p.phase !== 'pending' || p.sys && !st.showSys || p.gang) continue;
+    let cands = st.nodes.filter(n => n.ready && !n.cordoned && freeSlot(n) && (st.mode === 'live' || gpuFree(n) >= (p.gpu || 0)));
+    if (st.mode === 'live') cands = cands.filter(n => n.name === p.wantNode);
+    if (!cands.length){ if (st.mode === 'demo') say(p.gpu ? 'nogpu' : 'nosched', p.gpu ? `Pending: ${p.name} requests nvidia.com/gpu: ${p.gpu} and no node has a free GPU` : 'Pending: no schedulable node has room (uncordon one)'); continue; }
+    cands.sort((a, b) => countOn(a) - countOn(b) || a.name.localeCompare(b.name));
+    const n = cands[0], sl = freeSlot(n); placePod(p, n, sl); p.pos = null; p.phase = 'scheduled';
+    st.crane.queue.push({ pod: p, from: regPos(st, p.app), to: slotPos(n, sl) });
+    say('bind', `Scheduler bound ${p.name} to ${n.name}`);
+  }
+}
+const countOn = n => st.pods.filter(p => p.node === n.name && p.phase !== 'terminating').length;
+/* gang scheduling (Volcano PodGroup): a group is admitted only when every member fits at once; then the whole
+   group lands together, by parachute, without the crane */
+function scheduleGangs(){
+  const groups = {}; for (const p of st.pods) if (p.phase === 'pending' && p.gang) (groups[p.gang] = groups[p.gang] || []).push(p);
+  for (const [app, members] of Object.entries(groups)){ const dep = depOf(app), need = dep ? (dep.minMember || dep.replicas) : members.length;
+    if (members.length < need) continue;
+    const room = st.nodes.filter(n => n.ready && !n.cordoned).map(n => ({ n, slots: slotsFree(n), gpus: gpuFree(n), count: countOn(n) }));
+    const plan = [];
+    for (const p of members){ room.sort((a, b) => a.count - b.count || a.n.name.localeCompare(b.n.name)); const r = room.find(r => r.slots > 0 && r.gpus >= (p.gpu || 0)); if (!r) break; r.slots--; r.gpus -= p.gpu || 0; r.count++; plan.push([p, r.n]); }
+    if (plan.length < members.length){ say('gang-' + app, `PodGroup ${app}: ${members.length} Pods stay Pending; the gang needs ${need} slots free at the same time`); continue; }
+    for (const [p, n] of plan){ const sl = freeSlot(n); placePod(p, n, sl); const to = slotPos(n, sl); p.phase = 'dropping'; p.phaseT = 0; p.drop = { t: 0, from: [to[0], to[1], HTOP + 42], to }; p.pos = p.drop.from.slice(); }
+    const c = st.crane; if (!c.job && !c.queue.length){ c.job = { pod: null, i: 0, steps: [{ y: D - 14, z: HZT, dur: Math.max(.4, Math.abs(c.y - (D - 14))/SPD.travel) }] }; }
+    say('gangok-' + app, `Volcano admitted PodGroup ${app}: all ${members.length} Pods bound at once and landing together`);
+  }
+}
+
+/* ---------- the crane: one job at a time, registry shelf to slot ---------- */
+const SPD = { travel: 120, hoist: 90 };
+function craneTick(dt){
+  const c = st.crane;
+  if (!c.job){ const j = c.queue.shift(); if (!j) return false;
+    if (j.pod && j.pod.phase !== 'scheduled'){ return true; }
+    const [fx, fy, fz] = j.from, [tx, ty, tz] = j.to, hc = [fx + PW/2, fy + PL/2], tc = [tx + PW/2, ty + PL/2];
+    const dur = (a, b, sp) => Math.max(.28, Math.hypot(a[0] - b[0], a[1] - b[1]) / sp);
+    j.steps = [
+      { x: hc[0], y: hc[1], z: HZT, dur: Math.max(dur([c.x, c.y], hc, SPD.travel), Math.abs(c.z - HZT)/SPD.hoist) },
+      { z: fz, dur: Math.max(.3, (HZT - fz)/SPD.hoist) },
+      { dur: .14, done: () => { c.carry = j.pod; j.pod.pos = [fx, fy, fz]; } },
+      { z: HZT, dur: Math.max(.3, (HZT - fz)/SPD.hoist) },
+      { x: tc[0], y: tc[1], dur: dur(hc, tc, SPD.travel) },
+      { z: tz, dur: Math.max(.3, (HZT - tz)/SPD.hoist) },
+      { dur: .12, done: () => { c.carry = null; j.pod.pos = j.to; j.pod.phase = 'creating'; j.pod.phaseT = 0; say('pull', `kubelet on ${j.pod.node} is pulling ${j.pod.containers[0].image} and starting ${j.pod.containers.length > 1 ? 'the containers' : 'the container'}`); } },
+      { z: HZT, dur: .45 } ];
+    j.i = 0; c.job = j; }
+  const j = c.job, s = j.steps[j.i];
+  if (s.t == null){ s.t = 0; s.from = { x: c.x, y: c.y, z: c.z }; }
+  s.t += dt; const u = ease(Math.min(1, s.t / s.dur));
+  for (const kk of ['x', 'y', 'z']) if (s[kk] != null) c[kk] = s.from[kk] + (s[kk] - s.from[kk])*u;
+  if (c.carry) c.carry.pos = [c.x - PW/2, c.y - PL/2, c.z];
+  if (s.t >= s.dur){ if (s.done) s.done(); j.i++; if (j.i >= j.steps.length) c.job = null; }
+  return true;
+}
+
+/* ---------- pods: phase timers ---------- */
+function podTick(p, dt){
+  if (p.phaseT < -1e8) return false;                      // a state read from a real cluster: it changes when the cluster does
+  p.phaseT += dt;
+  switch (p.phase){
+    case 'dropping': { const d = p.drop; d.t += dt; const k = ease(Math.min(1, d.t / 2)); p.pos = lerp3(d.from, d.to, k);
+      if (d.t >= 2){ p.pos = d.to; p.drop = null; p.phase = 'creating'; p.phaseT = 0; } return true; }
+    case 'creating': if (p.phaseT > 1.1){ p.phaseT = 0;
+        if (st.mode === 'demo' && !depHealthy(p.app)){ p.phase = 'unready'; p.waitingOn = depOf(p.app).dependsOn; say('dep-' + p.app, `${p.name} started but its readiness probe fails: Service ${p.waitingOn} has no Ready endpoints`); }
+        else { p.phase = 'running'; p.ready = true; say('ready', `Readiness probe passed: ${p.name} is Ready${p.job ? '' : ' and a Service endpoint'}`); } } return true;
+    case 'running': if (p.job && p.phaseT > 9){ p.phase = 'done'; p.phaseT = 0; p.ready = false; say('done-' + p.app, `${p.app} Pods completed (Succeeded): a Job's Pods are not replaced`); } return !!p.job;
+    case 'done': if (p.phaseT > 1.6) terminate(p); return true;
+    case 'crash': p.fire = p.phaseT < 1 ? 1 : 0; if (p.phaseT > .95 && !p.counted){ p.counted = true; p.restarts++; }
+      if (p.phaseT > 2.1){ p.phase = 'running'; p.phaseT = 0; p.ready = true; p.counted = false; say('restarted', `kubelet restarted the container in place: ${p.name} restarts=${p.restarts}`); } return true;
+    case 'unready': if (p.waitingOn){ if (!depHealthy(p.app)){ p.phaseT = 0; return true; }
+        if (p.phaseT > .7){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready-' + p.app, `Service ${p.waitingOn} is back, so ${p.app} probes pass again`); p.waitingOn = null; } return true; }
+      if (p.phaseT > 4.5){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready', `Probe passing again: ${p.name} is back in the Service`); } return true;
+    case 'terminating': p.alpha = Math.max(0, 1 - p.phaseT / .8); if (p.alpha <= 0) removePod(p); return true;
+  }
+  return false;
+}
+
+/* ---------- traffic: a request through the gate, the kiosk, to one Ready endpoint, and back ---------- */
+const svcMain = () => { const ing = st.ingresses[0]; return (ing && st.services.find(s => s.name === ing.service)) || st.services[0]; };
+function endpointsOf(svc){ if (!svc) return []; const sel = svc.selector || {}; return st.pods.filter(p => isReady(p) && p.pos && p.slot && Object.entries(sel).every(([k, v]) => k === 'app' ? p.app === v : true)).sort((a, b) => a.name.localeCompare(b.name)); }
+function request(){
+  const svc = svcMain(), eps = endpointsOf(svc);
+  if (!svc) return say('nosvc', 'No Service to route to');
+  if (!eps.length){ st.parcels.push(makeParcel(null, svc)); return say('503', `503: Service ${svc.name} has no Ready endpoints`); }
+  const p = eps[st.rr++ % eps.length];
+  st.parcels.push(makeParcel(p, svc)); say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> Service ${svc.name} -> ${p.name}`);
+}
+function makeParcel(p, svc){
+  const n = p && st.nodes.find(n => n.name === p.node), pts = [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
+  if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
+  const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
+  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0 };
+}
+function parcelAt(pc, d){ for (const s of pc.segs) if (d <= s.s0 + s.l + 1e-6) return lerp3(s.a, s.b, s.l ? (d - s.s0)/s.l : 0); return pc.pts[pc.pts.length - 1]; }
+function parcelTick(pc, dt){
+  const spd = 95, kioskD = pc.segs[1].s0 + pc.segs[1].l;
+  if (pc.dir === 1){ if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
+    pc.t += spd*dt; if (pc.t >= pc.L){ if (!pc.pod){ pc.dir = -1; pc.col = LAMPC.red; pc.t = pc.L; } else { pc.dir = -1; pc.col = LAMPC.green; pc.t = pc.L; } } return true; }
+  pc.t -= spd*dt*1.15; return pc.t > 0;
+}
+
+/* ---------- one clock for everything ---------- */
+let loopOn = false;
+let SPEED = 1;
+function tick(dt){
+  dt *= SPEED; st.t += dt; let busy = false;
+  if (st.boot && bootTick(dt)) busy = true;
+  if (st.cp.ctrl){ if (st.mode === 'demo'){ reconcile(); checkDependencies(); } schedule(); if (craneTick(dt) || st.crane.queue.length) busy = true; }
+  for (const n of st.nodes) if (n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }
+  for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
+  for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
+  st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
+  const boomUp = st.parcels.some(pc => Math.abs(pc.t - 20) < 30 || pc.t < 50) ? 1 : 0;
+  if (st.boom !== boomUp){ st.boom = Math.max(0, Math.min(1, st.boom + (boomUp ? dt/.35 : -dt/.5))); busy = true; }
+  if (st.live.pending){ busy = true; }
+  return busy;
+}
+function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { const busy = tick(dt); if (!busy) loopOn = false; return busy; }); }
+
+
+/* ---------- bootstrapping: an empty yard comes up in the real order ---------- */
+function bootstrap(){
+  if (st.mode === 'live') return liveNote('kubeadm init (control plane), then kubeadm join on each node');
+  startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; st.said = {};
+  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; }
+  st.cp = { etcd:0, api:0, ctrl:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
+  const ev = [
+    [.2, () => say('b0', 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up')],
+    [1.6, () => { st.cp.etcd = 1; say('b1', 'etcd is up: the cluster has a memory (every object will live in that cabinet)'); }],
+    [3.0, () => { st.cp.api = 1; say('b2', 'kube-apiserver is serving on :6443: kubectl works from here on'); }],
+    [4.4, () => { st.cp.ctrl = 1; say('b3', 'kube-controller-manager and kube-scheduler are running: the crane powers up'); }] ];
+  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, `kubeadm join: ${n.name} is bootstrapping its kubelet and container runtime`); }]);
+    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, `${n.name} registered with the API server and is Ready (kube-proxy and the CNI are on it)`); }]); });
+  const tEnd = 6.0 + st.nodes.length*1.7 + .8;
+  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods'); }]);
+  ev.push([tEnd + .3, () => { st.boot = null; }]);
+  st.boot = { t: 0, i: 0, ev }; run();
+}
+function bootTick(dt){ const b = st.boot; b.t += dt; while (b.i < b.ev.length && b.t >= b.ev[b.i][0]) b.ev[b.i++][1]();
+  if (st.cp.ctrl && st.crane.z < HZT && !st.crane.job) st.crane.z = Math.min(HZT, st.crane.z + dt*42);
+  return !!st.boot; }
+
+/* ---------- snapshots: the demo, a kubectl JSON file, or a polled URL ---------- */
+function normalize(raw){
+  if (raw && Array.isArray(raw.nodes) && !raw.items) return raw;
+  const items = raw && raw.items ? raw.items : Array.isArray(raw) ? raw : [];
+  const out = { context: raw.context || 'cluster', nodes: [], pods: [], deployments: [], services: [], ingresses: [] };
+  const lab = (o, k) => o.metadata && o.metadata.labels ? o.metadata.labels[k] : undefined;
+  const appOf = o => { const m = o.metadata || {}, l = m.labels || {}; if (l.app) return l.app; if (l['app.kubernetes.io/name']) return l['app.kubernetes.io/name']; if (l['k8s-app']) return l['k8s-app'];
+    const own = (m.ownerReferences || [])[0]; if (own && own.kind === 'ReplicaSet') return own.name.replace(/-[a-z0-9]{6,10}$/, ''); if (own) return own.name; return (m.name || 'pod').replace(/(-[a-z0-9]{5,10}){1,2}$/, ''); };
+  for (const o of items){ const m = o.metadata || {}, sp = o.spec || {}, stt = o.status || {};
+    if (o.kind === 'Node') out.nodes.push({ name: m.name, ready: (stt.conditions || []).some(c => c.type === 'Ready' && c.status === 'True'), cordoned: !!sp.unschedulable, gpus: +((stt.allocatable || {})['nvidia.com/gpu'] || 0) });
+    else if (o.kind === 'Pod'){ const cs = stt.containerStatuses || [], own = (m.ownerReferences || [])[0];
+      const vols = sp.volumes || [], img = ((sp.containers || [])[0] || {}).image || '';
+      const gpuOf = c => +(((c.resources || {}).limits || {})['nvidia.com/gpu'] || ((c.resources || {}).requests || {})['nvidia.com/gpu'] || 0);
+      out.pods.push({ name: m.name, namespace: m.namespace, node: sp.nodeName || null, app: appOf(o), phase: stt.phase, gpu: (sp.containers || []).reduce((a, c) => a + gpuOf(c), 0),
+        ready: cs.length > 0 && cs.every(c => c.ready), restarts: cs.reduce((a, c) => a + (c.restartCount || 0), 0),
+        containers: (sp.containers || []).map(c => ({ name: c.name, image: c.image })),
+        version: lab(o, 'version') || lab(o, 'app.kubernetes.io/version') || (own && own.kind === 'ReplicaSet' ? own.name.slice(-5) : (img.split(':')[1] || 'v1')),
+        pvc: (vols.find(v => v.persistentVolumeClaim) || {}).name, configMap: (vols.find(v => v.configMap) || {}).name, secret: (vols.find(v => v.secret) || {}).name,
+        system: m.namespace === 'kube-system' || (own && own.kind === 'DaemonSet') }); }
+    else if (o.kind === 'Deployment' || o.kind === 'StatefulSet' || o.kind === 'DaemonSet'){ const sel = (sp.selector && sp.selector.matchLabels) || {};
+      const tpl = (sp.template && sp.template.spec) || {}, img = ((tpl.containers || [])[0] || {}).image || '';
+      out.deployments.push({ name: m.name, namespace: m.namespace, kind: o.kind, app: sel.app || sel['app.kubernetes.io/name'] || sel['k8s-app'] || m.name, replicas: sp.replicas != null ? sp.replicas : (stt.desiredNumberScheduled || 0),
+        ready: stt.readyReplicas || stt.numberReady || 0, version: img.split(':')[1] || 'v1', containers: (tpl.containers || []).map(c => ({ name: c.name, image: c.image })), system: m.namespace === 'kube-system' || o.kind === 'DaemonSet' }); }
+    else if (o.kind === 'Service') out.services.push({ name: m.name, namespace: m.namespace, selector: sp.selector || {}, ports: (sp.ports || []).map(p => p.port) });
+    else if (o.kind === 'Ingress'){ for (const r of (sp.rules || [])){ const pth = ((r.http || {}).paths || [])[0] || {}, be = (pth.backend || {}).service || {}; out.ingresses.push({ host: r.host || '*', service: be.name, port: (be.port || {}).number }); } }
+  }
+  return out;
+}
+function applySnapshot(data, instant){
+  data = normalize(data);
+  const nodeNames = (data.nodes || []).map(n => n.name), sameNodes = nodeNames.length === st.nodes.length && nodeNames.every((n, i) => st.nodes[i].name === n);
+  if (!sameNodes){ const old = new Map(st.nodes.map(n => [n.name, n]));
+    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1 }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
+    for (const p of st.pods){ if (!st.nodes.find(n => n.name === p.node)){ p.node = null; p.slot = null; p.pos = null; p.phase = 'pending'; } }
+    for (const n of st.nodes){ n.used = new Set(); for (const p of st.pods) if (p.node === n.name && p.slot) n.used.add(slotKey(p.slot)); }
+    layout(st); }
+  else for (const n of st.nodes){ const d = data.nodes.find(x => x.name === n.name); n.ready = d.ready !== false; n.cordoned = !!d.cordoned; n.gpus = d.gpus || 0; if (instant) n.tape = n.cordoned ? 1 : 0; }
+  st.deploys = (data.deployments || []).map(d => ({ name: d.name, ns: d.namespace || 'default', app: d.app || d.name, kind: d.kind || 'Deployment', replicas: d.replicas || 0, ready: d.ready, version: d.version || 'v1', containers: d.containers, pvc: d.pvc, configMap: d.configMap, secret: d.secret, sys: !!d.system, dependsOn: d.dependsOn, gpu: d.gpu || 0, gang: !!d.gang, minMember: d.minMember }));
+  st.services = data.services || []; st.ingresses = data.ingresses || [];
+  if (st.mode === 'demo' && !(data.pods || []).length){ /* the demo builds its pods from the deployments */ }
+  else {
+    const seen = new Set();
+    for (const d of (data.pods || [])){ seen.add(d.name); let p = st.pods.find(p => p.name === d.name);
+      const dep = st.deploys.find(x => x.app === d.app) || { name: d.app, app: d.app, version: d.version, containers: d.containers };
+      if (!p){ p = makePod(dep, d.version || 'v1'); p.name = d.name; p.ns = d.namespace || 'default'; p.containers = d.containers && d.containers.length ? d.containers : p.containers; p.pvc = d.pvc; p.configMap = d.configMap; p.secret = d.secret; p.sys = !!d.system; p.gpu = d.gpu || 0; st.pods.push(p); }
+      p.wantNode = d.node; p.restarts = d.restarts || 0;
+      const want = d.phase === 'Running' ? (d.ready ? 'running' : 'unready') : d.phase === 'Pending' ? 'pending' : d.phase === 'Failed' || d.phase === 'CrashLoopBackOff' ? 'crash' : d.phase === 'Succeeded' ? 'terminating' : 'running';
+      if (p.node && p.node !== d.node){ removeFromNode(p); }
+      if (!p.node && d.node){ const n = st.nodes.find(n => n.name === d.node); const sl = n && freeSlot(n);
+        if (n && sl && (instant || p.sys && !st.showSys)){ placePod(p, n, sl); p.phase = want === 'pending' ? 'creating' : want; p.ready = want === 'running'; }
+        else if (n && sl){ p.phase = 'pending'; }
+        else { p.phase = 'pending'; } }
+      else if (p.node && p.phase !== 'scheduled' && p.phase !== 'creating' && want !== 'pending'){
+        if (want === 'unready' && p.phase !== 'unready'){ p.phase = 'unready'; p.phaseT = -1e9; p.ready = false; }
+        else if (want === 'running' && p.phase !== 'running'){ p.phase = 'running'; p.ready = true; p.phaseT = 0; }
+        else if (want === 'crash' && p.phase !== 'crash'){ p.phase = 'crash'; p.phaseT = -1e9; p.fire = 1; p.ready = false; }
+        else if (want === 'terminating') terminate(p); }
+    }
+    for (const p of st.pods) if (!seen.has(p.name)) terminate(p);
+  }
+  markBands(); refreshRegistry(); layout(st); if (ui) reframe();
+  if (st.mode === 'live') run();
+}
+function removeFromNode(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); p.node = null; p.slot = null; p.pos = null; }
+function startDemo(){
+  st.mode = 'demo'; stopLive(); st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; st.nodes = [];
+  applySnapshot(JSON.parse(JSON.stringify(DEMO)), true);
+  for (const n of st.nodes){ n.used = new Set(); n.tape = 0; n.cordoned = false; }
+  // the demo starts deployed: pods spread over the nodes, all Running
+  const order = ['web', 'api', 'db']; let i = 0;
+  for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; st.pods.push(p); } }
+  markBands(); refreshRegistry(); layout(st); st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; st.crane.z = HZT; if (ui) reframe();
+}
+function stopLive(){ if (st.live.timer) clearInterval(st.live.timer); st.live.timer = 0; st.live.url = null; st.live.status = ''; }
+async function pollOnce(first){
+  try { const r = await fetch(st.live.url, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); const data = await r.json();
+    st.live.status = 'live'; applySnapshot(data, first); if (first) say('live', `Watching ${data.context || st.live.url}: ${st.pods.length} pods on ${st.nodes.length} nodes`); ui.render(); }
+  catch (e){ st.live.status = 'error'; say('liveerr', `Could not read ${st.live.url}: ${e.message}`, 3200); ui.render(); }
+}
+function watchUrl(url, every){
+  stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = [];
+  for (const n of st.nodes) n.used = new Set();
+  st.live.url = url; st.live.poll = every; pollOnce(true); if (every > 0) st.live.timer = setInterval(() => pollOnce(false), every*1000);
+}
+function loadFile(){
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.onchange = () => { const fl = inp.files[0]; if (!fl) return; fl.text().then(txt => { let data; try { data = JSON.parse(txt); } catch (e){ return say('badjson', 'That file is not JSON', 2600); }
+    stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; for (const n of st.nodes) n.used = new Set();
+    applySnapshot(data, true); st.live.status = 'file'; say('file', `Loaded ${fl.name}: ${st.pods.length} pods on ${st.nodes.length} nodes`); ui.render(); }); };
+  inp.click();
+}
+const liveNote = cmd => say('ro-' + cmd, `This is a real cluster and the yard only watches it. Run: ${cmd}`, 3400);
+
+/* ---------- buttons ---------- */
+function scaleTo(app, n){ if (st.mode === 'live') return liveNote(`kubectl scale deploy/${app} --replicas=${n}`); const d = depOf(app); if (!d) return; d.replicas = n; say('scale', `kubectl scale deploy/${app} --replicas=${n}`); run(); }
+function rollout(app, ver){ if (st.mode === 'live') return liveNote(`kubectl set image deploy/${app} ${app}=${app}:${ver}`); const d = depOf(app); if (!d || d.version === ver) return; d.version = ver;
+  say('rollout', `kubectl set image deploy/${app} ${app}=${app}:${ver}  (rolling update, one at a time)`); run(); }
+function applyTrain(){ if (st.mode === 'live') return liveNote('kubectl apply -f train.yaml'); if (depOf('train')) return say('train', 'train is already applied');
+  st.deploys.push({ name:'train', ns:'default', app:'train', kind:'Deployment', replicas:3, version:'v1', containers:[{ name:'trainer', image:'pytorch:2.4-cuda' }], gpu:1 });
+  say('apply', 'kubectl apply -f train.yaml: 3 replicas, each requests nvidia.com/gpu: 1; only node-c has GPUs (2)'); run(); }
+function applySpark(){ if (st.mode === 'live') return liveNote('kubectl apply -f spark-podgroup.yaml'); if (depOf('spark')) return say('spark', 'spark is already applied');
+  st.deploys.push({ name:'spark', ns:'default', app:'spark', kind:'Job', replicas:4, version:'v1', containers:[{ name:'executor', image:'spark:3.5' }], gang:true, minMember:4 });
+  say('apply', 'kubectl apply -f spark-podgroup.yaml: Job spark with schedulerName: volcano, PodGroup minMember 4'); run(); }
+function applyCache(){ if (st.mode === 'live') return liveNote('kubectl apply -f cache.yaml'); if (depOf('cache')) return say('cache', 'cache is already applied');
+  st.deploys.push({ name:'cache', ns:'default', app:'cache', kind:'Deployment', replicas:2, version:'v1', containers:[{ name:'redis', image:'redis:7' }] });
+  say('apply', 'kubectl apply -f cache.yaml: Deployment cache created, ReplicaSet wants 2'); run(); }
+function deleteDep(app){ if (st.mode === 'live') return liveNote(`kubectl delete deploy/${app}`); if (!depOf(app)) return say('nodep', `${app} is not deployed`); st.deploys = st.deploys.filter(d => d.app !== app); say('del', `kubectl delete deploy/${app}: its ReplicaSet and Pods go with it`); run(); }
+function pickPod(app){ const c = st.pods.filter(p => p.app === app && isReady(p) && p.pos); return c.length ? c[Math.floor(rnd()*c.length)] : null; }
+function deletePod(app = 'web'){ if (st.mode === 'live') return liveNote('kubectl delete pod <name>'); const p = pickPod(app); if (!p) return say('nopod', `No Ready ${app} Pod to delete right now`);
+  p.phase = 'crash'; p.phaseT = .4; p.fire = 1; p.ready = false; p.doomed = true; setTimeout(() => { terminate(p); run(); }, 700); say('delpod', `kubectl delete pod ${p.name}: the ReplicaSet will replace it`); run(); }
+function crashPod(){ if (st.mode === 'live') return liveNote('kubectl exec <pod> -- kill 1'); const p = pickPod('api') || pickPod('web'); if (!p) return say('nopod', 'No Ready Pod to crash right now');
+  p.phase = 'crash'; p.phaseT = 0; p.fire = 1; p.ready = false; say('crash', `Crash: ${p.name} container exited; the kubelet restarts it in place (the Pod keeps its name and node)`); run(); }
+function unreadyPod(){ if (st.mode === 'live') return liveNote('(make a readiness probe fail: e.g. stop the health endpoint)'); const p = pickPod('web'); if (!p) return say('nopod', 'No Ready web Pod right now');
+  p.phase = 'unready'; p.phaseT = 0; p.ready = false; say('unready', `Probe: ${p.name} readiness failing, so the Service stops sending it traffic (the Pod is not restarted)`); run(); }
+function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); n.cordoned = true; const ev = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); ev.forEach(terminate);
+  say('drain', `kubectl drain ${n.name}: cordoned, ${ev.length} Pod${ev.length === 1 ? '' : 's'} evicted; ReplicaSets recreate them elsewhere`); run(); }
+function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; say('uncordon', `kubectl uncordon ${n.name}: schedulable again`); run(); }
+function podInfo(p){ const d = depOf(p.app); say('info-' + p.id, `${p.name} · ${p.node || 'Pending'} · ${p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase} · ${p.containers.length} container${p.containers.length === 1 ? '' : 's'} · restarts ${p.restarts}${p.pvc ? ' · volume ' + p.pvc : ''}${d && d.kind === 'StatefulSet' ? ' · StatefulSet' : ''}`, 3000); }
+
+/* ================= drawing ================= */
+const lampDome = (x, y, z, col, r = 1.1) => cyl(x, y, z, z + .7, r, DARK, toneI, .6, 10) + fill(pd(on(PZ(z + .75), ellUV(x, y, r*.85, r*.85, 10))), col) + fill(pd(on(PZ(z + .8), ellUV(x, y, r*2.2, r*2.2, 12))), col, 'opacity=".22"');
+const faceU = n => n[0] > 0 ? [0,-1,0] : n[0] < 0 ? [0,1,0] : n[1] > 0 ? [1,0,0] : [-1,0,0];
+
+/* a pod container at its min corner; the body only (ink included) */
+function containerSvg(x0, y0, z0, pm, o){
+  const x1 = x0 + PW, y1 = y0 + PL, z1 = z0 + PH;
+  let s = box(x0, y0, z0, x1, y1, z1, pm, tone, .9);
+  for (const [n, x] of [[[1,0,0], x1 + .06], [[-1,0,0], x0 - .06]]) if (vis(n)){
+    let d = ''; for (let y = y0 + 2; y < y1 - 1; y += 2) d += pd([[x, y, z0 + 1], [x, y, z1 - 1]], false);
+    s += `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".3" opacity=".35"/>`;
+    if (o.band) s += fill(pd([[x, y0 + .4, z1 - 3.2], [x, y1 - .4, z1 - 3.2], [x, y1 - .4, z1 - 1.3], [x, y0 + .4, z1 - 1.3]]), mix(pm.l, '#ffffff', .62));
+    s += txOn([x, (y0 + y1)/2, z0 + 3.1], faceU(n), esc(o.app.slice(0, 9).toUpperCase()), 4.2, mix(pm.d, '#000000', .25), 800);
+    s += txOn([x, (y0 + y1)/2, z0 + 6.2], faceU(n), esc(o.ver), 2.3, mix(pm.d, '#000000', .25), 700);
+    if (o.gpu) s += fill(pd([[x, y0 + .4, z0 + .6], [x, y1 - .4, z0 + .6], [x, y1 - .4, z0 + 2.4], [x, y0 + .4, z0 + 2.4]]), GOLD) + txOn([x, (y0 + y1)/2, z0 + .9], faceU(n), `GPU x${o.gpu}`, 1.6, INK, 800);
+  }
+  if (o.band && vis([0,0,1])) s += fill(pd([[x0 + .3, y0 + .4, z1 + .05], [x1 - .3, y0 + .4, z1 + .05], [x1 - .3, y1 - .4, z1 + .05], [x0 + .3, y1 - .4, z1 + .05]]), mix(pm.l, '#ffffff', .62), 'opacity=".55"');
+  if (vis([0,1,0])){ const y = y1 + .06;   // the doors
+    s += ink(pd([[x0 + PW/2, y, z0 + .6], [x0 + PW/2, y, z1 - .6]], false), .7);
+    for (const dx of [2.1, 3.5, 6.5, 7.9]) s += ink(pd([[x0 + dx, y, z0 + 1], [x0 + dx, y, z1 - 1]], false), .5);
+    for (const dx of [3.5, 6.5]) s += ink(pd([[x0 + dx - .9, y, z0 + 4.6], [x0 + dx + .9, y, z0 + 4.6]], false), .7);
+    if (o.name) s += txOn([x0 + PW/2, y, z1 - 1.6], [1,0,0], esc(o.name.slice(-5)), 1.9, mix(pm.d, '#000000', .3), 700); }
+  if (vis([0,-1,0])) s += ink(pd([[x0 + 1, y0 - .06, z0 + 1], [x1 - 1, y0 - .06, z0 + 1], [x1 - 1, y0 - .06, z1 - 1], [x0 + 1, y0 - .06, z1 - 1]]), .45);
+  for (const z of [z0 + .8, z1 - .8]) if (vis([1,0,0])) s += ink(pd([[x1 + .06, y0 + .4, z], [x1 + .06, y1 - .4, z]], false), .4);
+  s += hullInk(cornersOf(x0, y0, z0, x1, y1, z1), 1.8);
+  return s;
+}
+// see-through: the far walls faint, the inside, then the container as a ghost
+function ghostBoxSvg(x0,y0,z0,x1,y1,z1, m, k, body, inside){
+  const F = [ [[0,1,0], [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]]], [[1,0,0], [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]]],
+    [[0,-1,0], [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]], [[-1,0,0], [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]], [[0,0,-1], [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]]] ];
+  let far = ''; for (const [n, q] of F) if (!vis(n)) far += face(pd(q), mix(toneI(n.map(v => -v), m), PAPER, .55));
+  return `<g opacity="${f(.5*k)}">${far}</g><g opacity="${f(k)}">${inside}</g><g opacity="${f(1 - .8*k)}">${body}</g><g opacity="${f(.6*k)}">${hullInk(cornersOf(x0,y0,z0,x1,y1,z1), 1.8)}</g>`;
+}
+const PAUSE = { l:'#8d98a8', m:'#6c7686', d:'#434b58' }, LOCK = { l:'#5a5751', m:'#3d3a35', d:'#26241f' };
+function podInside(p, x0, y0, z0, k){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }); const z = z0 + .5, n = p.containers.length, cw = Math.min(7, (PL - 7) / n - 1.2);
+  p.containers.forEach((c, i) => { const cy0 = y0 + 2.2 + i*(cw + 1.2), cx0 = x0 + 2, cx1 = cx0 + 6, cz1 = z + 6;
+    let s = box(cx0, cy0, z, cx1, cy0 + cw, cz1, CRATE, toneI, .6);
+    if (vis([1,0,0])) s += txOn([cx1 + .05, cy0 + cw/2, z + 2.6], [0,-1,0], esc(c.name.slice(0, 9)), 1.5, '#5a4a2a', 700) + ink(pd([[cx1 + .05, cy0 + .6, z + 4.2], [cx1 + .05, cy0 + cw - .6, z + 4.2]], false), .35) + ink(pd([[cx1 + .05, cy0 + .6, z + 1.3], [cx1 + .05, cy0 + cw - .6, z + 1.3]], false), .35);
+    if (p.fire > 0 && i === 0) s += `<g opacity="${f(p.fire)}">${fill(pd([[cx0 + 3, cy0 + cw/2 - 2, cz1], [cx0 + 3, cy0 + cw/2 + 2, cz1], [cx0 + 3, cy0 + cw/2, cz1 + 3.5]]), '#ff7a2e')}</g>`;
+    put(bx3(cx0, cy0, z, cx1, cy0 + cw, cz1), s); });
+  // the pause (sandbox) box holds the pod's network namespace: a socket on the back wall and a cable to the node trunk
+  put(bx3(x0 + .8, y0 + PL - 3.4, z, x0 + 3.4, y0 + PL - .8, z + 2.4), box(x0 + .8, y0 + PL - 3.4, z, x0 + 3.4, y0 + PL - .8, z + 2.4, PAUSE, toneI, .5));
+  const sock = [x0 + .25, y0 + PL - 2.1, z0 + 5];
+  put(bx3(x0, y0 + PL - 3, z0 + 4, x0 + .5, y0 + PL - 1.2, z0 + 6), fill(pd([[x0 + .2, y0 + PL - 3, z0 + 4], [x0 + .2, y0 + PL - 1.2, z0 + 4], [x0 + .2, y0 + PL - 1.2, z0 + 6], [x0 + .2, y0 + PL - 3, z0 + 6]]), GLASS));
+  parts.push(...wirePieces([sock, [x0 + .5, y0 + PL - 2.1, z0 + 2.4], [x0 + 2.1, y0 + PL - 2.1, z0 + 2.4]], '#2d7bd6', .45));
+  if (p.configMap) put(bx3(x0 + 2.6, y0 + .3, z0 + 3, x0 + 7.4, y0 + .9, z0 + 8.6), box(x0 + 2.6, y0 + .3, z0 + 3, x0 + 7.4, y0 + .9, z0 + 8.6, CERAMIC, toneI, .5)
+    + (vis([0,1,0]) ? [4.2, 5.6, 7].map(zz => ink(pd([[x0 + 3.4, y0 + .95, z0 + zz], [x0 + 6.6, y0 + .95, z0 + zz]], false), .35)).join('') + box(x0 + 4.4, y0 + .2, z0 + 8.2, x0 + 5.6, y0 + 1.1, z0 + 9.2, DARK, toneI, .4) : ''));
+  if (p.secret) put(bx3(x0 + 6, y0 + 1.2, z, x0 + 9, y0 + 4.4, z + 2.6), box(x0 + 6, y0 + 1.2, z, x0 + 9, y0 + 4.4, z + 2.6, LOCK, toneI, .5) + (vis([1,0,0]) ? fill(pd(on(PX(x0 + 9.05), ellUV(y0 + 2.8, z + 1.3, .6, .6, 8))), '#f2c230') : ''));
+  return `<g opacity="${f(k)}">${byDepth(parts)}</g>`;
+}
+function podItem(p, k){
+  const [x0, y0, z0] = p.pos, pm = palOf(p.app), x1 = x0 + PW, y1 = y0 + PL, z1 = z0 + PH;
+  let body = containerSvg(x0, y0, z0, pm, { app: p.app, ver: p.ver, band: p.band, name: p.name, gpu: p.gpu });
+  body += lampDome(x1 - 2, y1 - 2.6, z1, lampOf(p));
+  if (k > 0) body = ghostBoxSvg(x0, y0, z0, x1, y1, z1, pm, k, body, podInside(p, x0, y0, z0, k)) + `<g opacity="${f(k)}">${lampDome(x1 - 2, y1 - 2.6, z1, lampOf(p))}</g>`;
+  if (p.fire > 0){ const cx = x0 + PW/2, cy = y0 + PL/2; let fl = '';
+    for (const [dy, h] of [[-5, 5], [0, 7.5], [5, 5.5]]) fl += fill(pd([[cx - 2, cy + dy - 2.2, z1], [cx + 2, cy + dy + 2.2, z1], [cx, cy + dy, z1 + h]]), '#ff6a2a') + fill(pd([[cx - 1, cy + dy - 1, z1], [cx + 1, cy + dy + 1, z1], [cx, cy + dy, z1 + h*.6]]), '#ffd23c');
+    for (const [dy, h, r] of [[-3, 10, 2], [2, 13, 2.6], [6, 16, 3]]){ const [X, Y] = P(cx, cy + dy, z1 + h); fl += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="#8a8580" opacity=".5"/>`; }
+    body += `<g opacity="${f(Math.min(1, p.fire))}">${fl}</g>`; }
+  if (p.drop) body += chuteSvg(x0, y0, z0, pm);
+  const svg = act('pod', p.alpha < 1 ? `<g opacity="${f(p.alpha)}">${body}</g>` : body, `data-id="${p.id}"`);
+  const items = [{ box: bx3(x0, y0, z0, x1, y1, p.drop ? z1 + 18 : z1), svg }];
+  if (p.pvc) items.push(tankItem(p, x0, y0, z0, pm));
+  return items;
+}
+// a parachute: a striped canopy with four shroud lines to the container's top corners
+function chuteSvg(x0, y0, z0, pm){
+  const cx = x0 + PW/2, cy = y0 + PL/2, zt = z0 + PH, rimZ = zt + 8, apex = zt + 17, R = 13, n = 16;
+  const rim = on(PZ(rimZ), ellUV(cx, cy, R, R, n)), top = on(PZ(apex), ellUV(cx, cy, 1.2, 1.2, n));
+  const corners = { 2: [x0 + PW - .4, y0 + PL - .4, zt], 6: [x0 + .4, y0 + PL - .4, zt], 10: [x0 + .4, y0 + .4, zt], 14: [x0 + PW - .4, y0 + .4, zt] };
+  let lines = ''; for (const i of [2, 6, 10, 14]) lines += pd([rim[i], corners[i]], false);
+  let s = `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".7"/>`;
+  const cen = [cx, cy, (rimZ + apex)/2];
+  for (let i = 0; i < n; i++){ const a0 = rim[i], a1 = rim[(i + 1) % n], b1 = top[(i + 1) % n], b0 = top[i];
+    let nr = norm(cross(sub(a1, a0), sub(b0, a0))); if (dot(nr, sub(avg([a0, a1, b1, b0]), cen)) < 0) nr = nr.map(v => -v);
+    if (vis(nr)) s += face(pd([a0, a1, b1, b0]), toneI(nr, i % 2 ? pm : CERAMIC)); }
+  return s + ink(pd(rim), .9) + hullInk([...rim, ...top], 1.4);
+}
+// the PersistentVolume: a tank on two brackets off the container's far end
+function tankItem(p, x0, y0, z0, pm){
+  const cx = x0 + 5, cy = y0 - 3.2, r = 2.6, TANK = { l:'#dfe6ea', m:'#b9c5cb', d:'#7f8d94' };
+  let s = box(x0 + 3.2, y0 - 2.2, z0 + 1.6, x0 + 6.8, y0, z0 + 2.4, DARK, toneI, .5) + box(x0 + 3.2, y0 - 2.2, z0 + 7.4, x0 + 6.8, y0, z0 + 8.2, DARK, toneI, .5);
+  s += cyl(cx, cy, z0 + .4, z0 + 9.4, r, TANK, toneI, 1.1, 18);
+  if (vis([1,0,0])) s += txOn([cx + r + .05, cy, z0 + 4], [0,-1,0], 'PV', 2.2, '#4d5a60', 800);
+  s += rod([cx, cy, z0 + 9.4], [cx, cy, z0 + 10.4], .6, DARK, toneI, .5);
+  return { box: bx3(x0 + 2.4, y0 - 5.9, z0, x0 + 7.6, y0, z0 + 10.5), svg: p.alpha < 1 ? `<g opacity="${f(p.alpha)}">${s}</g>` : s };
+}
+/* a node: slab (with the tier-0 shadows), booth, gauge, cordon tape */
+function nodeItems(n, k, m){
+  const x0 = n.x0, y0 = n.y0, x1 = x0 + SLD, y1 = y0 + SLW, items = [], top = on(PZ(SLH), rectUV(x0, y0, x1, y1));
+  if (n.joined < 1){ const j = ease(n.joined), bx0 = x0 - 18, bx1 = x0 - 8, by0 = y1 - 16, by1 = y1 - 4;
+    if (j <= 0) return items;
+    items.push({ box: bx3(x0, y0, 0, x1, y1, SLH), svg: `<g opacity="${f(Math.min(1, j*2))}">${box(x0, y0, 0, x1, y1, Math.max(.3, SLH*j), CONC, tone, 1.2)}</g>`, floor: true });
+    items.push({ box: bx3(bx0, by0, 0, bx1, by1, 14), svg: `<g opacity="${f(Math.min(1, j*2))}">${box(bx0, by0, 0, bx1, by1, Math.max(.3, 12*j), CONC, tone, 1)}${box(bx0 - .8, by0 - .8, 12*j, bx1 + .8, by1 + .8, 12*j + 1.5, m, tone, .9)}</g>` });
+    return items; }
+  let s = box(x0, y0, 0, x1, y1, SLH, CONC, tone, 1.2);
+  const mine = st.pods.filter(p => p.node === n.name && p.pos && p.slot);
+  let sh = ''; for (const p of mine) if (p.slot.t === 0 && p.phase !== 'scheduled') sh += castShadow(cornersOf(p.pos[0], p.pos[1], SLH, p.pos[0] + PW, p.pos[1] + PL, SLH + PH), SLH, top);
+  s += `<g opacity=".9">${sh}</g>`;
+  if (vis([0,0,1])){ for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (!n.used.has(slotKey({ c, r, t:0 }))){ const [sx, sy] = slotPos(n, { c, r, t:0 });
+      s += `<path d="${pd(on(PZ(SLH + .05), rectUV(sx, sy, sx + PW, sy + PL)))}" fill="none" stroke="${INK}" stroke-width=".5" stroke-dasharray="2 1.5" opacity=".45"/>`; }
+    s += txOn([x1 - 3.2, y0 + SLW/2, SLH + .06], [0,-1,0], esc(n.name) + (n.gpus ? `  GPU x${n.gpus}` : ''), 4.2, '#6b6559', 800, [1,0,0]);
+    if (k > 0){ let tr = ''; for (const p of mine){ tr += pd([[p.pos[0] + .5, p.pos[1] + PL - 2.1, SLH + .1], [x0 + 2, p.pos[1] + PL - 2.1, SLH + .1], [x0 + 2, y1 - 10, SLH + .1], [x0 - 2, y1 - 10, SLH + .1]], false); }
+      s += `<g opacity="${f(k)}"><path d="${tr}" fill="none" stroke="${INK}" stroke-width="1.6" stroke-linejoin="round"/><path d="${tr}" fill="none" stroke="#2d7bd6" stroke-width=".9" stroke-linejoin="round"/></g>`; } }
+  items.push({ box: bx3(x0, y0, 0, x1, y1, SLH), svg: s, floor: true });
+  for (let i = 0; i < (n.gpus || 0); i++){ const gy0 = y0 + 8 + i*11, gx0 = x0 + 1, used = i < gpuUsed(n);
+    let g = box(gx0, gy0, SLH, gx0 + 4, gy0 + 8, SLH + 5, LOCK, toneI, .6);
+    if (vis([1,0,0])) g += fill(pd([[gx0 + 4.06, gy0 + .4, SLH + 3.6], [gx0 + 4.06, gy0 + 7.6, SLH + 3.6], [gx0 + 4.06, gy0 + 7.6, SLH + 4.6], [gx0 + 4.06, gy0 + .4, SLH + 4.6]]), GOLD) + txOn([gx0 + 4.06, gy0 + 4, SLH + 1.2], [0,-1,0], 'GPU', 1.7, GOLD, 800);
+    if (vis([0,0,1])){ let d = ''; for (let fy = gy0 + 1; fy < gy0 + 8; fy += 1) d += pd([[gx0 + .5, fy, SLH + 5.05], [gx0 + 3.5, fy, SLH + 5.05]], false); g += `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".3" opacity=".6"/>`; }
+    g += lampDome(gx0 + 2, gy0 + 6.6, SLH + 5, used ? LAMPC.amber : LAMPC.green, .6);
+    items.push({ box: bx3(gx0, gy0, SLH, gx0 + 4, gy0 + 8, SLH + 6), svg: g }); }
+  // kubelet booth behind the slab's far corner
+  const bx0 = x0 - 18, bx1 = x0 - 8, by0 = y1 - 16, by1 = y1 - 4, bz = 12;
+  let b = box(bx0, by0, 0, bx1, by1, bz, CONC, tone, 1);
+  if (vis([1,0,0])) b += fill(pd([[bx1 + .06, by0 + 3, 5], [bx1 + .06, by1 - 3, 5], [bx1 + .06, by1 - 3, 9.4], [bx1 + .06, by0 + 3, 9.4]]), GLASS) + ink(pd([[bx1 + .06, by0 + 3, 5], [bx1 + .06, by1 - 3, 5], [bx1 + .06, by1 - 3, 9.4], [bx1 + .06, by0 + 3, 9.4]]), .7)
+    + `<path d="${pd([[bx1 + .1, by0 + 3.6, 8.8], [bx1 + .1, by0 + 5.6, 8.8]], false)}" stroke="#ffffff" stroke-width=".8" opacity=".4" fill="none"/>` + txOn([bx1 + .06, (by0 + by1)/2, 11.2], [0,-1,0], 'KUBELET', 1.8, '#6b6559', 800);
+  if (vis([0,1,0])) b += ink(pd([[bx0 + 2.5, by1 + .06, 0], [bx0 + 6.5, by1 + .06, 0], [bx0 + 6.5, by1 + .06, 8.4], [bx0 + 2.5, by1 + .06, 8.4]]), .7) + fill(pd(on(PY(by1 + .1), ellUV(bx0 + 5.8, 4.4, .4, .4, 6))), INK);
+  b += box(bx0 - .8, by0 - .8, bz, bx1 + .8, by1 + .8, bz + 1.5, m, tone, .9);
+  b += rod([bx0 + 3, by1 - 3, bz + 1.5], [bx0 + 3, by1 - 3, bz + 8], .35, METAL, toneI, .4) + lampDome(bx0 + 3, by1 - 3, bz + 8, n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red, .9);
+  if (k > 0){
+    const ins = [], put = (bb, svg) => ins.push({ box: bb, svg });
+    put(bx3(bx0 + 1, by0 + 1, 0, bx0 + 5, by1 - 1, 5), box(bx0 + 1, by0 + 1, 0, bx0 + 5, by1 - 1, 5, WOOD, toneI, .5) + box(bx0 + 1.4, by0 + 4, 5, bx0 + 2.2, by1 - 4, 9, DARK, toneI, .5) + (vis([1,0,0]) ? fill(pd([[bx0 + 2.25, by0 + 4.4, 5.5], [bx0 + 2.25, by1 - 4.4, 5.5], [bx0 + 2.25, by1 - 4.4, 8.5], [bx0 + 2.25, by0 + 4.4, 8.5]]), '#8af0ae', 'opacity=".9"') : ''));
+    put(bx3(bx0 + 6, by0 + 1, 0, bx1 - 1, by0 + 5.5, 5), box(bx0 + 6, by0 + 1, 0, bx1 - 1, by0 + 5.5, 4.5, METAL, toneI, .5) + cyl(bx0 + 7.5, by0 + 3.2, 4.5, 6.4, 1.2, DARK, toneI, .4, 10) + cyl(bx1 - 2.5, by0 + 3.2, 4.5, 6.4, 1.2, DARK, toneI, .4, 10));
+    let pp = box(bx0 + 6, by1 - 5, 0, bx1 - 1, by1 - 1.2, 8, DARK, toneI, .5); if (vis([0,1,0])) for (let i = 0; i < 4; i++) pp += fill(pd(on(PY(by1 - 1.15), ellUV(bx0 + 6.8 + i*.9, 6.4, .3, .3, 6))), ['#2d7bd6', '#43c25c', '#f2b230', '#e2483d'][i]);
+    put(bx3(bx0 + 6, by1 - 5, 0, bx1 - 1, by1 - 1.2, 8), pp);
+    ins.push(...wirePieces([[bx1 - 1, by1 - 3, 2], [bx1 + .4, by1 - 3, 2], [bx1 + .4, by1 - 10, 2], [bx1 + .4, y1 - 10, SLH + .2], [x0 - 2, y1 - 10, SLH + .2]], '#2d7bd6', .45));
+    b = ghostBoxSvg(bx0, by0, 0, bx1, by1, bz, CONC, k, b, `<g opacity="${f(k)}">${byDepth(ins)}</g>`);
+  }
+  items.push({ box: bx3(bx0 - .8, by0 - .8, 0, bx1 + .8, by1 + .8, bz + 9), svg: act('booth', b, `data-node="${esc(n.name)}"`) });
+  // capacity gauge on a post by the slab's near corner
+  const gx = x0 - 2.5, gy = y0 + 3, cap = ROWS*COLS*3, used = n.used.size, frac = Math.min(1, used / cap), gc = frac > .85 ? LAMPC.red : frac > .6 ? LAMPC.amber : LAMPC.green;
+  let g = rod([gx, gy, 0], [gx, gy, 16], .7, METAL, toneI, .5) + box(gx - 1.3, gy - 1.5, 5, gx + 1.3, gy + 1.5, 15.5, CERAMIC, toneI, .6);
+  for (const [nn, pts] of [[[1,0,0], (h) => [[gx + 1.36, gy - 1, 5.6], [gx + 1.36, gy + 1, 5.6], [gx + 1.36, gy + 1, 5.6 + h], [gx + 1.36, gy - 1, 5.6 + h]]], [[0,1,0], (h) => [[gx - .9, gy + 1.56, 5.6], [gx + .9, gy + 1.56, 5.6], [gx + .9, gy + 1.56, 5.6 + h], [gx - .9, gy + 1.56, 5.6 + h]]]])
+    if (vis(nn)){ g += fill(pd(pts(9.2)), '#efe9da') + fill(pd(pts(Math.max(.3, 9.2*frac))), gc); for (let i = 1; i < 4; i++) g += ink(pd([pts(9.2*i/4)[2], pts(9.2*i/4)[3]], false), .3); }
+  items.push({ box: bx3(gx - 1.4, gy - 1.6, 0, gx + 1.4, gy + 1.6, 16), svg: g });
+  // cordon tape
+  if (n.tape > 0){ const tz = SLH + 8*n.tape, cs = [[x0 + 1.2, y0 + 1.2], [x1 - 1.2, y0 + 1.2], [x1 - 1.2, y1 - 1.2], [x0 + 1.2, y1 - 1.2]];
+    for (const [cx, cy] of cs){ let post = rod([cx, cy, SLH], [cx, cy, tz + .8], .55, CERAMIC, toneI, .5) + rod([cx, cy, SLH + 2*n.tape], [cx, cy, SLH + 4.5*n.tape], .62, matOf('#e2483d'), toneI, .3);
+      items.push({ box: bx3(cx - .7, cy - .7, SLH, cx + .7, cy + .7, tz + 1), svg: post }); }
+    for (let i = 0; i < 4; i++){ const a = cs[i], b2 = cs[(i + 1) % 4], d = pd([[a[0], a[1], tz], [b2[0], b2[1], tz]], false);
+      let tp = `<path d="${d}" fill="none" stroke="${INK}" stroke-width="1.7"/><path d="${d}" fill="none" stroke="#fff4d6" stroke-width="1.1"/><path d="${d}" fill="none" stroke="#e2483d" stroke-width="1.1" stroke-dasharray="2.5 2.5"/>`;
+      if (i === 1 && n.tape > .95 && vis([1,0,0])){ const my = (y0 + y1)/2; tp += box(x1 - 1.4, my - 7, tz - 4.2, x1 - 1, my + 7, tz - .3, CERAMIC, toneI, .5) + txOn([x1 - .95, my, tz - 1.6], [0,-1,0], 'CORDONED', 2.1, '#b3261e', 800); }
+      const bb = [[Math.min(a[0], b2[0]) - .3, Math.min(a[1], b2[1]) - .3, tz - 4.3], [Math.max(a[0], b2[0]) + .3, Math.max(a[1], b2[1]) + .3, tz + .3]];
+      items.push({ box: bb, svg: `<g opacity="${f(n.tape)}">${tp}</g>` }); } }
+  return items;
+}
+/* the control tower: base, glazed cab, roof, mast; inside: etcd, API server, scheduler, controller manager */
+function towerItems(k, m){
+  const items = [];
+  let base = box(6, 6, 0, 30, 30, 30, m, tone, 1.1);
+  if (vis([1,0,0])) base += txOn([30.06, 16, 16.4], [0,-1,0], 'CONTROL', 3.3, mix(m.d, '#000000', .2), 800) + txOn([30.06, 16, 12.4], [0,-1,0], 'PLANE', 3.3, mix(m.d, '#000000', .2), 800)
+    + fill(pd([[30.06, 15, 0], [30.06, 21, 0], [30.06, 21, 9], [30.06, 15, 9]]), mix(m.d, '#000000', .3)) + ink(pd([[30.06, 15, 0], [30.06, 21, 0], [30.06, 21, 9], [30.06, 15, 9]]), .8)
+    + [20, 25].map(z => fill(pd([[30.06, 24.5, z], [30.06, 28.5, z], [30.06, 28.5, z + 2.6], [30.06, 24.5, z + 2.6]]), GLASS) + ink(pd([[30.06, 24.5, z], [30.06, 28.5, z], [30.06, 28.5, z + 2.6], [30.06, 24.5, z + 2.6]]), .5)).join('');
+  if (vis([0,1,0])) base += [12, 18, 24].map(z => fill(pd([[10, 30.06, z], [14, 30.06, z], [14, 30.06, z + 2.6], [10, 30.06, z + 2.6]]), GLASS) + ink(pd([[10, 30.06, z], [14, 30.06, z], [14, 30.06, z + 2.6], [10, 30.06, z + 2.6]]), .5)).join('');
+  if (k > 0){ const ins = [], put = (bb, svg) => ins.push({ box: bb, svg });
+    let et = box(9, 9, 0, 21, 21, 12, LOCK, toneI, .6); if (vis([1,0,0])){ for (const z of [3, 6.5, 10]) et += ink(pd([[21.06, 10.5, z], [21.06, 19.5, z]], false), .5); et += fill(pd(on(PX(21.08), ellUV(15, 4.8, .9, .9, 8))), st.cp.etcd ? '#f2c230' : '#6b6560'); et += txOn([21.06, 15, 1.9], [0,-1,0], 'etcd', 1.9, '#f2efe7', 800); }
+    put(bx3(9, 9, 0, 21, 21, 12), et);
+    put(bx3(7, 7, 14, 29, 29, 15), box(7, 7, 14, 29, 29, 15, CONC, toneI, .5));
+    let api = box(8, 12, 15, 26, 22, 22, CERAMIC, toneI, .6); if (vis([1,0,0])){ for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) api += fill(pd(on(PX(26.08), ellUV(13.5 + i*1.4, 17.5 + j*2, .45, .45, 6))), !st.cp.api ? '#6b6560' : (i + j) % 3 ? '#43c25c' : '#f2b230'); api += txOn([26.06, 17, 16.6], [0,-1,0], 'API', 1.9, '#5a4a2a', 800); }
+    put(bx3(8, 12, 15, 26, 22, 22), api);
+    put(bx3(7, 7, 29, 29, 29, 30), box(7, 7, 29, 29, 29, 30, CONC, toneI, .5));
+    base = ghostBoxSvg(6, 6, 0, 30, 30, 30, m, k, base, `<g opacity="${f(k)}">${byDepth(ins)}</g>`); }
+  items.push({ box: bx3(6, 6, 0, 30, 30, 30), svg: base });
+  let cab = box(3, 3, 30, 33, 33, 42, m, tone, 1.1);
+  for (const [nn, q, mul] of [[[1,0,0], [[33.06, 4, 33], [33.06, 32, 33], [33.06, 32, 40], [33.06, 4, 40]], y => [[33.06, y, 33], [33.06, y, 40]]], [[0,1,0], [[4, 33.06, 33], [32, 33.06, 33], [32, 33.06, 40], [4, 33.06, 40]], x => [[x, 33.06, 33], [x, 33.06, 40]]],
+    [[-1,0,0], [[2.94, 4, 33], [2.94, 32, 33], [2.94, 32, 40], [2.94, 4, 40]], y => [[2.94, y, 33], [2.94, y, 40]]], [[0,-1,0], [[4, 2.94, 33], [32, 2.94, 33], [32, 2.94, 40], [4, 2.94, 40]], x => [[x, 2.94, 33], [x, 2.94, 40]]]])
+    if (vis(nn)){ cab += fill(pd(q), GLASS) + ink(pd(q), .8); for (const u of [11, 18, 25]) cab += ink(pd(mul(u), false), .6); cab += `<path d="${pd([q[0].map((v, i) => v + [0, 1.5, 5.5][i] * (nn[1] ? [1, 0, 1][i] : 1)), q[0].map((v, i) => v + [0, 5, 5.5][i])], false)}" stroke="#ffffff" stroke-width=".9" opacity=".35" fill="none"/>`; }
+  if (k > 0){ const ins = [], put = (bb, svg) => ins.push({ box: bb, svg });
+    put(bx3(6, 20, 30, 16, 31, 36), box(6, 20, 30, 16, 31, 35, WOOD, toneI, .6) + box(6.5, 21, 35, 7.3, 30, 40, CERAMIC, toneI, .5) + (vis([1,0,0]) ? [1, 2, 3].map(i => ink(pd([[7.36, 22, 36 + i], [7.36, 29, 36 + i]], false), .35)).join('') + fill(pd([[7.4, 24, 36.2], [7.4, 27, 36.2], [7.4, 27, 36.9], [7.4, 24, 36.9]]), PALS.cobalt.l) : ''));
+    let cm = box(20, 6, 30, 30, 16, 38, DARK, toneI, .6); if (vis([1,0,0])){ for (const [y, z, r] of [[9, 33, 1.8], [13, 35.5, 1.4], [9.5, 36.5, .9]]) cm += fill(pd(on(PX(30.08), ellUV(y, z, r, r, 10))), METAL.m) + ink(pd(on(PX(30.08), ellUV(y, z, r, r, 10))), .4) + fill(pd(on(PX(30.1), ellUV(y, z, r*.3, r*.3, 6))), INK); }
+    put(bx3(20, 6, 30, 30, 16, 38), cm);
+    cab = ghostBoxSvg(3, 3, 30, 33, 33, 42, m, k, cab, `<g opacity="${f(k)}">${byDepth(ins)}</g>`); }
+  items.push({ box: bx3(3, 3, 30, 33, 33, 42), svg: cab });
+  let roof = box(2, 2, 42, 34, 34, 44, DARK, tone, 1) + rod([18, 18, 44], [18, 18, 56], .5, METAL, toneI, .5) + lampDome(18, 18, 56, st.cp.ctrl ? LAMPC.green : st.cp.api ? LAMPC.amber : LAMPC.red, 1) + rod([10, 18, 44], [10, 18, 49], .4, METAL, toneI, .4) + rod([10, 18, 49], [6, 22, 51], .3, METAL, toneI, .3);
+  items.push({ box: bx3(2, 2, 42, 34, 34, 57), svg: roof });
+  return items;
+}
+/* the Deployments status board by the tower */
+function boardItem(){
+  const Y0 = 40, Y1 = 72, YM = (Y0 + Y1)/2;
+  let s = rod([37, Y0 + 2, 0], [37, Y0 + 2, 22], .7, METAL, toneI, .6) + rod([37, Y1 - 2, 0], [37, Y1 - 2, 22], .7, METAL, toneI, .6) + box(36, Y0, 6, 38, Y1, 26, CERAMIC, toneI, .9);
+  if (vis([1,0,0])){ s += fill(pd([[38.06, Y0 + .3, 22.4], [38.06, Y1 - .3, 22.4], [38.06, Y1 - .3, 25.7], [38.06, Y0 + .3, 25.7]]), INK) + txOn([38.08, YM, 24.9], [0,-1,0], 'DEPLOYMENTS', 2.6, PAPER, 800);
+    const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 4);
+    deps.forEach((d, i) => { const z = 19.2 - i*3.6, live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length, pm = palOf(d.app);
+      const cy = Y1 - 2.5; s += fill(pd([[38.07, cy, z - 1], [38.07, cy - 3, z - 1], [38.07, cy - 3, z + 1.4], [38.07, cy, z + 1.4]]), pm.l) + ink(pd([[38.07, cy, z - 1], [38.07, cy - 3, z - 1], [38.07, cy - 3, z + 1.4], [38.07, cy, z + 1.4]]), .4);
+      s += txOn([38.08, YM - 2.5, z + .9], [0,-1,0], esc(`${d.name.slice(0, 7)} ${rd}/${d.replicas} ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 6)}`), 2.5, rd < d.replicas ? '#b3261e' : INK, 800); });
+    if (!deps.length) s += txOn([38.08, YM, 16], [0,-1,0], 'nothing applied', 2.3, '#857d6e', 700); }
+  return { box: bx3(35.9, Y0, 0, 38.1, Y1, 26), svg: s };
+}
+/* the image registry shelf */
+function registryItems(m){
+  const items = [], y1 = REG_Y0 + REG_MAX*REG_GAP;
+  let wall = box(4, REG_Y0, 0, 6, y1, 18, m, tone, 1);
+  if (vis([1,0,0])) wall += txOn([6.06, (REG_Y0 + y1)/2, 12], [0,-1,0], 'IMAGE REGISTRY', 4.6, mix(m.d, '#000000', .2), 800);
+  items.push({ box: bx3(4, REG_Y0, 0, 6, y1, 18), svg: wall });
+  items.push({ box: bx3(6, REG_Y0, 0, 28, y1, 2), svg: box(6, REG_Y0, 0, 28, y1, 2, CONC, tone, 1) });
+  st.regApps.forEach((app, i) => { const y0 = REG_Y0 + 4 + i*REG_GAP, pm = palOf(app), dep = depOf(app);
+    for (let t = 0; t < 2; t++) items.push({ box: bx3(9, y0, 2 + t*PH, 19, y0 + PL, 2 + (t + 1)*PH), svg: containerSvg(9, y0, 2 + t*PH, pm, { app, ver: dep ? dep.version : 'img', band: false }) }); });
+  return items;
+}
+/* the gantry crane: rails, legs, bridge, cab, trolley, cable, spreader */
+const RAIL = { l:'#9aa3a8', m:'#6f7a80', d:'#454d52' };
+// the rails lie on the floor, so they are painted with it (never inside the depth sort, where a long piece can come out
+// after the legs that stand on it); the crane, the pods and everything else stand above them
+const railsSvg = () => [XR0, XR1].map(x => box(x - 1, 0, 0, x + 1, D, 1.5, RAIL, toneI, .6) + (vis([0,0,1]) ? `<path d="${pd([[x, 0, 1.56], [x, D, 1.56]], false)}" fill="none" stroke="${INK}" stroke-width=".35" opacity=".5"/>` : '')).join('');
+function craneItems(m, k){
+  const c = st.crane, items = [];
+  const TZ = BZ + 4.5;   // the tie beam sits on the girder and joins the two columns of each portal
+  for (const x of [XR0, XR1]){ for (const dy of [-15, 15]){ const y = c.y + dy;
+      items.push({ box: bx3(x - 2, y - 2, 1.5, x + 2, y + 2, TZ), svg: box(x - 1.2, y - 1.2, 1.5, x + 1.2, y + 1.2, TZ, m, tone, .9) + box(x - 2, y - 2, 1.5, x + 2, y + 2, 4, DARK, toneI, .6) }); }
+    items.push({ box: bx3(x - 2, c.y - 16.4, TZ, x + 2, c.y + 16.4, TZ + 3.5), svg: box(x - 2, c.y - 16.4, TZ, x + 2, c.y + 16.4, TZ + 3.5, m, tone, .9) }); }
+  const XB0 = 3; let br = box(XB0, c.y - 2.2, BZ, XR1 + 2.5, c.y + 2.2, BZ + 4.5, m, tone, 1);
+  if (vis([0,1,0])){ let d = ''; for (let x = XB0 + 2; x < XR1 - 2; x += 7) d += pd([[x, c.y + 2.26, BZ + .5], [x + 3.5, c.y + 2.26, BZ + 4]], false) + pd([[x + 3.5, c.y + 2.26, BZ + 4], [x + 7, c.y + 2.26, BZ + .5]], false); br += `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".4" opacity=".5"/>`; }
+  if (vis([0,-1,0])){ let d = ''; for (let x = XB0 + 2; x < XR1 - 2; x += 7) d += pd([[x, c.y - 2.26, BZ + .5], [x + 3.5, c.y - 2.26, BZ + 4]], false) + pd([[x + 3.5, c.y - 2.26, BZ + 4], [x + 7, c.y - 2.26, BZ + .5]], false); br += `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".4" opacity=".5"/>`; }
+  if (vis([1,0,0])) br += txOn([XR1 + 2.56, c.y, BZ + 3.2], [0,-1,0], 'SCHED', 1.6, mix(m.d, '#000000', .2), 800);
+  items.push({ box: bx3(XB0, c.y - 2.2, BZ, XR1 + 2.5, c.y + 2.2, BZ + 4.5), svg: br });
+  const cy0 = c.y + 16.5, cy1 = c.y + 22.5, cz0 = TZ - 3.5, cz1 = TZ + 3.5;
+  let cab = box(XR1 - 2, cy0, cz0, XR1 + 4, cy1, cz1, m, tone, .8);
+  if (vis([1,0,0])) cab += fill(pd([[XR1 + 4.06, cy0 + .8, cz0 + 1], [XR1 + 4.06, cy1 - .8, cz0 + 1], [XR1 + 4.06, cy1 - .8, cz1 - .8], [XR1 + 4.06, cy0 + .8, cz1 - .8]]), GLASS);
+  if (vis([0,1,0])) cab += fill(pd([[XR1 - 1.2, cy1 + .06, cz0 + 1], [XR1 + 3.2, cy1 + .06, cz0 + 1], [XR1 + 3.2, cy1 + .06, cz1 - .8], [XR1 - 1.2, cy1 + .06, cz1 - .8]]), GLASS);
+  items.push({ box: bx3(XR1 - 2, cy0, cz0, XR1 + 4, cy1, cz1), svg: cab });
+  items.push({ box: bx3(c.x - 3.2, c.y - 3.2, BZ - 4.5, c.x + 3.2, c.y + 3.2, BZ), svg: box(c.x - 3.2, c.y - 3.2, BZ - 4.5, c.x + 3.2, c.y + 3.2, BZ, DARK, toneI, .7) });
+  const sz = c.z + PH, cab2 = [[c.x - 1, c.y, sz + 1.6], [c.x - 1, c.y, BZ - 4.5]], cab3 = [[c.x + 1, c.y, sz + 1.6], [c.x + 1, c.y, BZ - 4.5]];
+  let sp2 = `<path d="${pd(cab2, false) + pd(cab3, false)}" fill="none" stroke="${INK}" stroke-width=".9"/>` + box(c.x - PW/2 + .5, c.y - PL/2 + .5, sz, c.x + PW/2 - .5, c.y + PL/2 - .5, sz + 1.6, matOf('#f2c230'), toneI, .7);
+  for (const dy of [-PL/2 + 1.5, PL/2 - 1.5]) sp2 += box(c.x - PW/2 + .8, c.y + dy - .6, sz - .9, c.x + PW/2 - .8, c.y + dy + .6, sz, DARK, toneI, .4);
+  items.push({ box: bx3(c.x - PW/2 + .5, c.y - PL/2 + .5, sz, c.x + PW/2 - .5, c.y + PL/2 - .5, BZ - 4.5), svg: sp2 });
+  return items;
+}
+/* the Service kiosk and the Ingress gate */
+function kioskItems(k, m){
+  const x0 = W - 42, x1 = W - 32, y0 = 36, y1 = 54, svc = svcMain(), eps = endpointsOf(svc), items = [];
+  let s = box(x0, y0, 0, x1, y1, 11, CONC, tone, 1);
+  if (vis([1,0,0])){ s += fill(pd([[x1 + .06, y0 + 2.5, 4], [x1 + .06, y1 - 2.5, 4], [x1 + .06, y1 - 2.5, 8.6], [x1 + .06, y0 + 2.5, 8.6]]), GLASS) + ink(pd([[x1 + .06, y0 + 2.5, 4], [x1 + .06, y1 - 2.5, 4], [x1 + .06, y1 - 2.5, 8.6], [x1 + .06, y0 + 2.5, 8.6]]), .7)
+    + box(x1, y0 + 2, 3, x1 + 2.2, y1 - 2, 4, WOOD, toneI, .5); }
+  s += box(x0 - .8, y0 - .8, 11, x1 + .8, y1 + .8, 12.5, m, tone, .9);
+  let sign = box(x1 - 2.2, y0 + 1, 12.5, x1 - .6, y1 - 1, 20, CERAMIC, toneI, .8);
+  if (vis([1,0,0])) sign += txOn([x1 - .54, (y0 + y1)/2, 15.4], [0,-1,0], 'SERVICE', 2.8, INK, 800) + txOn([x1 - .54, (y0 + y1)/2, 18.6], [0,-1,0], esc(svc ? `${svc.name}:${(svc.ports || [])[0] || 80}` : 'none'), 2.4, '#5a82c6', 800);
+  if (k > 0){ const ins = [], put = (bb, svg) => ins.push({ box: bb, svg });
+    let pan = box(x0 + 1, y0 + 2, 0, x0 + 2.4, y1 - 2, 9, DARK, toneI, .5);
+    if (vis([1,0,0])){ const all = st.pods.filter(p => svc && p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating'); all.slice(0, 10).forEach((p, i) => { const yy = y0 + 4 + (i % 5)*2.6, zz = 6.5 - Math.floor(i/5)*2.6;
+      pan += fill(pd(on(PX(x0 + 2.46), ellUV(yy, zz, .7, .7, 8))), isReady(p) ? LAMPC.green : LAMPC.amber) + ink(pd(on(PX(x0 + 2.46), ellUV(yy, zz, .7, .7, 8))), .3); }); }
+    put(bx3(x0 + 1, y0 + 2, 0, x0 + 2.4, y1 - 2, 9), pan);
+    put(bx3(x0 + 4, y0 + 2, 0, x1 - 1, y0 + 8, 4), box(x0 + 4, y0 + 2, 0, x1 - 1, y0 + 8, 4, WOOD, toneI, .5));
+    ins.push(...wirePieces([[x0 + 2.4, y0 + 6, 1], [x0 + 5, y0 + 6, 1], [x0 + 5, y0 - 1, 1], [x0 - 2, y0 - 1, 1]], '#2d7bd6', .45));
+    s = ghostBoxSvg(x0, y0, 0, x1, y1, 11, CONC, k, s, `<g opacity="${f(k)}">${byDepth(ins)}</g>`); }
+  items.push({ box: bx3(x0 - .8, y0 - .8, 0, x1 + .8, y1 + .8, 12.5), svg: act('kiosk', s) });
+  items.push({ box: bx3(x1 - 2.2, y0 + 1, 12.5, x1 - .6, y1 - 1, 20), svg: sign });
+  // the gate
+  const gx0 = W - 36, gx1 = W - 9, ing = st.ingresses[0];
+  for (const x of [gx0, gx1]) items.push({ box: bx3(x, 18, 0, x + 3, 21.5, 18), svg: box(x, 18, 0, x + 3, 21.5, 18, m, tone, .9) + box(x - .6, 17.4, 0, x + 3.6, 22.1, 1.2, DARK, toneI, .5) });
+  let beam = box(gx0 - 1, 17.5, 18, gx1 + 4, 22, 22.5, m, tone, 1);
+  if (vis([0,1,0])) beam += txOn([(gx0 + gx1 + 3)/2, 22.06, 21], [1,0,0], esc(ing ? ing.host : 'ingress'), 2.6, mix(m.d, '#000000', .2), 800);
+  if (vis([0,-1,0])) beam += txOn([(gx0 + gx1 + 3)/2, 17.44, 21], [-1,0,0], 'INGRESS', 2.8, mix(m.d, '#000000', .2), 800);
+  if (vis([1,0,0])) beam += txOn([gx1 + 4.06, 19.75, 21], [0,-1,0], 'IN', 2, mix(m.d, '#000000', .2), 800);
+  items.push({ box: bx3(gx0 - 1, 17.5, 18, gx1 + 4, 22, 22.5), svg: act('gate', beam) });
+  // boom barrier on the near post, swinging up for traffic
+  const a = st.boom*78*Math.PI/180, piv = [gx1 - .5, 19.75, 7], len = gx1 - gx0 - 5, tip = [piv[0] - len*Math.cos(a), piv[1], piv[2] + len*Math.sin(a)];
+  let boom = rod(piv, tip, .7, CERAMIC, toneI, .6); for (let i = 1; i <= 3; i++){ const t0 = (i*2 - 1)/7, t1 = (i*2)/7; boom += rod(lerp3(piv, tip, t0), lerp3(piv, tip, t1), .76, matOf('#e2483d'), toneI, .3); }
+  boom += cylX(gx1 - 1.5, gx1 + .5, 19.75, 7, 1.4, DARK, toneI, .5, 10);
+  items.push({ box: [[Math.min(piv[0], tip[0]) - .8, 18.9, 6], [piv[0] + 1, 20.6, Math.max(piv[2], tip[2]) + .8]], svg: boom });
+  return items;
+}
+function parcelItems(){
+  const items = [];
+  for (const pc of st.parcels){ const p = parcelAt(pc, pc.t), [X, Y] = P(...p);
+    let s = ''; for (let i = 3; i >= 1; i--){ const q = parcelAt(pc, Math.max(0, Math.min(pc.L, pc.t - pc.dir*i*3.2))), [qx, qy] = P(...q); s += `<circle cx="${f(qx)}" cy="${f(qy)}" r="${f(2.2 - i*.45)}" fill="${pc.col}" opacity="${f(.5 - i*.12)}"/>`; }
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="4.2" fill="${pc.col}" opacity=".25"/><circle cx="${f(X)}" cy="${f(Y)}" r="2.2" fill="${pc.col}" stroke="${INK}" stroke-width=".8"/>`;
+    items.push({ box: bx3(p[0] - 1.5, p[1] - 1.5, p[2] - 1.5, p[0] + 1.5, p[1] + 1.5, p[2] + 1.5), svg: s }); }
+  return items;
+}
+/* floor paint: the lane, the branch lanes, the yard edge line */
+function floorPaint(){
+  let s = fill(pd(on(PZ(.05), rectUV(W - 32, 0, W - 10, D))), '#d8d2c3');
+  s += `<path d="${pd([[W - 32, 0, .06], [W - 32, D, .06]], false) + pd([[W - 10, 0, .06], [W - 10, D, .06]], false)}" fill="none" stroke="#fff4d6" stroke-width="1.1"/>`;
+  s += `<path d="${pd([[W - 21, 0, .06], [W - 21, D, .06]], false)}" fill="none" stroke="#fff4d6" stroke-width=".9" stroke-dasharray="5 4"/>`;
+  for (const n of st.nodes) if (n.row === 0){ const y = nodeCenterY(n); s += `<path d="${pd([[W - 32, y, .06], [n.x0 + SLD + 2, y, .06]], false)}" fill="none" stroke="#fff4d6" stroke-width="1" stroke-dasharray="3 3"/>`
+    + fill(pd([[n.x0 + SLD + 2, y - 2.2, .07], [n.x0 + SLD + 2, y + 2.2, .07], [n.x0 + SLD - 1.5, y, .07]]), '#fff4d6'); }
+  s += `<path d="${pd([[W - 32, 45, .06], [W - 42, 45, .06]], false)}" fill="none" stroke="#fff4d6" stroke-width="1" stroke-dasharray="3 3"/>`;
+  return s;
+}
+function yardBoard(){
+  const A = on(PZ(-2), rrUV(0, 0, W, D, 6)), B = on(PZ(0), rrUV(0, 0, W, D, 6));
+  return loft(A, B, n => toneI(n, YARD)) + fill(pd(B), YARD.l) + ink(pd(B), 1) + hullInk([...A, ...B], 1.8);
+}
+const yardTop = () => on(PZ(0), rrUV(0, 0, W, D, 6));
+
+function scene(st, m){
+  const k = ease(st.xr || 0), parts = [];
+  let s = yardBoard();
+  const top = yardTop(), c = st.crane;
+  // cast shadows, all onto the yard floor, before anything stands on it
+  let sh = castShadow(cornersOf(2, 2, 0, 34, 34, 44), 0, top) + castShadow(cornersOf(36, 40, 0, 38, 72, 26), 0, top) + castShadow(cornersOf(4, REG_Y0, 0, 19, REG_Y0 + REG_MAX*REG_GAP, 22), 0, top);
+  for (const n of st.nodes) if (n.joined > 0){ const j = ease(n.joined); sh += castShadow(cornersOf(n.x0, n.y0, 0, n.x0 + SLD, n.y0 + SLW, SLH*j), 0, top) + castShadow(cornersOf(n.x0 - 18.8, n.y0 + SLW - 16.8, 0, n.x0 - 7.2, n.y0 + SLW - 3.2, 13.5*j), 0, top); }
+  sh += castShadow(cornersOf(W - 42, 36, 0, W - 32, 54, 20), 0, top);
+  sh += `<g opacity=".45">` + castShadow([...cornersOf(W - 37, 17.5, 0, W - 5, 22, 22.5)], 0, top) + castShadow([...cornersOf(3, c.y - 17, 0, XR1 + 4, c.y + 22.5, BZ + 8)], 0, top)
+    + (c.carry ? castShadow(cornersOf(c.carry.pos[0], c.carry.pos[1], 0, c.carry.pos[0] + PW, c.carry.pos[1] + PL, c.carry.pos[2] + PH), 0, top) : '') + `</g>`;
+  s += sh + floorPaint() + railsSvg();
+  parts.push(...towerItems(k, m), boardItem(), ...registryItems(m));
+  // slabs are painted with the floor (nothing can sort behind them); a pod in the air is drawn after everything
+  for (const n of st.nodes) parts.push(...nodeItems(n, k, m));
+  for (const p of st.pods) if (p.pos && (p.phase !== 'pending') && !(p.sys && !st.showSys)) parts.push(...podItem(p, k));
+  parts.push(...craneItems(m, k), ...kioskItems(k, m), ...parcelItems());
+  s += parts.filter(i => i.floor).map(i => i.svg).join('') + byDepth(parts.filter(i => !i.floor));
+  // labels
+  const B = [0, W, 0, D, 0, HTOP];
+  if (k > .6){ const items = [], web = st.pods.find(p => p.pos && p.configMap) || st.pods.find(p => p.pos), sec = st.pods.find(p => p.pos && p.secret), pv = st.pods.find(p => p.pos && p.pvc), n0 = st.nodes[0];
+    if (web){ const [x, y, z] = web.pos; items.push({ at: [x + 5, y + 5, z + 6], text: 'CONTAINER', on: isReady(web) }, { at: [x + 2, y + PL - 2, z + 2.4], text: 'POD NETWORK', on: isReady(web) }, { at: [x + 5, y + .6, z + 6], text: 'CONFIGMAP', on: false }); }
+    if (sec){ const [x, y, z] = sec.pos; items.push({ at: [x + 9, y + 2.8, z + 1.8], text: 'SECRET', on: false }); }
+    if (pv){ const [x, y, z] = pv.pos; items.push({ at: [x + 5, y - 3.2, z + 9.4], text: 'VOLUME (PV)', on: false }); }
+    if (n0 && n0.joined >= 1){ const bx0 = n0.x0 - 18, by1 = n0.y0 + SLW - 4; items.push({ at: [bx0 + 3, by1 - 8, 9], text: 'KUBELET', on: st.pods.some(p => p.node === n0.name && p.phase === 'creating') }, { at: [bx0 + 8, by1 - 13, 6], text: 'RUNTIME', on: false }, { at: [bx0 + 8, by1 - 3, 7], text: 'KUBE-PROXY', on: st.parcels.length > 0 }); }
+    items.push({ at: [21, 15, 8], text: 'ETCD', on: false }, { at: [26, 17, 19], text: 'API SERVER', on: !!c.job || st.pods.some(p => p.phase === 'pending') }, { at: [30, 11, 35], text: 'CONTROLLERS', on: st.pods.some(p => p.phase === 'pending' || p.phase === 'terminating') },
+      { at: [W - 40, 45, 6], text: 'ENDPOINTS', on: st.parcels.length > 0 }, { at: [c.x, c.y, BZ + 2], text: 'SCHEDULER', on: !!c.job });
+    s += yardCallouts(items, B); }
+  else { const items = [], n0 = st.nodes[0], ing = st.ingresses[0], pv = st.pods.find(p => p.pos && p.pvc), p0 = st.pods.find(p => p.pos && p.slot && p.slot.t === 0);
+    if (n0 && n0.joined >= 1) items.push({ at: [n0.x0 + SLD - 3, n0.y0 + SLW/2, SLH], text: 'NODE', on: false }, { at: [n0.x0 - 13, n0.y0 + SLW - 10, 13.5], text: 'KUBELET', on: false }, { at: [n0.x0 - 2.5, n0.y0 + 3, 15.5], text: 'CAPACITY', on: false });
+    if (p0) items.push({ at: [p0.pos[0] + PW, p0.pos[1] + PL/2, p0.pos[2] + 5], text: 'POD', on: isReady(p0) }, { at: [p0.pos[0] + PW - 2, p0.pos[1] + PL - 2.6, p0.pos[2] + PH + 1], text: 'READY LAMP', on: isReady(p0) });
+    if (pv) items.push({ at: [pv.pos[0] + 5, pv.pos[1] - 3.2, pv.pos[2] + 9.4], text: 'VOLUME', on: false });
+    const gn = st.nodes.find(n => n.gpus && n.joined >= 1); if (gn) items.push({ at: [gn.x0 + 3, gn.y0 + 12, SLH + 5], text: 'GPU', on: gpuUsed(gn) > 0 });
+    items.push({ at: [18, 18, 56], text: 'CONTROL', on: false }, { at: [38, 56, 24], text: 'DEPLOYMENTS', on: false }, { at: [14, REG_Y0 + 16, 22], text: 'REGISTRY', on: !!c.job }, { at: [c.x, c.y, BZ + 4.5], text: 'SCHEDULER', on: !!c.job },
+      { at: [W - 33, 45, 19], text: 'SERVICE', on: st.parcels.length > 0 }, { at: [W - 22, 20, 22.5], text: ing ? 'INGRESS' : 'GATE', on: st.boom > .5 });
+    s += yardCallouts(items, B); }
+  return s;
+}
+
+
+/* xrCallouts from the kit, but the right column starts under the stats panel and the switches */
+function yardCallouts(items, B){
+  const pts = []; for (const x of [B[0], B[1]]) for (const y of [B[2], B[3]]) for (const z of [B[4], B[5]]) pts.push(P(x, y, z));
+  const xmin = Math.min(...pts.map(p => p[0])), xmax = Math.max(...pts.map(p => p[0])), cx = (xmin + xmax)/2;
+  const k = INK_K, u = window.LBL_U ? LBL_U() : 0, fs = u ? 10*u : 8.6*k, hgt = u ? 17*u : fs*1.8, gap = hgt + (u ? 3*u : 3*k);
+  const Lc = [], Rc = [];
+  const svgEl = document.getElementById('fig'), vb = svgEl.viewBox.baseVal, ctm = svgEl.getScreenCTM();
+  const wMax = u ? hgt*1.3 + 12*k : Math.max(...items.map(it => it.text.length))*fs*.62 + fs*1.5 + 12*k;
+  const roomL = xmin - vb.x >= wMax, roomR = vb.x + vb.width - xmax >= wMax;
+  for (const it of items){ const [X, Y] = P(...it.at); ((X < cx && roomL) || !roomR ? Lc : Rc).push({ ...it, X, Y }); }
+  let s = '';
+  const top = { [-1]: fs, [1]: fs };
+  const under = (sel, side) => { const el = document.querySelector(sel); if (!el || !ctm || !el.offsetParent || u) return; const r = el.getBoundingClientRect(), q = new DOMPoint(r.right, r.bottom + 10).matrixTransform(ctm.inverse()); if (q.y > vb.y + vb.height*.5) return; if (q.y > top[side]) top[side] = q.y + hgt/2; };
+  under('#btns', -1); under('#stats', 1); under('.vset', 1);
+  for (const [col, side] of [[Lc, -1], [Rc, 1]]){
+    col.sort((a, b) => a.Y - b.Y);
+    let y = -1e9; for (const c of col){ c.py = Math.max(c.Y, y + gap, top[side]); y = c.py; }
+    const shift = col.length ? Math.max(0, col.reduce((a, c) => a + c.py - c.Y, 0) / col.length) : 0;
+    const room = col.length ? col[0].py - top[side] : 0; for (const c of col) c.py -= Math.min(shift, room);
+    for (const c of col){
+      c.n = ((window.__ln || (window.__ln = {}))[c.text] || (__ln[c.text] = Object.keys(__ln).length + 1)); const w = u ? hgt*(c.n > 9 ? 1.3 : 1) : c.text.length*fs*.62 + fs*1.5;
+      let px = side < 0 ? xmin - 10*k - w/2 : xmax + 10*k + w/2; px = Math.max(vb.x + w/2 + 2*k, Math.min(vb.x + vb.width - w/2 - 2*k, px));
+      const ex = px - side*w/2;
+      s += `<g class="tag${c.on ? ' on' : ''}" data-n="${c.n}" data-t="${c.text}"><path d="M${f(c.X)} ${f(c.Y)}L${f(ex + side*-4*k)} ${f(c.py)}L${f(ex)} ${f(c.py)}" fill="none" stroke="${INK}" stroke-width="1"/>`
+        + `<circle cx="${f(c.X)}" cy="${f(c.Y)}" r="${f(1.4*k)}" fill="${INK}"/>`
+        + `<rect x="${f(px - w/2)}" y="${f(c.py - hgt/2)}" width="${f(w)}" height="${f(hgt)}" rx="${f(hgt/2)}" fill="${c.on ? 'var(--accent,#f4b829)' : '#fff4d6'}" stroke="${INK}" stroke-width="1.2"/>`
+        + `<text x="${f(px)}" y="${f(c.py + fs*.36)}" font-size="${f(fs)}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800" letter-spacing=".04em" fill="${INK}">${u ? c.n : c.text}</text></g>`;
+    }
+  }
+  return s;
+}
+
+/* ---------- framing (re-done when the cluster changes size) ---------- */
+function reframe(){
+  const svg = document.getElementById('fig'); if (!svg) return;
+  const y = YAW, p = PITCH, pts = []; OX = OY = 0; RC = [W/2, D/2]; RCZ = HTOP/2; setCam(YAW0, PITCH0);
+  for (const x of [0, W]) for (const yy of [0, D]) for (const z of [0, HTOP]) pts.push(P(x, yy, z));
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+  const PA = window.FIG_A ? FIG_A() : .75, A = PA === .75 ? .75 : Math.min(PA, Math.max(.75, bh/.88/(bw/.74)*1.08)), vbW = Math.max(bw/.64, bh/.88/A), vbH = vbW*A;
+  OX = (vbW - bw)/2 - Math.min(...xs); OY = (PA === .75 ? vbH*.06 : (vbH - bh)*.3) - Math.min(...ys);
+  svg.setAttribute('viewBox', `0 0 ${f(vbW)} ${f(vbH)}`); INK_K = vbW / INK_REF_VB; document.getElementById('fdefs').innerHTML = filterFor(INK_K); bakeNoise(svg);
+  setCam(y, p);
+}
+
+/* ---------- mount ---------- */
+startDemo();
+const q0 = new URLSearchParams(location.search);
+ui = mountFigure({
+  fig:'K8', title:'Longshore', turn:'full', size:[W, D, HTOP], palette:'mustard', state: st,
+  scene,
+  stats: st => { const shown = st.pods.filter(p => !(p.sys && !st.showSys) && p.phase !== 'terminating'); return [
+    { label:'Pods ready', value:`${shown.filter(isReady).length}/${shown.length}` },
+    { label:'Nodes', value: st.nodes.every(n => n.ready) ? String(st.nodes.length) : `${st.nodes.filter(n => n.ready).length}/${st.nodes.length}`, small:true },
+    st.nodes.some(n => n.gpus) ? { label:'GPUs', value:`${st.nodes.reduce((a, n) => a + gpuUsed(n), 0)}/${st.nodes.reduce((a, n) => a + (n.gpus || 0), 0)}`, small:true } : null,
+    st.mode === 'live' ? { label: st.live.status === 'error' ? 'Live: error' : st.live.status === 'file' ? 'From file' : 'Live', value: st.live.poll ? `${st.live.poll}s` : '', small:true } : null ]; },
+  buttons:[
+    { label:'Bootstrap', onClick: () => bootstrap() },
+    { label:'Apply', choices: st => [
+      { label:'cache x2 (new app)', current: !!depOf('cache') && st.mode === 'demo', onClick: () => applyCache() },
+      { label:'delete cache', disabled: !depOf('cache'), why:'cache is not deployed', onClick: () => deleteDep('cache') },
+      { label:'train x3 (1 GPU each)', current: !!depOf('train') && st.mode === 'demo', onClick: () => applyTrain() },
+      { label:'delete train', disabled: !depOf('train'), why:'train is not deployed', onClick: () => deleteDep('train') },
+      { label:'spark x4 (gang, Volcano)', current: !!depOf('spark') && st.mode === 'demo', onClick: () => applySpark() },
+      { label:'delete spark', disabled: !depOf('spark'), why:'spark is not deployed', onClick: () => deleteDep('spark') },
+      { label:'reset the demo', onClick: () => { startDemo(); say('reset', 'Demo cluster reset: web x3, api x2, db x1'); } } ] },
+    { label:'Scale web', choices: st => [1, 2, 3, 5, 8].map(n => ({ label:`${n} replica${n === 1 ? '' : 's'}`, current: st.mode === 'demo' && !!depOf('web') && depOf('web').replicas === n, onClick: () => scaleTo('web', n) })) },
+    { label:'Roll out', choices: st => { const w = depOf('web'), a = depOf('api'); return [
+      { label:'web v2 (rolling)', current: !!w && w.version === 'v2', onClick: () => rollout('web', 'v2') },
+      { label:'web back to v1', current: !!w && w.version === 'v1', onClick: () => rollout('web', 'v1') },
+      { label:'api v2', current: !!a && a.version === 'v2', onClick: () => rollout('api', 'v2') } ]; } },
+    { label:'Break', choices: st => [
+      { label:'delete a web pod', onClick: () => deletePod() },
+      { label:'delete the db pod', onClick: () => deletePod('db') },
+      { label:'crash a container', onClick: () => crashPod() },
+      { label:'fail a readiness probe', onClick: () => unreadyPod() } ] },
+    { label:'Drain', choices: st => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
+    { label:'Send a request', onClick: () => { request(); run(); } },
+    { label:'Cluster', choices: st => [
+      { label:'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
+      { label:'open a kubectl JSON file', onClick: () => loadFile() },
+      { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
+      { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ],
+  acts:{ pod:(st, el) => { const p = st.pods.find(p => p.id === +el.dataset.id); if (p) podInfo(p); },
+    booth:(st, el) => { const n = st.nodes.find(n => n.name === el.dataset.node); if (n) n.cordoned ? uncordon(n) : drain(n); },
+    gate:() => { request(); run(); }, kiosk:() => { request(); run(); } },
+  params:(st, q) => {
+    if (q.has('speed')) SPEED = Math.max(.1, +q.get('speed') || 1);
+    if (q.get('boot') === '1') setTimeout(() => bootstrap(), 400);
+    if (q.has('web')) depOf('web').replicas = +q.get('web');
+    if (q.get('v2') === '1') depOf('web').version = 'v2';
+    if (q.get('cache') === '1') applyCache();
+    if (q.get('train') === '1') applyTrain();
+    if (q.get('spark') === '1') applySpark();
+    if (q.has('cordon')){ const n = st.nodes.find(n => n.name === q.get('cordon')); if (n){ n.cordoned = true; n.tape = 1; } }
+  } });
+reframe();
+if (q0.has('cluster')) watchUrl(q0.get('cluster'), +(q0.get('poll') || 0));
+else if (q0.has('web') || q0.get('v2') === '1' || q0.get('cache') === '1' || q0.get('train') === '1' || q0.get('spark') === '1') run();
+xrMount(() => ui, () => '');
+</script></body></html>
