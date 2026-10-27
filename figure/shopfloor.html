@@ -1643,13 +1643,19 @@ function mkDock(){ const d = DOCK(), g = new THREE.Group(), out = { g }, m = m0(
   out.door = new THREE.Group(); out.door.add(box(d.x0 + 3, d.y0 + 4, 0, d.x1 - 3, d.y0 + 5.2, 20, M('#6b7076', { r: .55, m: .3 }), { r: .2 })); for (let z = 2; z < 20; z += 3) out.door.add(box(d.x0 + 3.2, d.y0 + 4.1, z, d.x1 - 3.2, d.y0 + 5.3, z + .4, M('#3a3e43'), { r: 0, shadow: false }));
   g.add(out.door); out.lamp = lamp(d.x1 - 1.5, d.y1 + 1, 21, LAMP.red, .8); g.add(out.lamp); return out; }
 /* a work cell */
-function bayTex(n){ const rows = cellRows(n), w = n.depth, h = SLW; return tex(`bays|${n.name}|${rows}|${w}`, w, h, (g, ww, hh) => { rect(g, 0, 0, ww, hh, '#b3afa6');
-    for (let r = 0; r < rows; r++) for (let c = 0; c < SHOP_COLS; c++){ const [sx, sy] = slotPos(n, { c, r, t:0 }); line(g, [[sx - n.x0 - .8, sy - n.y0 - .8], [sx - n.x0 + MW + .8, sy - n.y0 - .8], [sx - n.x0 + MW + .8, sy - n.y0 + ML + .8], [sx - n.x0 - .8, sy - n.y0 + ML + .8], [sx - n.x0 - .8, sy - n.y0 - .8]], WHITE, .35, [1.2, .9]); }
-    }, 8); }
+function bayTex(n){ const w = n.depth, h = SLW; return tex(`bays|${w}`, w, h, (g, ww, hh) => { rect(g, 0, 0, ww, hh, '#b3afa6'); for (let i = 0; i < 600; i++){ g.fillStyle = `rgba(70,66,60,${.04 + Math.random()*.06})`; g.fillRect(Math.random()*ww, Math.random()*hh, .5 + Math.random()*1.2, .5 + Math.random()*1.2); } }, 8); }
+// the bay outlines: dashed white lines lying flat, built in world coordinates so they sit exactly under the machines
+function bayLines(n){ const rows = cellRows(n), pos = [], dash = 1.2, gap = .9, wdt = .36, z = .18;
+  const quad = (x0, y0, x1, y1) => { pos.push(x0, z, y0, x1, z, y1, x1, z, y0, x0, z, y0, x0, z, y1, x1, z, y1); };   // wound to face up
+  const seg = (ax, ay, bx, by) => { const L = Math.hypot(bx - ax, by - ay), ux = (bx - ax)/L, uy = (by - ay)/L; for (let d = 0; d < L; d += dash + gap){ const e = Math.min(L, d + dash);
+    const x0 = ax + ux*d, y0 = ay + uy*d, x1 = ax + ux*e, y1 = ay + uy*e; if (Math.abs(ux) > .5) quad(Math.min(x0, x1), y0 - wdt/2, Math.max(x0, x1), y0 + wdt/2); else quad(x0 - wdt/2, Math.min(y0, y1), x0 + wdt/2, Math.max(y0, y1)); } };
+  for (let r = 0; r < rows; r++) for (let c = 0; c < SHOP_COLS; c++){ const [sx, sy] = slotPos(n, { c, r, t:0 }), x0 = sx - .8, y0 = sy - .8, x1 = sx + MW + .8, y1 = sy + ML + .8; seg(x0, y0, x1, y0); seg(x1, y0, x1, y1); seg(x1, y1, x0, y1); seg(x0, y1, x0, y0); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: WHITE, roughness: .8, polygonOffset: true, polygonOffsetFactor: -1 })); m.receiveShadow = true; m.castShadow = false; return m; }
 function mkNode(n){
   const g = new THREE.Group(), out = { g, cases: [], insides: [], key: '', crates: new THREE.Group(), crateKey: '' }, c = cellBox(n), cb = cabinet(n), rk = rackOf(n), m = m0();
   out.rise = new THREE.Group(); g.add(out.rise);
-  const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.rotation.z = Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate);
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.rotation.z = Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, 1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => { g.translate(w, 0); g.scale(-1, 1); txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'); }, 12)));   // a decal lying flat reads mirrored from above unless flipped
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
