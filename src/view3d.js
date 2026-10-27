@@ -103,7 +103,9 @@ ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.
 function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
 function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }
 window.ui = ui; window.__st = st;
-window.__proj = p => toScreen(p); window.__cam = cam; window.__advance = dt => { lastT = performance.now() - dt*1000; driving = true; frameFn(); };   // one frame, dt seconds on, whatever the tab's clock does window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
+// for the browser checks: a world point on the canvas, the camera, one frame of dt seconds whatever the tab's clock does, the labels, a zoom toward a point
+window.__proj = p => toScreen(p); window.__cam = cam; window.__advance = dt => { lastT = performance.now() - dt*1000; driving = true; frameFn(); };
+window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
 
 /* ---------- gestures ---------- */
 const P = new Map(); let ges = null, lastTap = null, tapT = 0, spin = false;

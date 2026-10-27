@@ -71,15 +71,16 @@ const NOPOS = new Set(['scheduled', 'bound']);   // bound but not yet on the flo
 const OFFICE = [20, 22, 26];                      // where the job cards leave the planning office: the counter on the mezzanine (shop)
 // the words each figure's toasts use for the same Kubernetes fact
 const VOC = () => isShop() ? {
-  b0: 'kubeadm init: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the ledger drawers light; the cluster has a memory',
+  b0: 'kubeadm init: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the seal press makes the cluster CA and stamps a badge for the ledger, the counter and the dispatcher; from here on every message between them is mutual TLS', b1: 'etcd is up: the ledger drawers light; the cluster has a memory',
   b2: 'kube-apiserver is serving on :6443: the counter opens and the tube pressurises; kubectl works from here on', b3: "kube-controller-manager and kube-scheduler are running: the dispatcher's desk opens and job cards can be issued",
   bj: n => `kubeadm join: ${n} powers on its controller cabinet (kubelet and container runtime)`, br: n => `${n} registered with the API server and is Ready: its cell is open for job cards`,
   bapp: 'kubectl apply -f app/: orders web x3, api x2 and db x1 posted on the board; their ReplicaSets raise the job cards', live: 'This is a real cluster and the floor only watches it' } : {
-  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the cluster has a memory (every object will live in that cabinet)',
+  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the CA is created and every control-plane component gets its certificate', b1: 'etcd is up: the cluster has a memory (every object will live in that cabinet)',
   b2: 'kube-apiserver is serving on :6443: kubectl works from here on', b3: 'kube-controller-manager and kube-scheduler are running: the crane powers up',
   bj: n => `kubeadm join: ${n} is bootstrapping its kubelet and container runtime`, br: n => `${n} registered with the API server and is Ready (kube-proxy and the CNI are on it)`,
   bapp: 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods', live: 'This is a real cluster and the yard only watches it' };
 const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has never pulled, one from its rack, powering the machine up
+const ROT = 48;                                    // a kubelet certificate's lifetime here (simulated seconds); it rotates at 80% of it, as the real one does
 const GRACE = 2, GRACE_MAX = 5;                    // terminationGracePeriodSeconds, scaled down: a machine drains (finishes the parts already sent to it, takes no new ones) before it powers down; past GRACE_MAX it is killed
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
@@ -89,7 +90,9 @@ const nodeCenterY = n => n.y0 + SLW/2;
 let ui;
 const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
   crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
-  live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 } };
+  live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 },
+  // security: the CA (the seal press), badges signed, the NetworkPolicy in force, refusals at the counter (the room plays them), forged job cards in the tube, the inspector's sign, timed follow-ups
+  sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] } };
 // on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
 const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
@@ -103,7 +106,7 @@ function makePod(dep, ver){
   return { id: ++st.seq, name: `${dep.name}-${rsHash(dep.app, ver)}-${suffix(5)}`, ns: dep.ns || 'default', app: dep.app, ver, band: false,
     node: null, slot: null, phase: 'pending', phaseT: 0, ready: false, restarts: 0, alpha: 1, fire: 0, pos: null,
     containers: dep.containers || [{ name: dep.app, image: dep.app }], pvc: dep.pvc, configMap: dep.configMap, secret: dep.secret, sys: false, born: st.t,
-    gpu: dep.gpu || 0, gang: dep.gang ? dep.app : null, job: dep.kind === 'Job', waitingOn: null, drop: null };
+    gpu: dep.gpu || 0, gang: dep.gang ? dep.app : null, job: dep.kind === 'Job', waitingOn: null, drop: null, pass: { issued: st.t, exp: st.t + 3600 } };
 }
 function placePod(p, n, sl){ p.node = n.name; p.slot = sl; n.used.add(slotKey(sl)); p.pos = slotPos(n, sl); }
 function removePod(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); if (st.crane.carry === p) st.crane.carry = null;
@@ -250,7 +253,9 @@ function podTick(p, dt){
     case 'done': if (p.phaseT > 1.6) terminate(p); return true;
     case 'crash': p.fire = p.phaseT < 1 ? 1 : 0; if (p.phaseT > .95 && !p.counted){ p.counted = true; p.restarts++; }
       if (p.phaseT > 2.1){ p.phase = 'running'; p.phaseT = 0; p.ready = true; p.counted = false; say('restarted', `kubelet restarted the container in place: ${p.name} restarts=${p.restarts}`); } return true;
-    case 'unready': if (p.waitingOn){ if (!depHealthy(p.app)){ p.phaseT = 0; return true; }
+    case 'unready': if (p.nodeDown){ const n = st.nodes.find(n => n.name === p.node); if (!n || !n.ready){ p.phaseT = 0; return true; }
+        if (p.phaseT > .5){ p.phase = 'running'; p.ready = true; p.phaseT = 0; p.nodeDown = false; say('nodeback-' + n.name, `${n.name} reports again: its machines' probes pass and they are back in their Services`); } return true; }
+      if (p.waitingOn){ if (!depHealthy(p.app)){ p.phaseT = 0; return true; }
         if (p.phaseT > .7){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready-' + p.app, `Service ${p.waitingOn} is back, so ${p.app} probes pass again`); p.waitingOn = null; } return true; }
       if (p.phaseT > 4.5){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready', `Probe passing again: ${p.name} is back in the Service`); } return true;
     case 'terminating': { if (draining(p)){ p.alpha = 1; return true; } p.fadeT = (p.fadeT || 0) + dt; p.alpha = Math.max(0, 1 - p.fadeT / .8); if (p.alpha <= 0) removePod(p); return true; }
@@ -278,13 +283,26 @@ function makeParcel(p, svc){
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
   return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0 };
 }
+// a part from one machine to another (a Pod calling a Service): out of its bay to the cross aisle, the cell's conveyor-side opening, the lane, and into the other cell
+function makeLink(a, b, blocked){
+  const na = st.nodes.find(n => n.name === a.node), nb = st.nodes.find(n => n.name === b.node), z = 2.2;
+  const bay = (p, n) => { const [px, py] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r; return { px, py, x1, yt: y1 + 8, yd: y1 - 5, gx: r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX }; };
+  const A = bay(a, na), B = bay(b, nb), pts = [[A.px + 10.6, A.py + 5, z], [A.gx, A.py + 5, z], [A.gx, A.yd, z]];
+  if (na !== nb) pts.push([A.x1 + 4, A.yd, z], [A.x1 + 4, A.yt, z], [LANE, A.yt, z], [LANE, B.yt, z], [B.x1 + 4, B.yt, z], [B.x1 + 4, B.yd, z]);
+  pts.push([B.gx, B.yd, z], [B.gx, B.py + 5, z], [B.px + 10.6, B.py + 5, z]);
+  const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
+  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0 };
+}
 function parcelAt(pc, d){ for (const s of pc.segs) if (d <= s.s0 + s.l + 1e-6) return lerp3(s.a, s.b, s.l ? (d - s.s0)/s.l : 0); return pc.pts[pc.pts.length - 1]; }
 // the target is chosen when the part leaves the station (a Ready endpoint then) and re-checked every frame after: a machine that is
 // draining still answers (in-flight connections finish inside the grace period); one that has powered down, crashed or been removed
 // cannot, so the part turns red where the machine was and comes back as a connection reset
 function parcelTick(pc, dt){
-  const spd = 95, kioskD = pc.segs[1].s0 + pc.segs[1].l;
+  const spd = 95, kioskD = pc.link ? -1 : pc.segs[1].s0 + pc.segs[1].l;
   if (pc.dir === 1){ if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
+    // a NetworkPolicy gate: the part stops at the machine's gate, is dropped there (the CNI drops the packet; the caller times out) and comes back red
+    if (pc.blocked && pc.t + spd*dt >= pc.stop){ pc.t = pc.stop; pc.hold += dt; if (pc.hold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; const pol = st.sec.netpol;
+        say('netpol-drop', `NetworkPolicy ${pol ? pol.name : ''}: ${pc.from.app} -> ${pc.pod.app} is not allowed, so the CNI drops the packet at ${pc.pod.name}'s gate (the caller times out; nothing in the office is asked)`); } return true; }
     if (pc.pod && !pc.reset && pc.t > kioskD && poweredDown(pc.pod)){ pc.reset = pc.pod.phase === 'crash' ? 'crashed' : st.pods.includes(pc.pod) ? 'powered down' : 'was removed'; }
     pc.t += spd*dt;
     if (pc.t >= pc.L){ pc.dir = -1; pc.t = pc.L;
@@ -308,6 +326,7 @@ function tick(dt){
   for (const n of st.nodes) if (n.joining && n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }   // a node joins only once its own kubeadm join has run
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
+  if (secTick(dt)) busy = true;
   st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
   const boomUp = st.parcels.some(pc => Math.abs(pc.t - 20) < 30 || pc.t < 50) ? 1 : 0;
   if (st.boom !== boomUp){ st.boom = Math.max(0, Math.min(1, st.boom + (boomUp ? dt/.35 : -dt/.5))); busy = true; }
@@ -323,14 +342,16 @@ function bootstrap(){
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
   for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.joining = false; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
+  Object.assign(st.sec, { ca: 0, badges: 0, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); for (const n of st.nodes){ n.cert = null; n.csr = false; }
   const V = VOC(); const ev = [
     [.2, () => say('b0', V.b0)],
-    [1.6, () => { st.cp.etcd = 1; say('b1', V.b1); }],
-    [3.0, () => { st.cp.api = 1; say('b2', V.b2); }],
-    [4.4, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
-  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joining = true; say('bj' + i, V.bj(n.name)); }]);
-    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, V.br(n.name)); }]); });
-  const tEnd = 6.0 + st.nodes.length*1.7 + .8;
+    [1.4, () => { st.sec.ca = 1; st.sec.badges = 3; st.sec.stamp = 1.5; say('bca', V.bca); }],   // the CA first: nothing below can talk to anything without its certificate
+    [2.8, () => { st.cp.etcd = 1; say('b1', V.b1); }],
+    [4.2, () => { st.cp.api = 1; say('b2', V.b2); }],
+    [5.6, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
+  st.nodes.forEach((n, i) => { ev.push([7.2 + i*1.7, () => { n.joining = true; n.csr = true; say('bj' + i, V.bj(n.name)); }]);
+    ev.push([7.2 + i*1.7 + 1.1, () => { issueCert(n); n.ready = true; say('br' + i, V.br(n.name)); }]); });
+  const tEnd = 7.2 + st.nodes.length*1.7 + .8;
   ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
   ev.push([tEnd + .3, () => { st.boot = null; }]);
   st.boot = { t: 0, i: 0, ev }; run();
@@ -411,6 +432,8 @@ function startDemo(){
   const order = ['web', 'api', 'db']; let i = 0;
   for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; n.cache.add(p.app + ':' + p.ver); st.pods.push(p); } }
   markBands(); refreshRegistry(); layout(st); st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; st.crane.z = HZT; if (ui) reframe();
+  Object.assign(st.sec, { ca: 1, badges: 3, netpol: null, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); st.reqs = { sent:0, ok:0, err:0, reset:0 };
+  st.nodes.forEach((n, i) => { n.cert = { issued: st.t - 7 - i*9, exp: st.t - 7 - i*9 + ROT, ok: true, flash: 0 }; n.csr = false; n.rotated = 0; }); st.sec.badges = 3 + st.nodes.length;
 }
 function stopLive(){ if (st.live.timer) clearInterval(st.live.timer); st.live.timer = 0; st.live.url = null; st.live.status = ''; }
 async function pollOnce(first){
@@ -458,3 +481,47 @@ function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.na
 function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; say('uncordon', `kubectl uncordon ${n.name}: schedulable again`); run(); }
 function podInfo(p){ const d = depOf(p.app); say('info-' + p.id, `${p.name} · ${p.node || 'Pending'} · ${p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase} · ${p.containers.length} container${p.containers.length === 1 ? '' : 's'} · restarts ${p.restarts}${p.pvc ? ' · volume ' + p.pvc : ''}${d && d.kind === 'StatefulSet' ? ' · StatefulSet' : ''}`, 3000); }
 
+
+/* ---------- security: the CA and its badges, the kubelet's certificate rotation, admission refusals, NetworkPolicy ----------
+   kubeadm makes the cluster CA before anything else; every control-plane component and every kubelet holds a certificate it
+   signed, and all of them talk mutual TLS. A kubelet gets its first certificate through a CSR (approved for the bootstrap
+   token's group, signed by the controller manager's signer) and rotates it at about 80% of its lifetime the same way. */
+function issueCert(n){ n.cert = { issued: st.t, exp: st.t + ROT, ok: true, flash: .9 }; n.csr = false; n.certDown = null; st.sec.badges++; }
+function secTick(dt){ let busy = false; const S = st.sec;
+  if (S.stamp > 0){ S.stamp -= dt; busy = true; }
+  if (S.refuseT > 0){ S.refuseT -= dt; busy = true; }
+  if (S.inspect > 0){ S.inspect -= dt; busy = true; }
+  for (const f of S.forged){ f.t += dt/f.dur; busy = true; if (f.t >= 1 && !f.done){ f.done = true; S.refuseT = 1.6; S.refuse.push({ kind: 'authn', t: st.t });
+    say('401', '401 Unauthorized: the forged card carries no seal (no certificate this CA signed, no valid token), so the counter refuses it before reading it; nothing is written and nothing is scheduled'); } }
+  S.forged = S.forged.filter(f => !f.done || f.t < 1.3);
+  for (const [t, fn] of S.queue.slice()) if (st.t >= t){ S.queue.splice(S.queue.indexOf(S.queue.find(q => q[1] === fn)), 1); fn(); }
+  if (S.queue.length) busy = true;
+  for (const n of st.nodes){ const c = n.cert; if (!c) continue;
+    if (c.flash > 0){ c.flash = Math.max(0, c.flash - dt); busy = true; }
+    if (c.ok && st.t > c.exp - ROT*.2){ c.issued = st.t; c.exp = st.t + ROT; c.flash = .9; n.rotated = (n.rotated || 0) + 1; st.sec.badges++; busy = true;
+      if (!(S.rotSaid > st.t - 120)){ S.rotSaid = st.t; say('rot', `${n.name}: the kubelet rotated its client certificate before it expired (a new CSR, approved and signed by the CA); the badge flashes as it is renewed. Every cell does this on its own schedule`); } }   // the toast once in a while; the flash every time
+    if (!c.ok){ n.certDown = (n.certDown || 0) + dt; busy = true;
+      if (n.certDown > .6 && n.ready){ n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.nodeDown = true; }
+        say('certdown', `${n.name}'s kubelet certificate has expired: the counter refuses its status updates (401), the node-lifecycle controller marks it NotReady, its machines stop being endpoints and the dispatcher sends it nothing`); }
+      if (n.certDown > 4.5){ issueCert(n); n.ready = true; say('certback', `${n.name}: re-bootstrapped with a fresh token, a new CSR is approved and signed by the CA; the kubelet reports again and the node is Ready (in real life: kubeadm certs renew, or a new kubeadm join)`); } } }
+  return busy; }
+function forgeCard(){ if (st.mode === 'live') return liveNote('(send the API server a request with no credentials: curl -k https://<api>:6443/api/v1/pods)'); if (!st.cp.api) return say('noapi', 'The counter is closed: nothing to refuse yet');
+  st.sec.forged.push({ t: 0, dur: 2.4 }); say('forge', 'A forged job card comes up the tube from the floor: no seal on it, no client certificate, no token (kubectl with a made-up kubeconfig)'); run(); }
+function expireBadge(name = 'node-b'){ if (st.mode === 'live') return liveNote('kubeadm certs check-expiration   # on the node: openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -dates');
+  const n = st.nodes.find(n => n.name === name) || st.nodes[1] || st.nodes[0]; if (!n || !n.cert) return say('nocert', `${name} has no badge yet`); if (!n.cert.ok) return say('certalready', `${n.name}'s badge is already expired`);
+  n.cert.ok = false; n.cert.exp = st.t; n.certDown = 0; say('expire', `${n.name}'s kubelet client certificate expires now (its badge goes red): the next status update it sends will be refused`); run(); }
+function applyPrivileged(){ if (st.mode === 'live') return liveNote('kubectl apply -f privileged.yaml   # refused by Pod Security Admission in a restricted namespace'); if (!st.cp.api) return say('noapi', 'The counter is closed');
+  st.sec.inspect = 1.8; st.sec.refuseT = 1.6; st.sec.refuse.push({ kind: 'psa', t: st.t });
+  say('psa', 'kubectl apply -f privileged.yaml: the inspector at the counter refuses it. Pod Security Admission enforces restricted on this namespace, so privileged: true is a 403; nothing is written'); run(); }
+function applyNetpol(quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f netpol-db.yaml'); if (st.sec.netpol) return say('netpol', 'The NetworkPolicy is already in force');
+  st.sec.netpol = { name: 'db-from-api', to: 'db', from: ['api'] }; if (quiet) return;
+  say('netpol', 'kubectl apply -f netpol-db.yaml: NetworkPolicy db-from-api selects the db machines and allows ingress on 5432 from api only; the CNI closes every other gate into them');
+  st.sec.queue.push([st.t + 1.1, () => linkRequest('web', 'db')], [st.t + 2.6, () => linkRequest('api', 'db')]); run(); }
+function removeNetpol(){ if (st.mode === 'live') return liveNote('kubectl delete networkpolicy db-from-api'); if (!st.sec.netpol) return say('nonetpol', 'No NetworkPolicy to remove');
+  st.sec.netpol = null; say('netpoldel', 'kubectl delete networkpolicy db-from-api: with no policy selecting them the db gates are open again (the default is allow-all)'); run(); }
+// a part from one machine to another: web calling db, api calling db
+function linkRequest(fromApp, toApp){ const a = pickPod(fromApp), b = pickPod(toApp); if (!a || !b) return say('nolink', `No Ready ${!a ? fromApp : toApp} machine right now`);
+  const pol = st.sec.netpol, blocked = !!(pol && pol.to === toApp && !pol.from.includes(fromApp)); st.reqs.sent++; st.parcels.push(makeLink(a, b, blocked));
+  say('link-' + fromApp, `${a.name} -> Service ${toApp}:${(st.services.find(s => s.name === toApp) || { ports: [0] }).ports[0] || ''} -> ${b.name}${blocked ? ' (the policy will drop it at the gate)' : pol && pol.to === toApp ? ' (allowed by the policy)' : ''}`); run(); }
+// a slow heartbeat so the badges age while the floor is idle (the loop only runs while something moves); it follows the Clock and never draws a frame of its own
+setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st.sec.ca) return; st.t += SPEED; if (secTick(SPEED)) run(); else if (document.querySelector('.card.open')) ui.render(); }, 1000);

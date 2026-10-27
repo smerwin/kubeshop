@@ -26,6 +26,8 @@ const BUTTONS = [
     { label:'delete train', disabled: !depOf('train'), why:'train is not deployed', onClick: () => deleteDep('train') },
     { label:'spark x4 (gang, Volcano)', current: !!depOf('spark') && st.mode === 'demo', onClick: () => applySpark() },
     { label:'delete spark', disabled: !depOf('spark'), why:'spark is not deployed', onClick: () => deleteDep('spark') },
+    ...(SHOP() ? [ { label:'NetworkPolicy: db accepts only api', current: !!st.sec.netpol && st.mode === 'demo', onClick: () => applyNetpol() },
+      { label:'remove the policy', disabled: !st.sec.netpol, why:'no NetworkPolicy in force', onClick: () => removeNetpol() } ] : []),
     { label:'reset the demo', onClick: () => { startDemo(); say('reset', 'Demo cluster reset: web x3, api x2, db x1'); } } ] },
   { label:'Scale web', short:'Scale', choices: () => scaleChoices('web') },
   { label:'Roll out', choices: () => { const w = depOf('web'), a = depOf('api'); return [
@@ -37,6 +39,7 @@ const BUTTONS = [
     { label:'delete the db pod', onClick: () => deletePod('db') },
     { label:'crash a container', onClick: () => crashPod() },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
+    ...(SHOP() ? [ { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
     { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
     { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
@@ -85,7 +88,7 @@ async function loadChapter(id){ try {
   chap.querySelector('.prose').innerHTML = col.innerHTML + `<a class="more" href="${GUIDE}#${encodeURIComponent(id)}">Back to the guide ↗</a>`; chapb.hidden = false; } catch {} }
 // a camera intent per chapter: frame the thing the chapter is about, or follow the operation it presses
 const CHAPTER = {
-  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 },
+  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 }, security: { follow: 1 },
   pods: { frame: () => { const p = st.pods.find(p => p.pos && p.configMap) || st.pods.find(p => p.pos); return p && { type:'pod', id: p.id }; } },
   nodes: { frame: () => st.nodes[0] && { type:'node', node: st.nodes[0].name } },
   control: { frame: () => ({ type:'tower' }) },
@@ -110,8 +113,10 @@ const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: '
   : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.', kick: 'In the yard', inflight: 'requests in the yard now', boot: 'empty the yard and bring it up in order' };
 const phaseText = p => p.phase === 'pending' ? 'Pending' : p.phase === 'scheduled' ? 'Bound, waiting for the crane' : p.phase === 'bound' ? 'Bound: the job card is in the tube to the cell' : p.phase === 'queued' ? 'Bound, waiting for the cell\'s image pull' : p.phase === 'pulling' ? 'ContainerCreating: the cell is pulling the image' : p.phase === 'staged' ? 'Image ready, waiting for the rest of the gang'
   : p.phase === 'creating' ? (SHOP() ? 'ContainerCreating: the machine is powering up' : 'ContainerCreating (pulling the image)') : p.phase === 'dropping' ? (SHOP() ? 'Bound as a gang, job cards in the tube' : 'Bound as a gang, landing')
-  : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
+  : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.nodeDown ? ' (its node is NotReady)' : p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
 const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
+const gatesText = (n, mine) => { const pol = st.sec.netpol; if (!pol) return 'all open: no NetworkPolicy selects anything here'; const k = mine.filter(p => p.app === pol.to).length;
+  return k ? `${k} ${pol.to} machine${k > 1 ? 's' : ''} gated: ingress from ${pol.from.join(', ')} only (${pol.name})` : `open: ${pol.name} selects ${pol.to} machines and none are in this cell`; };
 const EXPLAIN = {
   'CONTAINER': 'One crate per container. The containers of a pod always land together on one node and share its network namespace and volumes.',
   'POD NETWORK': 'The pod\'s one IP and port space: the socket on the back wall, wired by the node\'s trunk to kube-proxy.',
@@ -160,13 +165,22 @@ const EXPLAIN = {
   'PRESS': 'A GPU: an extended resource only this cell advertises. A job that needs one is all-or-nothing per press.',
   'ANDON': 'Green: Ready and a Service endpoint. Amber: starting or not ready. Red: crashed. Blue: completed. Off: terminating.',
   'STATION': 'A Service: the sorting station that routes each incoming part to any green-andon machine of that job, round robin.',
-  'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in and are sent to a Service.' };
+  'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in and are sent to a Service.',
+  'SEAL PRESS': 'The cluster CA: kubeadm makes it first and signs a certificate for every component with it; the controller manager signs the kubelets\' CSRs with the same CA.',
+  'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join; it rotates at about 80% of its lifetime, and an expired one means the node cannot report.',
+  'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
+  'LOCKED DRAWER': 'Secrets encrypted at rest: with an EncryptionConfiguration the API server encrypts Secret values before they reach etcd, with a key only the office holds (or a KMS).',
+  'INSPECTOR': 'Pod Security Admission: a validating admission check that refuses a Pod breaking the namespace\'s level (privileged, baseline, restricted) before anything is written.',
+  'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
+  'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
+  'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.' };
 function cardFor(a){
   if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (!p) return null; const d = depOf(p.app), live = st.mode === 'live';
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
       body: `<table>${row('Status', LAMP(lampOf(p)) + esc(phaseText(p)))}${row('Node', esc(p.node || '—'))}${row('Version', esc(p.ver) + (p.gpu ? ` · GPU x${p.gpu}` : ''))}` +
         row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
-        (p.pvc ? row('Volume', esc(p.pvc)) : '') + (p.configMap ? row('ConfigMap', esc(p.configMap)) : '') + (p.secret ? row('Secret', esc(p.secret)) : '') + '</table>',
+        (p.pvc ? row('Volume', esc(p.pvc)) : '') + (p.configMap ? row('ConfigMap', esc(p.configMap)) : '') + (p.secret ? row('Secret', esc(p.secret) + ' (from the locked drawer: encrypted at rest)') : '') +
+        (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
       acts: [ { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
@@ -174,12 +188,13 @@ function cardFor(a){
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
-      row('Runs', T().runs) + '</table>',
+      row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
   if (a.type === 'tower'){ const R = window.ControlRoom ? ControlRoom.R : null, cp = st.cp;
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
-      row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) + '</table>',
+      row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) +
+      (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
       acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title: T().boot, onClick: () => bootstrap() } ] }; }
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
@@ -271,6 +286,7 @@ function wireSwitches(){
 /* ---------- mount ---------- */
 function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
+  if (Q.get('netpol') === '1' && SHOP()) applyNetpol(true);
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
   const tst = $('#toast'); if (tst) tst.addEventListener('click', e => { e.stopPropagation(); fanToasts(); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });

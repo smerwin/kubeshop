@@ -8,6 +8,9 @@
      watcher -> controllers (informer cache -> work queue -> reconcile -> a write back to the API server), the
      scheduler (filter -> score -> bind), the kubelet on the bound node (watch -> CRI pull and start -> probes ->
      status) and kube-proxy (EndpointSlices -> rules).
+   Security: the CA (the controller manager's CSR signer) signs every kubelet's certificate at join and at rotation, every
+   bead wears a TLS tag (mutual TLS between components), a forged request dies at authentication and a privileged pod at
+   validating admission (Pod Security), both drawn in red.
    Two extra Break choices stop an etcd follower (nothing changes: the leader still has a quorum) or the leader
    (election: the term goes up, writes wait, then resume). Everything here is drawing; the only state it changes
    is st.cp.hold while etcd has no leader.
@@ -60,6 +63,7 @@ function staticSvg(){
   s += arrow([[82, BUS], [82, 444]], { w: 1, dash: '2 3' }) + arrow([[815, 382], [815, 444]], { w: 1, dash: '2 3' });
   // controllers
   s += box(20, 200, 600, 180, { fill: PAPERC, sw: 1.8 }) + title('kube-controller-manager', 32, 222);
+  s += `<g id="ca">` + box(466, 208, 144, 24, { r: 5 }) + text('CA · CSR signer', 538, 220, { size: 9.5 }) + '</g>';
   for (const [id, c] of Object.entries(CTRL)){ const x = c.x, X = cx(id);
     s += `<g id="c-${id}">` + box(x, 236, 186, 130, { r: 7 }) + text(c.title.toUpperCase(), x + 8, 250, { size: 9.5, anchor: 'start', ls: '.08em', col: MUTED }) + '</g>';
     s += `<g id="inf-${id}">` + box(x + 10, 258, 166, 24, { r: 4 }) + text('informer cache', X, 270, { size: 10 }) + '</g>';
@@ -95,15 +99,15 @@ function staticSvg(){
 /* ---------- the moving parts ---------- */
 const sleep = ms => new Promise(r => R.timers.push({ at: R.now + ms, r }));
 const plen = pts => pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i-1][0], p[1] - pts[i-1][1]) : 0, 0);
-function bead(pts, o = {}){ const L = plen(pts); return new Promise(r => { R.flows.push({ pts, L, col: o.col || BLUEC, label: o.label || '', t: 0, dur: o.dur || Math.max(220, L*2.2), small: !!o.small, r }); drive(); }); }
+function bead(pts, o = {}){ const L = plen(pts); return new Promise(r => { R.flows.push({ pts, L, col: o.col || BLUEC, label: o.label || '', t: 0, dur: o.dur || Math.max(220, L*2.2), small: !!o.small, tls: o.tls !== false, r }); drive(); }); }
 const at = (f, u) => { let d = u*f.L; for (let i = 1; i < f.pts.length; i++){ const a = f.pts[i-1], b = f.pts[i], l = Math.hypot(b[0] - a[0], b[1] - a[1]); if (d <= l || i === f.pts.length - 1){ const k = l ? Math.min(1, d/l) : 0; return [a[0] + (b[0] - a[0])*k, a[1] + (b[1] - a[1])*k]; } d -= l; } return f.pts[f.pts.length - 1]; };
-function lit(id, ms = 700){ R.lit.set(id, R.now + ms); drive(); }
+function lit(id, ms = 700, col){ R.lit.set(id, { until: R.now + ms, col }); drive(); }
 function logLine(s){ R.log = s; if (logEl) logEl.textContent = s; }
 function tick(dt){
   R.now += dt*1000*cfg.speed();
   for (const t of R.timers.slice()) if (R.now >= t.at){ R.timers.splice(R.timers.indexOf(t), 1); t.r(); }
   for (const f of R.flows.slice()){ f.t += dt*1000*cfg.speed(); if (f.t >= f.dur){ R.flows.splice(R.flows.indexOf(f), 1); f.r(); } }
-  for (const [k, until] of R.lit) if (R.now >= until) R.lit.delete(k);
+  for (const [k, v] of R.lit) if (R.now >= v.until) R.lit.delete(k);
   return R.flows.length > 0 || R.timers.length > 0 || R.lit.size > 0;
 }
 const frame = () => { if (!R.driving) return; R.driving = false; clearTimeout(R.fb); const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - R.lastT)/1000)); R.lastT = now; const busy = tick(dt); render(); if (busy) drive(); };
@@ -112,7 +116,7 @@ function render(){
   if (!svg) return; const st = cfg.st, A = accent();
   let s = '';
   // lit boxes: a tinted copy over the static one
-  for (const id of R.lit.keys()){ const g = svg.querySelector('#' + CSS.escape(id) + ' > rect'); if (!g) continue; s += `<rect x="${g.getAttribute('x')}" y="${g.getAttribute('y')}" width="${g.getAttribute('width')}" height="${g.getAttribute('height')}" rx="${g.getAttribute('rx')}" fill="${A}" opacity=".55"/>`; }
+  for (const [id, v] of R.lit){ const g = svg.querySelector('#' + CSS.escape(id) + ' > rect'); if (!g) continue; s += `<rect x="${g.getAttribute('x')}" y="${g.getAttribute('y')}" width="${g.getAttribute('width')}" height="${g.getAttribute('height')}" rx="${g.getAttribute('rx')}" fill="${v.col || A}" opacity=".55"/>`; }
   // etcd members
   let mem = ''; R.members.forEach((m, i) => { const x = mx(i) - 48, y = 56, down = !m.up;
     mem += box(x, y, 96, 100, { fill: down ? '#e6e1d6' : i === R.leader && !R.noLeader ? '#fff1bf' : CREAMC, dash: down ? '3 3' : '' }) + text(m.name, mx(i), y + 14, { size: 11.5 });
@@ -135,27 +139,36 @@ function render(){
   for (const f of R.flows){ const u = Math.min(1, f.t/f.dur), [x, y] = at(f, u), r = f.small ? 3.5 : 5;
     for (let i = 3; i >= 1; i--){ const [qx, qy] = at(f, Math.max(0, u - i*.035)); s += `<circle cx="${qx.toFixed(1)}" cy="${qy.toFixed(1)}" r="${(r - i*.7).toFixed(1)}" fill="${f.col}" opacity="${(.45 - i*.1).toFixed(2)}"/>`; }
     s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${f.col}" stroke="${INKC}" stroke-width="1.1"/>`;
+    if (f.tls) s += `<rect x="${(x - 8).toFixed(1)}" y="${(y + r + 1.5).toFixed(1)}" width="16" height="8" rx="4" fill="${CREAMC}" stroke="${INKC}" stroke-width=".6"/>` + text('TLS', x, y + r + 5.6, { size: 5.5, weight: 800, ls: '.05em' });   // every message between components is mutual TLS
     if (f.label){ const w = f.label.length*6 + 10; s += `<rect x="${(x + 8).toFixed(1)}" y="${(y - 15).toFixed(1)}" width="${w}" height="15" rx="7.5" fill="${CREAMC}" stroke="${INKC}" stroke-width=".8"/>` + text(f.label, x + 8 + w/2, y - 7.5, { size: 9.5, weight: 700 }); } }
   dyn.innerHTML = s;
 }
 
 /* ---------- the sequences ---------- */
-const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8] };
-const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456] };
+const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8], ca: [600, BUS + 8] };
+const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456], ca: [538, 208] };
 // a request into the API server, through the pipeline, into etcd, then the watch fan-out to `watchers`
 async function apiCall(from, label, col, watchers = [], o = {}){
   const p0 = PORT[from] || from, entry = [sx(0), 104];
   const route = from === 'kubectl' ? [p0, [148, 88], [sx(0) - 35, 88]] : [p0, [p0[0], BUS - 10], [sx(0), BUS - 10], entry];
   await bead(route, { label, col, dur: from === 'kubectl' ? 420 : 620 });
   logLine(`${o.verb || (from === 'kubectl' ? 'kubectl' : from)} -> ${o.method || 'PUT'} ${label}`);
-  for (let i = 0; i < 6; i++){ lit('stage' + i, 520); if (i) await bead([[sx(i-1), SY], [sx(i), SY]], { label, col, dur: 150 }); else await sleep(120); }
+  for (let i = 0; i < 6; i++){ if (i) await bead([[sx(i-1), SY], [sx(i), SY]], { label, col, dur: 150 }); else await sleep(120);
+    if (o.failAt === i){ lit('stage' + i, 1600, REDC); logLine(o.fail); await sleep(1200); return null; }   // refused: the request dies at this stage and nothing is written
+    lit('stage' + i, 520); }
   const idx = await raftWrite(label, col);
   R.rv++; logLine(`etcd: txn ${idx} committed and applied -> watch event (resourceVersion ${R.rv})`);
   await bead([[mx(R.leader), MY + 50], [mx(R.leader), 138], [610, 138]], { label: 'event', col, dur: 320 }); lit('watch', 600);
   const paths = watchers.map(w => w === 'kubelet' ? [[WATCH[0], 158], [WATCH[0], BUS], [82, BUS], INF.kubelet] : w === 'proxy' ? [[WATCH[0], 158], [WATCH[0], BUS], [815, BUS], [815, 382], INF.proxy] : [[WATCH[0], 158], [WATCH[0], BUS], [INF[w][0], BUS], INF[w]]);
   await Promise.all(paths.map((p, i) => bead(p, { label: o.event || label.split(' ')[0], col, dur: 520 + i*40 }).then(() => lit(w2id(watchers[i]), 700))));
 }
-const w2id = w => w === 'sched' ? 's-queue' : w === 'kubelet' ? 'k0' : w === 'proxy' ? 'p-inf' : 'inf-' + w;
+const w2id = w => w === 'sched' ? 's-queue' : w === 'kubelet' ? 'k0' : w === 'proxy' ? 'p-inf' : w === 'ca' ? 'ca' : 'inf-' + w;
+// a kubelet's certificate: it posts a CSR, the controller manager's csrapproving controller approves it and csrsigning signs it with the cluster CA
+async function csrFlow(name, why){ R.node = name; lit('k0', 500); logLine(`kubelet ${name}: ${why}; a new key and a CertificateSigningRequest`); await sleep(260);
+  await apiCall('kubelet', `CSR ${name}`, AMBER, ['ca'], { method: 'POST', verb: 'kubelet', event: 'CSR' });
+  lit('ca', 1200); logLine(`controller manager: csrapproving approves it (${/rotat/.test(why) ? 'kubernetes.io/kube-apiserver-client-kubelet: a node renewing its own client cert is auto-approved' : 'signer kubernetes.io/kube-apiserver-client-kubelet, requester in system:bootstrappers via the token'}); csrsigning signs it with the cluster CA`); await sleep(500);
+  await apiCall('ca', `CSR ${name} Approved,Issued`, GREEN, ['kubelet'], { method: 'PATCH', verb: 'csr signer', event: 'cert issued' });
+  logLine(`kubelet ${name}: new certificate installed (kubelet-client-current.pem); it rotates again at about 80% of its lifetime`); }
 // Raft: propose, append, replicate, acknowledge (a quorum), commit, apply. Waits while there is no leader.
 async function raftWrite(label, col){
   if (R.noLeader){ R.waiting++; render(); while (R.noLeader) await sleep(150); R.waiting--; }
@@ -196,8 +209,8 @@ const raced = (pr, ms) => Promise.race([pr, sleep(ms)]);
 function snap(){ const st = cfg.st; return {
   deps: Object.fromEntries(st.deploys.map(d => [d.name, { replicas: d.replicas, version: d.version, app: d.app, kind: d.kind }])),
   pods: Object.fromEntries(st.pods.map(p => [p.id, { phase: p.phase, node: p.node, doomed: !!p.doomed, restarts: p.restarts }])),
-  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined }])),
-  cp: { ...st.cp }, parcels: st.parcels.length, mode: st.mode }; }
+  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined, certOk: !n.cert || n.cert.ok, rot: n.rotated || 0 }])),
+  cp: { ...st.cp }, parcels: st.parcels.length, mode: st.mode, sec: { ca: st.sec.ca, refuse: st.sec.refuse.length, netpol: !!st.sec.netpol } }; }
 function observe(){
   const st = cfg.st, now = snap(); if (!prev || prev.mode !== now.mode){ prev = now; return; }
   const live = st.mode === 'live', who = live ? 'kubectl' : 'kubectl';
@@ -246,14 +259,23 @@ function observe(){
   // Nodes: cordon / uncordon, joining and registering
   for (const [name, n] of Object.entries(now.nodes)){ const o = prev.nodes[name]; if (!o) continue;
     if (o.cordoned !== n.cordoned) chain(`node:${name}`, () => apiCall(who, `Node ${name} unschedulable=${n.cordoned}`, AMBER, ['sched'], { method: 'PATCH', verb: n.cordoned ? 'kubectl cordon' : 'kubectl uncordon', event: 'Node' }).then(() => lit('f-cordon', 900)));
-    if (o.joined === 0 && n.joined > 0) chain(`node:${name}`, async () => { R.node = name; lit('k0', 500); logLine(`kubelet ${name}: kubeadm join, registering with the API server (not registered yet)`); await sleep(300); });
+    if (o.joined === 0 && n.joined > 0) chain(`node:${name}`, async () => { R.node = name; lit('k0', 500); logLine(`kubelet ${name}: kubeadm join with the bootstrap token and the CA hash (the token authenticates the node, the hash lets the node trust the API server)`); await sleep(300); await csrFlow(name, 'TLS bootstrap'); });
+    if (o.rot !== n.rot) chain(`node:${name}`, () => csrFlow(name, 'certificate rotation at 80% of its lifetime'));
+    if (o.certOk && !n.certOk) chain(`node:${name}`, async () => { R.node = name; lit('k4', 600); await apiCall('kubelet', `Node ${name} status`, REDC, [], { method: 'PATCH', verb: 'kubelet', failAt: 0, fail: `authentication: x509: certificate has expired (kubelet client cert of ${name}) -> 401; after node-monitor-grace-period the node-lifecycle controller marks ${name} NotReady and its endpoints are withdrawn` }); });
+    if (!o.certOk && n.certOk) chain(`node:${name}`, () => csrFlow(name, 're-bootstrap with a fresh token'));
     if (!o.ready && n.ready) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); }); }
   // the control plane coming up
+  if (!prev.sec.ca && now.sec.ca) chain('cp:ca', async () => { lit('ca', 1800); logLine('kubeadm init phase certs: the cluster CA is created (/etc/kubernetes/pki/ca.crt); apiserver, apiserver-kubelet-client, front-proxy and the etcd server, peer and client certificates and the sa key pair are signed with it; csrsigning will sign CSRs with the same CA'); await sleep(1400); });
+  if (now.sec.refuse > prev.sec.refuse){ const r = st.sec.refuse[st.sec.refuse.length - 1]; chain('refuse', () => r.kind === 'authn'
+    ? apiCall('kubectl', 'Pod (forged card)', REDC, [], { method: 'POST', verb: 'kubectl (a made-up kubeconfig)', failAt: 0, fail: 'authentication: no client certificate signed by the cluster CA, no valid bearer token -> 401 Unauthorized; authorization is never reached, nothing is written, nothing is scheduled' })
+    : apiCall('kubectl', 'Pod privileged', REDC, [], { method: 'POST', verb: 'kubectl apply', failAt: 3, fail: 'validating admission: PodSecurity (pod-security.kubernetes.io/enforce=restricted on namespace default) forbids privileged: true -> 403 Forbidden; nothing is written' })); }
+  if (prev.sec.netpol !== now.sec.netpol) chain('netpol', async () => { await apiCall('kubectl', now.sec.netpol ? 'NetworkPolicy db-from-api' : 'delete NetworkPolicy db-from-api', AMBER, ['proxy'], { method: now.sec.netpol ? 'POST' : 'DELETE', verb: 'kubectl', event: 'NetworkPolicy' });
+    logLine(now.sec.netpol ? 'CNI agent on every node (Calico, Cilium, Antrea; not kube-proxy): the policy is programmed into the data plane, db pods accept 5432 from api only' : 'CNI agent on every node: the policy is removed, the default allow-all is back'); });
   if (!prev.cp.etcd && now.cp.etcd) chain('cp:etcd', async () => { R.members.forEach(m => { m.up = true; m.log = []; m.commit = 0; m.role = 'follower'; }); R.term = 0; await election(-1); });
   if (!prev.cp.api && now.cp.api) chain('cp:api', async () => { for (let i = 0; i < 6; i++) lit('stage' + i, 900); lit('watch', 900); logLine('kube-apiserver: serving on :6443 (etcd reachable)'); });
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
-  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => { R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300 }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
+  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => { R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
   prev = now;
 }
 const depOfName = app => { const d = cfg.st.deploys.find(d => d.app === app); return d ? d.name : app; };
@@ -289,8 +311,8 @@ async function stopLeader(){ if (R.down != null) return cfg.say('etcd-down', 'On
 
 /* ---------- mount ---------- */
 function mount(host, c){ cfg = c; el = host;
-  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every operation ${st.model === 'shop' ? 'on the floor' : 'in the yard'}</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"></div>`;
-  svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.log');
+  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every operation ${st.model === 'shop' ? 'on the floor' : 'in the yard'}</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"><span style="font-weight:800;letter-spacing:.1em;font-size:9.5px;color:#857d6e;margin-right:8px;white-space:nowrap">LOGBOOK · AUDIT</span><span class="lt"></span></div>`;   // the office logbook: the audit log, every request as it was decided
+  svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.lt');
   R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
 window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R,
