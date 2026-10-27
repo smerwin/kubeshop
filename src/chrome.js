@@ -279,12 +279,13 @@ function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
 const TOAST = { max: 4, step: 8, scale: .96, gap: 6, fanMs: 2600 };
 const toasts = [];   // front first, each { el, h, timer, hold }
 let fanT = 0;
+// the front card shows its whole text (hFull); the ones behind it are clipped to two lines (hClip) until the stack is fanned out
 function layoutToasts(){
-  const fan = fanT > 0, up = isYard(), h0 = toasts.length ? toasts[0].h : 0; let y = 0;
+  const fan = fanT > 0, up = isYard(), hOf = (c, i) => fan || i === 0 ? c.hFull : c.hClip, h0 = toasts.length ? toasts[0].hFull : 0; let y = 0;
   toasts.forEach((c, i) => {
-    let tf, op = 1, fl = 'none';
-    if (fan){ if (i) y += up ? -(toasts[i - 1].h + TOAST.gap) : c.h + TOAST.gap; tf = `translateY(${y}px)`; }
-    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + Math.max(0, h0 - s*c.h))}px) scale(${s})`; op = 1 - .22*i; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i})` : 'none'; }
+    let tf, op = 1, fl = 'none'; c.el.classList.toggle('front', i === 0);
+    if (fan){ if (i) y += up ? -(hOf(toasts[i - 1], i - 1) + TOAST.gap) : hOf(c, i) + TOAST.gap; tf = `translateY(${y}px)`; }
+    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + Math.max(0, h0 - s*c.hClip))}px) scale(${s})`; op = 1 - .22*i; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i})` : 'none'; }
     c.el.style.transform = tf; c.el.style.opacity = op; c.el.style.filter = fl; c.el.style.zIndex = 20 - i; });
 }
 function dropToast(c, dy){ const i = toasts.indexOf(c); if (i < 0) return; toasts.splice(i, 1); clearTimeout(c.timer); const el = c.el;
@@ -292,8 +293,13 @@ function dropToast(c, dy){ const i = toasts.indexOf(c); if (i < 0) return; toast
 function expireToast(c){ if (fanT > 0){ c.timer = setTimeout(() => expireToast(c), Math.max(200, fanT - performance.now() + 200)); return; } dropToast(c, 10); layoutToasts(); }
 function toast(line, hold = 1600){
   const t = $('#toast'); if (!t) return; const el = document.createElement('div'); el.className = 'tc'; el.innerHTML = `<span>${esc(line)}</span>`;
-  el.style.transform = 'translateY(14px) scale(1.04)'; el.style.opacity = 0; t.appendChild(el);
-  const c = { el, h: el.offsetHeight, hold };   // one measure, on arrival: the stack is laid out from these heights, never per frame
+  el.style.transform = 'translateY(14px) scale(1.04)'; el.style.opacity = 0; el.classList.add('front'); t.appendChild(el);
+  // measured once, on arrival, never per frame: the full height as the front card (a step smaller in type if it would cover more than a third
+  // of the screen), and the two-line height it has behind another card
+  const lim = innerHeight/3; let hFull = el.offsetHeight;
+  if (hFull > lim){ el.classList.add('small'); hFull = el.offsetHeight; if (hFull > lim){ el.classList.replace('small', 'xsmall'); hFull = el.offsetHeight; } }
+  el.classList.remove('front'); const hClip = el.offsetHeight; el.classList.add('front');
+  const c = { el, hFull, hClip, hold };
   toasts.unshift(c); while (toasts.length > TOAST.max) dropToast(toasts[toasts.length - 1], -TOAST.step*TOAST.max);
   c.timer = setTimeout(() => expireToast(c), hold); layoutToasts(); }
 function fanToasts(){ const t = $('#toast'); clearTimeout(t._fan); if (fanT > 0){ fanT = 0; t.classList.remove('fan'); layoutToasts(); return; }
