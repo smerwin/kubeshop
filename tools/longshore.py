@@ -3,7 +3,7 @@
 
     python3 tools/longshore.py snapshot [-n NAMESPACE] [--context CTX] > cluster.json
         Writes one snapshot in the yard's format. Open figure/longshore3d.html, press Cluster > "open a kubectl JSON
-        file" and pick it. (A raw `kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json` file loads too.)
+        file" and pick it. (A raw `kubectl get nodes,pods,deploy,sts,ds,svc,ingress,pdb -A -o json` file loads too.)
 
     python3 tools/longshore.py serve [--port 8788] [--every 5] [-n NAMESPACE] [--context CTX]
         Serves the figure and a /cluster.json that is re-read from kubectl every --every seconds, then opens
@@ -16,7 +16,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIG_DIR = os.path.join(HERE, '..', 'figure')
-KINDS = 'nodes,pods,deployments,statefulsets,daemonsets,services,ingresses'
+KINDS = 'nodes,pods,deployments,statefulsets,daemonsets,services,ingresses,poddisruptionbudgets'
 
 
 def kubectl_json(args):
@@ -45,14 +45,39 @@ def app_of(meta):
     return meta.get('name', 'pod')
 
 
+def q_cpu(q):
+    """a cpu quantity to millicores"""
+    if q is None: return None
+    q = str(q)
+    return int(q[:-1]) if q.endswith('m') else int(round(float(q) * 1000))
+
+def q_mem(q):
+    """a memory quantity to MiB"""
+    if q is None: return None
+    import re
+    m = re.match(r'^(\d+(?:\.\d+)?)([KMGTPE]i?)?$', str(q))
+    if not m: return None
+    unit = {'K': 1e3, 'M': 1e6, 'G': 1e9, 'T': 1e12, 'Ki': 1024, 'Mi': 1024 ** 2, 'Gi': 1024 ** 3, 'Ti': 1024 ** 4}.get(m.group(2) or '', 1)
+    return int(round(float(m.group(1)) * unit / 1024 ** 2))
+
+def container_of(c):
+    """name, image, ports and resources, the way the figure's scheduler and cards read them"""
+    res = c.get('resources') or {}
+    out = {'name': c['name'], 'image': c.get('image', ''), 'ports': [p.get('containerPort') for p in c.get('ports') or [] if p.get('containerPort')]}
+    req, lim = res.get('requests') or {}, res.get('limits') or {}
+    if 'cpu' in req or 'memory' in req: out['req'] = {'cpu': q_cpu(req.get('cpu')) or 0, 'mem': q_mem(req.get('memory')) or 0}
+    if 'cpu' in lim or 'memory' in lim: out['lim'] = {'cpu': q_cpu(lim.get('cpu')), 'mem': q_mem(lim.get('memory'))}
+    return out
+
 def normalize(raw, context):
-    snap = {'context': context, 'fetched': time.strftime('%Y-%m-%dT%H:%M:%S'), 'nodes': [], 'pods': [], 'deployments': [], 'services': [], 'ingresses': []}
+    snap = {'context': context, 'fetched': time.strftime('%Y-%m-%dT%H:%M:%S'), 'nodes': [], 'pods': [], 'deployments': [], 'services': [], 'ingresses': [], 'pdbs': []}
     for item in raw.get('items', []):
         kind, meta, spec, status = item.get('kind'), item.get('metadata', {}), item.get('spec', {}), item.get('status', {})
         if kind == 'Node':
             ready = any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in status.get('conditions', []))
+            alloc = status.get('allocatable') or {}
             snap['nodes'].append({'name': meta['name'], 'ready': ready, 'cordoned': bool(spec.get('unschedulable')),
-                                  'gpus': int((status.get('allocatable') or {}).get('nvidia.com/gpu', 0) or 0)})
+                                  'gpus': int(alloc.get('nvidia.com/gpu', 0) or 0), 'cpu': q_cpu(alloc.get('cpu')), 'mem': q_mem(alloc.get('memory'))})
         elif kind == 'Pod':
             cs = status.get('containerStatuses') or []
             owners = meta.get('ownerReferences') or []
@@ -70,7 +95,7 @@ def normalize(raw, context):
             snap['pods'].append({
                 'name': meta['name'], 'namespace': meta.get('namespace'), 'node': spec.get('nodeName'), 'app': app_of(meta), 'phase': phase, 'gpu': gpu,
                 'ready': bool(cs) and all(c.get('ready') for c in cs), 'restarts': sum(c.get('restartCount', 0) for c in cs),
-                'containers': [{'name': c['name'], 'image': c.get('image', '')} for c in spec.get('containers', [])], 'version': version,
+                'containers': [container_of(c) for c in spec.get('containers', [])], 'version': version, 'labels': labels,
                 'pvc': next((v['name'] for v in vols if v.get('persistentVolumeClaim')), None),
                 'configMap': next((v['name'] for v in vols if v.get('configMap')), None),
                 'secret': next((v['name'] for v in vols if v.get('secret')), None),
@@ -84,8 +109,13 @@ def normalize(raw, context):
                 'app': sel.get('app') or sel.get('app.kubernetes.io/name') or sel.get('k8s-app') or meta['name'],
                 'replicas': spec.get('replicas', status.get('desiredNumberScheduled', 0)), 'ready': status.get('readyReplicas', status.get('numberReady', 0)),
                 'version': first_image.split(':')[1] if ':' in first_image else 'v1',
-                'containers': [{'name': c['name'], 'image': c.get('image', '')} for c in tpl.get('containers', [])],
+                'containers': [container_of(c) for c in tpl.get('containers', [])],
+                'antiAffinity': ('required' if ((tpl.get('affinity') or {}).get('podAntiAffinity') or {}).get('requiredDuringSchedulingIgnoredDuringExecution') else 'preferred') if (tpl.get('affinity') or {}).get('podAntiAffinity') else None,
                 'system': meta.get('namespace') == 'kube-system' or kind == 'DaemonSet'})
+        elif kind == 'PodDisruptionBudget':
+            sel = (spec.get('selector') or {}).get('matchLabels') or {}
+            snap['pdbs'].append({'name': meta['name'], 'namespace': meta.get('namespace'), 'app': sel.get('app') or sel.get('app.kubernetes.io/name') or sel.get('k8s-app'),
+                                 'minAvailable': spec.get('minAvailable'), 'maxUnavailable': spec.get('maxUnavailable')})
         elif kind == 'Service':
             snap['services'].append({'name': meta['name'], 'namespace': meta.get('namespace'), 'selector': spec.get('selector') or {}, 'ports': [p.get('port') for p in spec.get('ports', [])]})
         elif kind == 'Ingress':

@@ -235,22 +235,34 @@ const EXTRA_PALS = ['#9b7bd6', '#4fb3b3', '#f08a2b', '#b9c45a', '#d98fd4', '#8aa
 const palOf = app => { if (!APP_PALS[app]) APP_PALS[app] = EXTRA_PALS[Object.keys(APP_PALS).length % EXTRA_PALS.length]; return APP_PALS[app]; };
 
 /* ---------- the demo cluster (the same shape tools/longshore.py writes; a raw kubectl List loads too) ---------- */
+// every container carries its requests and limits (millicores, MiB): the scheduler fits requests, the kubelet enforces limits; tags map a
+// version to the image it rolls out; dependsOn is what the program calls at request time (never what its probe checks)
 const DEMO = {
   context: 'demo',
-  nodes: [ { name:'node-a' }, { name:'node-b' }, { name:'node-c', gpus:2 } ],
+  nodes: [ { name:'node-a', cpu:4000, mem:8192 }, { name:'node-b', cpu:4000, mem:8192 }, { name:'node-c', cpu:8000, mem:16384, gpus:2 } ],
   deployments: [
-    { name:'web', app:'web', replicas:3, version:'v1', containers:[{ name:'nginx', image:'nginx:1.27' }], configMap:'web-config', dependsOn:'api' },
-    { name:'api', app:'api', replicas:2, version:'v1', containers:[{ name:'api', image:'yard/api:1.4' }, { name:'log-shipper', image:'fluent-bit:3' }], secret:'api-keys', dependsOn:'db' },
-    { name:'db', app:'db', kind:'StatefulSet', replicas:1, version:'v1', containers:[{ name:'postgres', image:'postgres:16' }], pvc:'data-db-0' },
-    { name:'coredns', namespace:'kube-system', app:'coredns', replicas:2, version:'1.12', containers:[{ name:'coredns', image:'coredns/coredns:1.12.0' }], system:true } ],
+    { name:'web', app:'web', replicas:3, version:'v1', containers:[{ name:'nginx', image:'nginx:1.27', ports:[80], req:{ cpu:250, mem:128 }, lim:{ cpu:500, mem:256 } }], tags:{ nginx:{ v1:'nginx:1.27', v2:'nginx:1.28', v3:'nginx:1.29' } }, configMap:'web-config', dependsOn:'api', pdb:{ name:'web-pdb', maxUnavailable:1 } },
+    { name:'api', app:'api', replicas:2, version:'v1', containers:[{ name:'api', image:'yard/api:1.4', ports:[8080], req:{ cpu:500, mem:256 }, lim:{ cpu:1000, mem:512 } }, { name:'log-shipper', image:'fluent-bit:3', req:{ cpu:100, mem:64 }, lim:{ cpu:200, mem:128 } }], tags:{ api:{ v1:'yard/api:1.4', v2:'yard/api:1.5', v3:'yard/api:1.6' } }, secret:'api-keys', dependsOn:'db' },
+    { name:'db', app:'db', kind:'StatefulSet', replicas:1, version:'v1', containers:[{ name:'postgres', image:'postgres:16', ports:[5432], req:{ cpu:1000, mem:1024 }, lim:{ cpu:1000, mem:1024 } }], tags:{ postgres:{ v1:'postgres:16', v2:'postgres:17' } }, pvc:'data-db' },
+    { name:'coredns', namespace:'kube-system', app:'coredns', replicas:2, version:'1.12', containers:[{ name:'coredns', image:'coredns/coredns:1.12.0', ports:[53], req:{ cpu:100, mem:70 }, lim:{ mem:170 } }], antiAffinity:'preferred', system:true } ],
   services: [ { name:'web', selector:{ app:'web' }, ports:[80] }, { name:'api', selector:{ app:'api' }, ports:[8080] }, { name:'db', selector:{ app:'db' }, ports:[5432], clusterIP:'None' }, { name:'kube-dns', namespace:'kube-system', selector:{ app:'coredns' }, ports:[53], clusterIP:'10.96.0.10' } ],
   ingresses: [ { host:'shop.example.com', service:'web', port:80 } ] };
+const NODE_DEFAULT = { cpu:4000, mem:8192 };          // allocatable for a node that states none
+const reqOf = c => (c.req || { cpu:0, mem:0 });
+const podReq = p => p.containers.reduce((a, c) => ({ cpu: a.cpu + reqOf(c).cpu, mem: a.mem + reqOf(c).mem }), { cpu:0, mem:0 });
+// QoS: Guaranteed when every container's limits equal its requests, Burstable with any request, BestEffort with none
+const qosOf = p => { const cs = p.containers; if (!cs.some(c => c.req || c.lim)) return 'BestEffort';
+  return cs.every(c => c.lim && c.req && c.lim.cpu === c.req.cpu && c.lim.mem === c.req.mem) ? 'Guaranteed' : 'Burstable'; };
+const fmtCpu = m => m >= 1000 && m % 1000 === 0 ? (m/1000) + '' : m + 'm';
+const fmtMem = mi => mi >= 1024 && mi % 1024 === 0 ? (mi/1024) + 'Gi' : mi + 'Mi';
 
 /* ---------- names ---------- */
 const SUF = 'abcdefghijkmnpqrstuvwxyz0123456789';
 let rseed = 7; const rnd = () => (rseed = (rseed * 48271) % 2147483647) / 2147483647;
 const suffix = n => Array.from({ length:n }, () => SUF[Math.floor(rnd()*SUF.length)]).join('');
-const rsHash = (app, ver) => { let h = 7; for (const ch of app + '/' + ver) h = (h*31 + ch.charCodeAt(0)) >>> 0; return (h.toString(36) + 'xxxxx').slice(0, 5); };
+// a ReplicaSet's pod-template hash: two templates that differ by one character get two different names (FNV-1a, then mixed, base-36)
+const rsHash = (app, ver) => { let h = 0x811c9dc5; for (const ch of app + '/' + ver){ h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b) >>> 0; h ^= h >>> 13; return ('xxxxx' + h.toString(36)).slice(-5); };
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const lerp3 = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
 const dist3 = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
@@ -283,11 +295,11 @@ const NOPOS = new Set(['scheduled', 'bound']);   // bound but not yet on the flo
 const OFFICE = [20, 22, 26];                      // where the job cards leave the planning office: the counter on the mezzanine (shop)
 // the words each figure's toasts use for the same Kubernetes fact
 const VOC = () => isShop() ? {
-  b0: 'kubeadm init: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the seal press makes the cluster CA and stamps a badge for the ledger, the counter and the dispatcher; from here on every message between them is mutual TLS', b1: 'etcd is up: the ledger drawers light; the cluster has a memory',
+  b0: 'kubeadm init --control-plane-endpoint on cp-1: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the seal press makes the cluster CA and stamps a badge for the ledger, the counter and the dispatcher; from here on every message between them is mutual TLS', b1: 'etcd is up on cp-1: the first ledger drawer lights, a Raft group of one for now; the cluster has a memory',
   b2: 'kube-apiserver is serving on :6443: the counter opens and the tube pressurises; kubectl works from here on', b3: "kube-controller-manager and kube-scheduler are running: the dispatcher's desk opens and job cards can be issued",
   bj: n => `kubeadm join: ${n} powers on its controller cabinet (kubelet and container runtime)`, br: n => `${n} registered with the API server and is Ready: its cell is open for job cards`,
   bapp: 'kubectl apply -f app/: orders web x3, api x2 and db x1 posted on the board; their ReplicaSets raise the job cards', live: 'This is a real cluster and the floor only watches it' } : {
-  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the CA is created and every control-plane component gets its certificate', b1: 'etcd is up: the cluster has a memory (every object will live in that cabinet)',
+  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', bca: 'kubeadm init phase certs: the CA is created and every control-plane component gets its certificate', b1: 'etcd is up on the first control-plane node, a Raft group of one for now: the cluster has a memory (every object will live in that cabinet)',
   b2: 'kube-apiserver is serving on :6443: kubectl works from here on', b3: 'kube-controller-manager and kube-scheduler are running: the crane powers up',
   bj: n => `kubeadm join: ${n} is bootstrapping its kubelet and container runtime`, br: n => `${n} registered with the API server and is Ready (kube-proxy and the CNI are on it)`,
   bapp: 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods', live: 'This is a real cluster and the yard only watches it' };
@@ -295,35 +307,52 @@ const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has neve
 const ROT = 600;                                   // a kubelet certificate's lifetime here (simulated seconds, ten minutes; kubeadm's is a year); it rotates at 80% of it, as the real one does
 let rotToasted = false;                            // the rotation toast once per session; later rotations only flash the badge
 const GRACE = 2, GRACE_MAX = 5;                    // terminationGracePeriodSeconds, scaled down: a machine drains (finishes the parts already sent to it, takes no new ones) before it powers down; past GRACE_MAX it is killed
+const BACKOFF_0 = 10, BACKOFF_MAX = 300, BACKOFF_RESET = 600;   // the kubelet's restart back-off: 10 s, doubling to 5 min, forgotten after 10 min of running (the real values, on the clock)
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
 const nodeCenterY = n => n.y0 + SLW/2;
 
 /* ---------- state ---------- */
 let ui;
-const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
+const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0, pvs:{},
   crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
-  live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 },
+  live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0, members:3 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 },
   // security: the CA (the seal press), badges signed, the NetworkPolicy in force, refusals at the counter (the room plays them), forged job cards in the tube, the inspector's sign, timed follow-ups
   sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] },
   // networking: the fabric (static routes, or BGP from every cabinet to its row's diverter with two spine belts), Service addressing,
   // the directory (CoreDNS), the mesh (sidecars, the mesh's own CA, a weighted canary) and a managed control plane behind the fence
   net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], flick:{}, dns:{ n:0, flash:0, hl:null, hlT:0, key:'' }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
-// on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
-const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && !(alive && p.orphan) && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
+// a pod with a deletionTimestamp (Terminating) no longer counts for its ReplicaSet: the replacement is created at once, while the old
+// one is still draining. A pod evicted from an unreachable node is Terminating too, but still exists: a StatefulSet waits for it
+const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || (p.phase !== 'terminating' && !p.orphan)));
+const stsPods = app => st.pods.filter(p => p.app === app);                 // every pod object of a StatefulSet, Terminating and orphaned ones included
 const isReady = p => p.phase === 'running' && p.ready;
 const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.unknown ? LAMPC.unknown : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
 const imageOf = p => (p.containers[0] || {}).image || p.app;
 const depOf = app => st.deploys.find(d => d.app === app);
 function say(key, text, ms = 2300){ if (!ui) return; const now = performance.now(); if (st.said[key] && now - st.said[key] < 2600) return; st.said[key] = now; ui.flash(text, ms); }
 
+// the image a container runs at a version: the template's tags map, or the template's image with its tag replaced
+const imageAt = (dep, c, ver) => { const t = dep.tags && dep.tags[c.name]; if (t && t[ver]) return t[ver]; if (!dep.version || ver === dep.version || !c.image) return c.image || dep.app; return c.image.split(':')[0] + ':' + ver; };
+const containersAt = (dep, ver) => (dep.containers || [{ name: dep.app, image: dep.app }]).map(c => ({ ...c, image: imageAt(dep, c, ver) }));
+// a StatefulSet's pods are db-0, db-1, ... : the lowest ordinal no pod of its name holds, Terminating ones included (the controller
+// never creates db-0 again while the old db-0 exists); each ordinal's claim is its own (data-db-0)
+const isSts = dep => dep && dep.kind === 'StatefulSet';
+function stsOrdinal(dep){ const taken = new Set(st.pods.filter(p => p.app === dep.app).map(p => p.ordinal)); let i = 0; while (taken.has(i)) i++; return i; }
 function makePod(dep, ver){
-  ver = ver || dep.version;
-  return { id: ++st.seq, name: `${dep.name}-${rsHash(dep.app, ver)}-${suffix(5)}`, ns: dep.ns || 'default', app: dep.app, ver, band: false,
-    node: null, slot: null, phase: 'pending', phaseT: 0, ready: false, restarts: 0, alpha: 1, fire: 0, pos: null,
-    containers: dep.containers || [{ name: dep.app, image: dep.app }], pvc: dep.pvc, configMap: dep.configMap, secret: dep.secret, sys: !!dep.sys, born: st.t,
-    gpu: dep.gpu || 0, gang: dep.gang ? dep.app : null, job: dep.kind === 'Job', waitingOn: null, drop: null, pass: { issued: st.t, exp: st.t + 3600 } };
+  ver = ver || dep.version; const sts = isSts(dep), ord = sts ? stsOrdinal(dep) : null;
+  return { id: ++st.seq, name: sts ? `${dep.name}-${ord}` : `${dep.name}-${rsHash(dep.app, ver)}-${suffix(5)}`, ordinal: ord, ns: dep.ns || 'default', app: dep.app, ver, band: false, labels: { app: dep.app, version: ver },
+    node: null, slot: null, phase: 'pending', phaseT: 0, ready: false, restarts: 0, backoff: 0, alpha: 1, fire: 0, pos: null,
+    containers: containersAt(dep, ver), pvc: dep.pvc ? (sts ? dep.pvc.replace(/-\d+$/, '') + '-' + ord : dep.pvc) : undefined, configMap: dep.configMap, secret: dep.secret, sys: !!dep.sys, born: st.t,
+    gpu: dep.gpu || 0, gang: dep.gang ? dep.app : null, job: dep.kind === 'Job', drop: null, pass: { issued: st.t, exp: st.t + 3600 } };
 }
+/* ---------- volumes: a claim is bound to one PersistentVolume, attached to one node at a time (ReadWriteOnce) ----------
+   The attach/detach controller attaches the volume when a pod using the claim is bound to a node and detaches it once that pod is
+   gone. While the old pod exists, even Terminating on a node that cannot answer, the volume stays attached there: that is why a
+   StatefulSet never creates a replacement first. The yard draws nothing for this; the shop tags the pallet. */
+const pvOf = pvc => st.pvs[pvc] || (st.pvs[pvc] = { node: null, pods: 0 });
+function attachPV(p){ if (!p.pvc || !p.node) return; const v = pvOf(p.pvc); if (v.node === p.node) return;
+  say('attach-' + p.pvc, v.node ? `PV for ${p.pvc}: detached from ${v.node} (its pod is gone), attached to ${p.node}; the kubelet mounts it before the container starts` : `PV for ${p.pvc} attached to ${p.node} and mounted`); v.node = p.node; }
 function placePod(p, n, sl){ p.node = n.name; p.slot = sl; n.used.add(slotKey(sl)); p.pos = slotPos(n, sl); }
 function removePod(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); if (st.crane.carry === p) st.crane.carry = null;
   st.crane.queue = st.crane.queue.filter(j => j.pod !== p); st.caps = st.caps.filter(c => c.pod !== p); st.pods = st.pods.filter(q => q !== p); }
@@ -340,6 +369,16 @@ function reconcile(){
   for (const dep of st.deploys){
     if (dep.kind === 'Job'){ if (!dep.spawned){ dep.spawned = true; for (let i = 0; i < dep.replicas; i++) st.pods.push(makePod(dep));
         say('job-' + dep.app, dep.gang ? `Volcano PodGroup ${dep.app} (minMember ${dep.minMember || dep.replicas}): ${dep.replicas} Pods Pending until all fit at once` : `Job ${dep.app}: ${dep.replicas} Pods Pending`); } continue; }
+    if (isSts(dep)){
+      // a StatefulSet: one pod at a time, in ordinal order, and only while every existing pod object is Running and Ready. A Terminating
+      // pod, even one on a node that cannot confirm it stopped, blocks the next create: db-0 is never two things at once, and its
+      // volume (attached to the old node) is never claimed by a second pod
+      const all = stsPods(dep.app);
+      const stuck = all.find(p => p.orphan);
+      if (all.length < dep.replicas){ if (all.every(isReady)){ st.pods.push(makePod(dep)); say('sts-' + dep.app, `StatefulSet ${dep.name} wants ${dep.replicas}: ${dep.name}-${all.length} is Pending (ordered: one at a time, after the one before it is Ready)`); } }
+      else if (stuck && !all.some(isReady)) say('stswait-' + dep.app, `StatefulSet ${dep.name}: ${stuck.name} is Terminating on a node that cannot confirm it stopped, so no replacement is created (at most one ${stuck.name}; its volume is still attached to ${stuck.node})`, 3600);
+      else if (all.length > dep.replicas){ const extra = all.filter(p => p.phase !== 'terminating').sort((a, b) => b.ordinal - a.ordinal)[0]; if (extra){ terminate(extra); say('stsdown-' + dep.app, `StatefulSet ${dep.name} scaled down: ${extra.name} (the highest ordinal) terminates; its claim ${extra.pvc} stays bound`); } }
+      continue; }
     const live = podsOf(dep.app), newer = live.filter(p => p.ver === dep.version), older = live.filter(p => p.ver !== dep.version);
     const readyN = live.filter(isReady).length;
     if (!older.length){
@@ -347,10 +386,16 @@ function reconcile(){
       const extra = live.length - dep.replicas;
       if (extra > 0) live.slice().sort((a, b) => b.born - a.born).slice(0, extra).forEach(p => terminate(p));
     } else {
-      // rolling update, maxSurge 1 / maxUnavailable 0: one new pod up, then one old pod down once it is Ready; a paused rollout holds with its first new pod up
-      if (dep.paused && newer.length >= 1){ /* kubectl rollout pause: the canary stays, the old ReplicaSet keeps its pods */ }
-      else if (live.length < dep.replicas + 1 && newer.length < dep.replicas){ st.pods.push(makePod(dep)); say('roll-' + dep.app, `Rollout: new ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} surges one ${dep.version} Pod`); }
-      if (!(dep.paused && newer.length >= 1) && readyN > dep.replicas && older.length){ terminate(older.sort((a, b) => a.born - b.born)[0]); say('rolldown-' + dep.app, `A ${dep.version} Pod is Ready, so one old Pod is scaled down`); }
+      // rolling update with the defaults, maxSurge 25% (rounded up) and maxUnavailable 25% (rounded down): at 3 replicas that is 1 and 0,
+      // one new pod up and one old down once it is Ready; at 8 it is 2 and 2, so four pods change hands at once. A paused rollout holds
+      const surge = Math.max(1, Math.ceil(dep.replicas*.25)), unavail = Math.floor(dep.replicas*.25), lim = dep.replicas - unavail;
+      const paused = dep.paused && newer.length >= 1;   // kubectl rollout pause: the canary stays, the old ReplicaSet keeps its pods
+      let made = 0; while (!paused && live.length + made < dep.replicas + surge && newer.length + made < dep.replicas) made++;
+      for (let i = 0; i < made; i++) st.pods.push(makePod(dep));
+      if (made) say('roll-' + dep.app, `Rollout: new ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} surges ${made === 1 ? 'one' : made} ${dep.version} Pod${made === 1 ? '' : 's'} (maxSurge 25% = ${surge}, maxUnavailable 25% = ${unavail} of ${dep.replicas})`);
+      let down = 0; const oldest = older.slice().sort((a, b) => a.born - b.born);
+      while (!paused && oldest.length && readyN - down - 1 >= lim && (newer.length + made > 0)){ terminate(oldest.shift()); down++; }
+      if (down) say('rolldown-' + dep.app, `${newer.filter(isReady).length ? `${newer.filter(isReady).length} ${dep.version} Pod${newer.filter(isReady).length === 1 ? ' is' : 's are'} Ready, so` : 'Within maxUnavailable,'} ${down === 1 ? 'one old Pod is' : down + ' old Pods are'} scaled down (${readyN - down} available, at least ${lim} must stay)`);
     }
   }
   markBands(); refreshRegistry();
@@ -360,26 +405,41 @@ function terminate(p){ if (p.phase === 'terminating') return; if (p.phase === 'c
 const draining = p => p.phase === 'terminating' && !p.down && (p.phaseT < GRACE || p.phaseT < GRACE_MAX && st.parcels.some(pc => pc.pod === p && pc.dir === 1));
 // gone for an in-flight request: removed, crashed, or past its grace period and powered down
 const poweredDown = p => !st.pods.includes(p) || p.phase === 'crash' || (p.phase === 'terminating' && !draining(p));
-// a pod's readiness probe needs the thing it talks to: api needs a Ready db, web needs a Ready api
+// what a program calls at request time: web calls api, api calls db. A readiness probe checks only its own pod (the docs warn against
+// probing a dependency: it turns one failure into a cascade with nothing to route to), so the pods stay Ready and the request fails
+// where it really does, inside the handler, as a 5xx with the first missing Service in the chain
 const depHealthy = app => { const d = depOf(app); return !d || !d.dependsOn || podsOf(d.dependsOn).some(isReady); };
-function checkDependencies(){
-  for (const p of st.pods) if (p.phase === 'running' && p.ready && !depHealthy(p.app)){ const d = depOf(p.app);
-    p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.waitingOn = d.dependsOn; say('dep-' + p.app, `${p.app} readiness probes failing: Service ${d.dependsOn} has no Ready endpoints (${p.app} stays up but gets no traffic)`); }
-}
-const gpuUsed = n => st.pods.filter(p => p.node === n.name && p.phase !== 'terminating').reduce((a, p) => a + (p.gpu || 0), 0);
+function chainBreak(app){ const seen = new Set(); let a = app; while (a && !seen.has(a)){ seen.add(a); const d = depOf(a); if (!d || !d.dependsOn) return null; if (!podsOf(d.dependsOn).some(isReady)) return { caller: a, missing: d.dependsOn }; a = d.dependsOn; } return null; }
+// the pods that hold a node's resources: everything bound there that has not been confirmed gone (a Terminating pod still holds them)
+const holdsOn = n => st.pods.filter(p => p.node === n.name && p.phase !== 'terminating');
+const gpuUsed = n => holdsOn(n).reduce((a, p) => a + (p.gpu || 0), 0);
 const gpuFree = n => (n.gpus || 0) - gpuUsed(n);
+const allocOn = n => holdsOn(n).reduce((a, p) => { const r = podReq(p); return { cpu: a.cpu + r.cpu, mem: a.mem + r.mem }; }, { cpu:0, mem:0 });
+const nodeCpu = n => n.cpu || NODE_DEFAULT.cpu, nodeMem = n => n.mem || NODE_DEFAULT.mem;
 const slotsFree = n => (isShop() ? SHOP_COLS*SHOP_MAXROWS : ROWS*COLS*9) - n.used.size;
 const cellCap = () => isShop() ? SHOP_COLS*SHOP_ROWS : ROWS*COLS*3;
-/* scheduler: every Pending pod gets a node with a free slot (fewest pods first), then the crane delivers it */
+// the taints a node carries: cordoned, not ready, unreachable; the filter reads them like the real one (NoSchedule keeps new pods off)
+const taintsOf = n => [n.cordoned ? 'node.kubernetes.io/unschedulable:NoSchedule' : null, n.unreach ? 'node.kubernetes.io/unreachable:NoExecute' : !n.ready && n.joined >= 1 ? 'node.kubernetes.io/not-ready:NoSchedule' : null].filter(Boolean);
+/* the scheduler's filter: why a node cannot take this pod, or null when it can. The real plugins by name: TaintToleration, NodeResourcesFit,
+   NodeUnschedulable; the bay count stands in for maxPods */
+function unfit(n, p){ if (n.joined < 1 || !n.ready) return 'not Ready'; if (n.cordoned) return 'unschedulable'; if (!freeSlot(n)) return 'maxPods'; if (st.mode === 'live') return null;
+  if (gpuFree(n) < (p.gpu || 0)) return 'Insufficient nvidia.com/gpu'; const r = podReq(p), a = allocOn(n);
+  if (a.cpu + r.cpu > nodeCpu(n)) return 'Insufficient cpu'; if (a.mem + r.mem > nodeMem(n)) return 'Insufficient memory'; return null; }
+/* the scheduler's score, higher is better: NodeResourcesFit LeastAllocated (the node with the most of its cpu and memory still free), a
+   preferred anti-affinity against a node already running the same app, then the pod count as the tie-break the fewest-pods rule was */
+function score(n, p){ const r = podReq(p), a = allocOn(n); const free = (1 - (a.cpu + r.cpu)/nodeCpu(n) + 1 - (a.mem + r.mem)/nodeMem(n))/2;
+  const d = depOf(p.app), same = d && d.antiAffinity ? holdsOn(n).filter(q => q.app === p.app).length : 0; return free*100 - same*60 - countOn(n)*.01; }
+function pickNode(p, cands){ return cands.slice().sort((a, b) => score(b, p) - score(a, p) || a.name.localeCompare(b.name))[0]; }
+/* scheduler: every Pending pod gets the node that fits it and scores best, then the crane delivers it */
 function schedule(){
   scheduleGangs();
   for (const p of st.pods){ if (p.phase !== 'pending' || p.gang) continue;   // system pods are scheduled like any other; hiding them only stops the drawing
-    let cands = st.nodes.filter(n => n.ready && !n.cordoned && freeSlot(n) && (st.mode === 'live' || gpuFree(n) >= (p.gpu || 0)));
+    let cands = st.nodes.filter(n => !unfit(n, p));
     if (st.mode === 'live') cands = cands.filter(n => n.name === p.wantNode);
-    if (!cands.length){ if (st.mode === 'demo') say(p.gpu ? 'nogpu' : 'nosched', p.gpu ? `Pending: ${p.name} requests nvidia.com/gpu: ${p.gpu} and no node has a free GPU` : 'Pending: no schedulable node has room (uncordon one)'); continue; }
-    cands.sort((a, b) => countOn(a) - countOn(b) || a.name.localeCompare(b.name));
-    const n = cands[0], sl = freeSlot(n); placePod(p, n, sl); p.pos = null;
-    if (isShop()){ p.phase = 'bound'; p.phaseT = 0; st.caps.push(mkCap(p, n)); say('bind', `Scheduler bound ${p.name} to ${n.name}: spec.nodeName written, the job card is on its way to the cell`); continue; }
+    if (!cands.length){ if (st.mode === 'demo'){ const why = {}; for (const n of st.nodes) why[unfit(n, p)] = (why[unfit(n, p)] || 0) + 1; const r = podReq(p);
+        say('nosched-' + p.app, `Pending: 0/${st.nodes.length} nodes are available for ${p.name}: ${Object.entries(why).map(([k, v]) => `${v} ${k}`).join(', ')} (it requests ${fmtCpu(r.cpu)} cpu, ${fmtMem(r.mem)}${p.gpu ? `, nvidia.com/gpu: ${p.gpu}` : ''})`, 3400); } continue; }
+    const n = pickNode(p, cands), sl = freeSlot(n); placePod(p, n, sl); p.pos = null;
+    if (isShop()){ p.phase = 'bound'; p.phaseT = 0; st.caps.push(mkCap(p, n)); const a = allocOn(n); say('bind', `Scheduler bound ${p.name} to ${n.name} (${cands.length} of ${st.nodes.length} fit; it scored best: ${fmtCpu(nodeCpu(n) - a.cpu)} cpu and ${fmtMem(nodeMem(n) - a.mem)} still free after it${depOf(p.app) && depOf(p.app).antiAffinity ? ', no other ' + p.app + ' there' : ''}): spec.nodeName written, the job card is on its way to the cell`); continue; }
     p.phase = 'scheduled';
     st.crane.queue.push({ pod: p, from: regPos(st, p.app), to: slotPos(n, sl) });
     say('bind', `Scheduler bound ${p.name} to ${n.name}`);
@@ -392,10 +452,11 @@ function scheduleGangs(){
   const groups = {}; for (const p of st.pods) if (p.phase === 'pending' && p.gang) (groups[p.gang] = groups[p.gang] || []).push(p);
   for (const [app, members] of Object.entries(groups)){ const dep = depOf(app), need = dep ? (dep.minMember || dep.replicas) : members.length;
     if (members.length < need) continue;
-    const room = st.nodes.filter(n => n.ready && !n.cordoned).map(n => ({ n, slots: slotsFree(n), gpus: gpuFree(n), count: countOn(n) }));
+    const room = st.nodes.filter(n => n.ready && !n.cordoned && n.joined >= 1).map(n => { const a = allocOn(n); return { n, slots: slotsFree(n), gpus: gpuFree(n), cpu: nodeCpu(n) - a.cpu, mem: nodeMem(n) - a.mem, count: countOn(n) }; });
     const plan = [];
-    for (const p of members){ room.sort((a, b) => a.count - b.count || a.n.name.localeCompare(b.n.name)); const r = room.find(r => r.slots > 0 && r.gpus >= (p.gpu || 0)); if (!r) break; r.slots--; r.gpus -= p.gpu || 0; r.count++; plan.push([p, r.n]); }
-    if (plan.length < members.length){ say('gang-' + app, `PodGroup ${app}: ${members.length} Pods stay Pending; the gang needs ${need} slots free at the same time`); continue; }
+    for (const p of members){ const r = podReq(p); room.sort((a, b) => (b.cpu/nodeCpu(b.n) + b.mem/nodeMem(b.n)) - (a.cpu/nodeCpu(a.n) + a.mem/nodeMem(a.n)) || a.n.name.localeCompare(b.n.name));
+      const f = room.find(x => x.slots > 0 && x.gpus >= (p.gpu || 0) && x.cpu >= r.cpu && x.mem >= r.mem); if (!f) break; f.slots--; f.gpus -= p.gpu || 0; f.cpu -= r.cpu; f.mem -= r.mem; f.count++; plan.push([p, f.n]); }
+    if (plan.length < members.length){ const r = podReq(members[0]); say('gang-' + app, `PodGroup ${app}: ${members.length} Pods stay Pending; the gang needs room for all ${need} at once (${fmtCpu(r.cpu)} cpu, ${fmtMem(r.mem)}${members[0].gpu ? ', a GPU' : ''} each) and only ${plan.length} fit`); continue; }
     if (isShop()){ for (const [p, n] of plan){ const sl = freeSlot(n); placePod(p, n, sl); p.pos = null; p.phase = 'dropping'; p.phaseT = 0; st.caps.push(mkCap(p, n)); }
       say('gangok-' + app, `Volcano admitted PodGroup ${app}: all ${members.length} Pods bound at once; every cell pulls, and they start together`); continue; }
     for (const [p, n] of plan){ const sl = freeSlot(n); placePod(p, n, sl); const to = slotPos(n, sl); p.phase = 'dropping'; p.phaseT = 0; p.drop = { t: 0, from: [to[0], to[1], HTOP + 42], to }; p.pos = p.drop.from.slice(); }
@@ -444,14 +505,19 @@ function shopTick(dt){ let busy = false;
   st.caps = st.caps.filter(c => !c.done);
   for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
     if (n.cut){ if (n.pull || st.pods.some(p => p.node === n.name && p.phase === 'queued')) busy = true; continue; }   // no uplink: the AGV cannot reach the crib and no pull starts or finishes
-    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); const key = p && p.app + ':' + p.ver, warm = p && n.cache.has(key);
-      if (p && !warm && st.lastCold != null && st.t - st.lastCold < .35){ busy = true; continue; }   // two AGVs never leave for the crib lane in the same moment
-      if (p){ if (!warm) st.lastCold = st.t;
-      n.pull = { pod: p, t: 0, dur: warm ? PULL.warm : PULL.cold, warm }; p.phase = 'pulling'; p.phaseT = 0;
-      say(warm ? 'pullw' : 'pullc', warm ? `${n.name} already has ${imageOf(p)} in its image cache: no pull, the container starts at once` : `kubelet on ${n.name} is pulling ${imageOf(p)} from the registry (one pull at a time per node)`); } }
+    // every container's image is pulled, one after another (serialised per node), each from the crib the first time and from the rack after
+    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'pulling') || st.pods.find(p => p.node === n.name && p.phase === 'queued');
+      if (p){ const img = p.containers[p.pullI || 0].image, warm = n.cache.has(img);
+        if (!warm && st.lastCold != null && st.t - st.lastCold < .35){ busy = true; continue; }   // two AGVs never leave for the crib lane in the same moment
+        if (!warm) st.lastCold = st.t;
+        n.pull = { pod: p, image: img, t: 0, dur: warm ? PULL.warm : PULL.cold, warm }; if (p.phase === 'queued'){ p.phase = 'pulling'; p.phaseT = 0; p.pullI = 0; }
+        const k = p.containers.length > 1 ? ` (${(p.pullI || 0) + 1} of ${p.containers.length} images)` : '';
+        say(warm ? 'pullw' : 'pullc', warm ? `${n.name} already has ${img} in its image cache: no pull${k}` : `kubelet on ${n.name} is pulling ${img} from the registry${k} (one pull at a time per node)`); } }
     if (n.pull){ n.pull.t += dt; busy = true;
-      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0;
-        say(p.gang ? 'staged-' + p.gang : 'start', p.gang ? `${n.name}: crate loaded for ${p.name}; the gang waits for every member's crate` : `${n.name}: crate loaded, the runtime starts ${imageOf(p)} (the machine powers up)`); } } } }
+      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(n.pull.image); n.pull = null;
+        if (p.phase === 'pulling'){ p.pullI = (p.pullI || 0) + 1; if (p.pullI < p.containers.length){ busy = true; continue; }   // the next image of the same pod
+          p.pullI = 0; p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0;
+          say(p.gang ? 'staged-' + p.gang : 'start', p.gang ? `${n.name}: crates loaded for ${p.name}; the gang waits for every member's crates` : `${n.name}: ${p.containers.length > 1 ? 'all ' + p.containers.length + ' crates loaded' : 'crate loaded'}, the runtime starts ${p.containers.map(c => c.image).join(' and ')} (the machine powers up)`); } } } }
   const groups = {}; for (const p of st.pods) if (p.gang && ['dropping', 'queued', 'pulling', 'staged'].includes(p.phase)) (groups[p.gang] = groups[p.gang] || []).push(p);
   for (const ps of Object.values(groups)) if (ps.every(p => p.phase === 'staged')){ for (const p of ps){ p.phase = 'creating'; p.phaseT = 0; } st.strobe = 1.2; say('gangstart', `PodGroup ${ps[0].gang}: every cell has its image, all ${ps.length} machines start in sync`); }
   if (st.strobe > 0){ st.strobe = Math.max(0, st.strobe - dt); busy = true; }
@@ -465,17 +531,19 @@ function podTick(p, dt){
     case 'bound': case 'queued': case 'pulling': case 'staged': return true;
     case 'dropping': { const d = p.drop; if (!d) return true; d.t += dt; const k = ease(Math.min(1, d.t / 2)); p.pos = lerp3(d.from, d.to, k);
       if (d.t >= 2){ p.pos = d.to; p.drop = null; p.phase = 'creating'; p.phaseT = 0; } return true; }
-    case 'creating': if (p.phaseT > (isShop() ? PULL.start : 1.1)){ p.phaseT = 0;
-        if (st.mode === 'demo' && !depHealthy(p.app)){ p.phase = 'unready'; p.waitingOn = depOf(p.app).dependsOn; say('dep-' + p.app, `${p.name} started but its readiness probe fails: Service ${p.waitingOn} has no Ready endpoints`); }
-        else { p.phase = 'running'; p.ready = true; say('ready', `Readiness probe passed: ${p.name} is Ready${p.job ? '' : ' and a Service endpoint'}`); } } return true;
-    case 'running': if (p.job && p.phaseT > 9){ p.phase = 'done'; p.phaseT = 0; p.ready = false; say('done-' + p.app, `${p.app} Pods completed (Succeeded): a Job's Pods are not replaced`); } return !!p.job;
+    case 'creating': if (!p.mounted){ p.mounted = true; attachPV(p); }   // the volume is attached and mounted before the container starts
+      if (p.phaseT > (isShop() ? PULL.start : 1.1)){ p.phaseT = 0; p.phase = 'running'; p.ready = true; p.since = st.t; say('ready', `Readiness probe passed: ${p.name} is Ready${p.job ? '' : ' and a Service endpoint'}`); } return true;
+    case 'running': if (p.job && p.phaseT > 9){ p.phase = 'done'; p.phaseT = 0; p.ready = false; say('done-' + p.app, `${p.app} Pods completed (Succeeded): a Job's Pods are not replaced`); }
+      if (p.backoff && st.t - (p.since || 0) > BACKOFF_RESET){ p.backoff = 0; }   // ten minutes up without an exit: the kubelet forgets the back-off
+      return !!p.job;
     case 'done': if (p.phaseT > 1.6) terminate(p); return true;
-    case 'crash': p.fire = p.phaseT < 1 ? 1 : 0; if (p.phaseT > .95 && !p.counted){ p.counted = true; p.restarts++; }
-      if (p.phaseT > 2.1){ p.phase = 'running'; p.phaseT = 0; p.ready = true; p.counted = false; say('restarted', `kubelet restarted the container in place: ${p.name} restarts=${p.restarts}`); } return true;
+    // a crash: the container exits, the kubelet counts a restart and waits out its back-off before it starts the container again
+    // (10 s, doubling each exit, capped at 5 minutes: CrashLoopBackOff); the first restart after a long run is immediate
+    case 'crash': p.fire = p.phaseT < 1 ? 1 : 0; if (p.phaseT > .95 && !p.counted){ p.counted = true; p.restarts++; p.wait = p.backoff; p.backoff = p.backoff ? Math.min(BACKOFF_MAX, p.backoff*2) : BACKOFF_0;
+        if (p.wait) say('backoff-' + p.id, `${p.name}: CrashLoopBackOff, back-off ${p.wait} s restarting failed container (the kubelet doubles it on every exit, up to ${BACKOFF_MAX/60} min; a container that runs ${BACKOFF_RESET/60} min clears it)`, 3400); }
+      if (p.phaseT > 1.1 + (p.wait || 0)){ p.phase = 'running'; p.phaseT = 0; p.ready = true; p.counted = false; p.since = st.t; say('restarted', `kubelet restarted the container in place${p.wait ? ` after ${p.wait} s of back-off` : ''}: ${p.name} restarts=${p.restarts}${p.reason ? ' (last state: ' + p.reason + ')' : ''}`); p.wait = 0; } return true;
     case 'unready': if (p.nodeDown){ const n = st.nodes.find(n => n.name === p.node); if (!n || !n.ready){ p.phaseT = 0; return true; }
         if (p.phaseT > .5){ p.phase = 'running'; p.ready = true; p.phaseT = 0; p.nodeDown = false; say('nodeback-' + n.name, `${n.name} reports again: its machines' probes pass and they are back in their Services`); } return true; }
-      if (p.waitingOn){ if (!depHealthy(p.app)){ p.phaseT = 0; return true; }
-        if (p.phaseT > .7){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready-' + p.app, `Service ${p.waitingOn} is back, so ${p.app} probes pass again`); p.waitingOn = null; } return true; }
       if (p.phaseT > 4.5){ p.phase = 'running'; p.ready = true; p.phaseT = 0; say('reready', `Probe passing again: ${p.name} is back in the Service`); } return true;
     case 'terminating': { if (draining(p)){ p.alpha = 1; return true; } p.fadeT = (p.fadeT || 0) + dt; p.alpha = Math.max(0, 1 - p.fadeT / .8); if (p.alpha <= 0) removePod(p); return true; }
   }
@@ -484,16 +552,27 @@ function podTick(p, dt){
 
 /* ---------- traffic: a request through the gate, the kiosk, to one Ready endpoint, and back ---------- */
 const svcMain = () => { const ing = st.ingresses[0]; return (ing && st.services.find(s => s.name === ing.service)) || st.services[0]; };
-function endpointsOf(svc){ if (!svc) return []; const sel = svc.selector || {}; return st.pods.filter(p => isReady(p) && p.pos && p.slot && Object.entries(sel).every(([k, v]) => k === 'app' ? p.app === v : true)).sort((a, b) => a.name.localeCompare(b.name)); }
+// a Service's endpoints: the Ready pods in its namespace whose labels match every key of its selector and that listen on its port
+// (an EndpointSlice is built the same way; a pod in another namespace or without the port is not one, whatever its app label says)
+const podLabels = p => p.labels || { app: p.app, version: p.ver };
+const servesPort = (p, port) => !port || !p.containers.some(c => c.ports && c.ports.length) || p.containers.some(c => (c.ports || []).includes(port));
+function endpointsOf(svc){ if (!svc) return []; const sel = svc.selector || {}, ns = svc.namespace || 'default', port = (svc.targetPorts || svc.ports || [])[0];
+  return st.pods.filter(p => isReady(p) && p.pos && p.slot && (p.ns || 'default') === ns && Object.entries(sel).every(([k, v]) => podLabels(p)[k] === v) && servesPort(p, port)).sort((a, b) => a.name.localeCompare(b.name)); }
+// one Ready endpoint, the way kube-proxy picks it: iptables mode is random (a probability per rule), and Cilium's eBPF default is random too;
+// only IPVS's rr scheduler, or the mesh's split, hands them out in turn
+const pickEndpoint = eps => eps[Math.floor(rnd()*eps.length)];
+/* a request from outside: the Ingress controller (nginx, say) is a pod at the dock that watches the EndpointSlices itself and proxies
+   straight to a pod IP. It never asks the cluster's DNS (the outside client resolved shop.example.com with the public DNS) and never
+   passes through the ClusterIP, so neither CoreDNS nor kube-proxy is on this path */
 function request(){
-  const svc = svcMain(), eps = endpointsOf(svc);
+  const svc = svcMain(), eps = endpointsOf(svc), ing = st.ingresses[0];
   if (!svc) return say('nosvc', 'No Service to route to');
   st.reqs.sent++;
-  if (!eps.length){ st.parcels.push(makeParcel(null, svc)); st.reqs.err++; return say('503', `503: Service ${svc.name} has no Ready endpoints`); }
+  if (!eps.length){ st.parcels.push(makeParcel(null, svc)); st.reqs.err++; return say('503', `503 Service Unavailable from the Ingress controller: the EndpointSlice of ${svc.name} lists no Ready endpoint`); }
   const M = st.net.mesh, split = M.on && M.canary > 0 && svc.name === 'web' && eps.some(p => p.ver === 'v2') && eps.some(p => p.ver !== 'v2');
-  let p; if (split){ const v2 = eps.filter(p => p.ver === 'v2'), v1 = eps.filter(p => p.ver !== 'v2'); p = (++M.n % Math.round(100/M.canary) === 0) ? v2[M.n % v2.length] : v1[st.rr++ % v1.length]; } else p = eps[st.rr++ % eps.length];
-  const pc = makeParcel(p, svc); if (split) pc.canary = p.ver === 'v2'; st.parcels.push(pc);
-  say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> ${pc.dnsPod ? 'directory board: ' + svc.name + '.default.svc.cluster.local -> ClusterIP (the line CoreDNS ' + pc.dnsPod.name + ' keeps current)' : 'directory board: NO ANSWER, the part waits at the dock (lookup timeout ' + DNS_TIMEOUT + ' s)'} -> Service ${svc.name} -> ${p.name}${split ? (pc.canary ? ' (the canary: the sidecars\' 90/10 split, a VirtualService / HTTPRoute, not a Service feature)' : ' (v1, by the sidecars\' weighted split)') : ''}`);
+  let p; if (split){ const v2 = eps.filter(p => p.ver === 'v2'), v1 = eps.filter(p => p.ver !== 'v2'); p = (++M.n % Math.round(100/M.canary) === 0) ? v2[M.n % v2.length] : pickEndpoint(v1); } else p = pickEndpoint(eps);
+  const pc = makeParcel(p, svc); if (split) pc.canary = p.ver === 'v2'; pc.fail = st.mode === 'demo' ? chainBreak(p.app) : null; st.parcels.push(pc);
+  say('req', `GET ${ing ? ing.host : svc.name} -> Ingress controller at the dock (host rule -> Service ${svc.name}; it holds the EndpointSlice itself, so no DNS lookup and no ClusterIP) -> ${p.name} on ${p.node}${split ? (pc.canary ? ' (the canary: the sidecars\' 90/10 split, a VirtualService / HTTPRoute, not a Service feature)' : ' (v1, by the sidecars\' weighted split)') : ''}${pc.fail ? `; it will answer 502: ${pc.fail.caller} calls Service ${pc.fail.missing} and that has no Ready endpoints` : ''}`);
 }
 // the spine has two lanes when the fabric runs BGP: consecutive parts take turns (equal-cost multipath); a canary part rides the second lane so the split shows
 const SPINE2 = () => LANE - 6.5;
@@ -518,16 +597,17 @@ const breakAt = n => ({ x: rowCorridor(n.row) - 2.5, y: cellEntry(n), ty: cellDo
 const cutT = n => { const P = tubePath(n); return (pathLen(P.slice(0, 8)) + 2.5)/pathLen(P); };   // a job card's stop at the break, as a fraction of its way
 function laneX(canary){ if (canary != null) return canary ? SPINE2() : LANE; return st.net.fabric === 'bgp' && isShop() ? (st.net.lane++ % 2 ? SPINE2() : LANE) : LANE; }
 function makeParcel(p, svc){
-  const n = p && st.nodes.find(n => n.name === p.node), dns = isShop(), pts = dns ? [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 30, 2.2], [LANE, 45, 2.2]] : [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
+  // the part passes the directory board and the sorting station without stopping: the Ingress controller already knows the pod's address
+  const n = p && st.nodes.find(n => n.name === p.node), dns = false, pts = isShop() ? [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 30, 2.2], [LANE, 45, 2.2]] : [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
   const divs = [];
   if (p && n && isShop()){ const [px, py, pz] = p.pos, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yd = cellEntry(n), ys = rowSpur(n.row), cx = rowCorridor(n.row), lx = laneX(p.ver === 'v2' && st.net.mesh.on && st.net.mesh.canary ? true : null);
     // the directory board, the station, the spine lane to the row's diverter, the spur to the row's corridor, the corridor to the cell's opening, the cross-aisle after the machine's row, the machine
     if (lx !== LANE) pts.push([lx, 50, 2.2]); divs.push({ row: n.row, lane: lx, at: pts.length }); pts.push([lx, ys, 2.2], [cx, ys, 2.2], [cx, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
   else if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
-  const dirD = dns ? segs[1].s0 + segs[1].l : -1, kioskD = dns ? segs[2].s0 + segs[2].l : segs[1].s0 + segs[1].l, dp = dns ? dnsPick() : null;
+  const dirD = -1, kioskD = -1, dp = null;   // no lookup at the board, no stop at the station: the controller proxies to the pod it chose
   for (const d of divs) d.d = segs[d.at] ? segs[d.at].s0 : L;
-  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0, dirD, kioskD, dhold: 0, dns: dns ? (dp ? 'ok' : 'fail') : null, dnsPod: dp, divs };
+  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0, dirD, kioskD, dhold: 0, dns: null, dnsPod: dp, divs, ingress: true };
 }
 // a part from one machine to another (a Pod calling a Service): out of its bay to the cross aisle, the cell's conveyor-side opening, the lane, and into the other cell
 function makeLink(a, b, blocked){
@@ -543,7 +623,11 @@ function makeLink(a, b, blocked){
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
   for (const d of divs) d.d = segs[d.at] ? segs[d.at].s0 : L;
   const meshed = st.net.mesh.on && MESHED.has(a.app) && MESHED.has(b.app);
-  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: -1, divs };
+  // a pod calling a Service by name: its resolv.conf points at the kube-dns ClusterIP, so the lookup is the first thing that leaves the bay
+  // (a UDP packet to a CoreDNS pod, through its own node's kube-proxy); with no CoreDNS up the caller waits out the timeout at its own door.
+  // Then the ClusterIP is rewritten to one endpoint on the caller's own cabinet (kube-proxy, or the CNI's eBPF): there is no station to visit
+  const dns = isShop(), dp = dns ? dnsPick() : null;
+  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: dns ? segs[0].s0 + segs[0].l : -1, dhold: 0, dns: dns ? (dp ? 'ok' : 'fail') : null, dnsPod: dp, divs };
 }
 // where a part's path crosses a cut cell's break (the stretch along the cell's entry y at the break's x), as a distance along the path
 function breakD(pc, n){ const b = breakAt(n); for (const s of pc.segs) if (Math.abs(s.a[1] - b.y) < .01 && Math.abs(s.b[1] - b.y) < .01 && (s.a[0] - b.x)*(s.b[0] - b.x) <= 0) return s.s0 + Math.abs(b.x - s.a[0]); return -1; }
@@ -561,7 +645,7 @@ function parcelTick(pc, dt){
       if (pc.t + spd*dt >= stopAt){ pc.t = stopAt; pc.dhold += dt; if (pc.qi) return true;
         if (!pc.dnsPod) pc.dnsPod = dnsPick();
         if (pc.dnsPod){ if (!pc.asked){ pc.asked = true; pc.dns = 'ok'; pc.dhold = 0; lookup(pc); } if (pc.dhold < .3) return true; pc.looked = true; }
-        else { pc.dns = 'fail'; if (pc.dhold > DNS_TIMEOUT){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out after ${DNS_TIMEOUT} s (resolv.conf timeout:5), kube-dns has no Ready endpoints; connections already open keep working, new ones cannot find an address`); } return true; } } }
+        else { pc.dns = 'fail'; if (pc.dhold > DNS_TIMEOUT){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.from ? pc.from.name : 'the caller'}: lookup of ${pc.svc.name}.default.svc.cluster.local timed out after ${DNS_TIMEOUT} s (resolv.conf timeout:5), kube-dns has no Ready endpoints; the part never leaves its bay. Connections already open keep working; traffic from the dock is untouched, the Ingress controller holds the endpoints itself`); } return true; } } }
     if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
     for (const dv of pc.divs || []) if (pc.t < dv.d && pc.t + spd*dt >= dv.d) flick(dv.row, dv.lane);   // the diverter sends it down the spur
     // a cut uplink: the belt into (or out of) that cell is severed at the corridor, so the part stops at the break and the caller times out
@@ -575,8 +659,10 @@ function parcelTick(pc, dt){
     pc.t += spd*dt;
     if (pc.t >= pc.L){ pc.dir = -1; pc.t = pc.L;
       if (!pc.pod) pc.col = LAMPC.red;
-      else if (pc.reset){ pc.col = LAMPC.red; st.reqs.err++; st.reqs.reset++; say('reset-' + pc.pod.id, `Connection reset: ${pc.pod.name} ${pc.reset} while the part was on its way; no reply (the client retries, the Service already routes elsewhere)`); }
-      else { pc.col = LAMPC.green; st.reqs.ok++; } }
+      else if (pc.reset){ pc.col = LAMPC.red; st.reqs.err++; st.reqs.reset++; say('reset-' + pc.pod.id, `Connection reset: ${pc.pod.name} ${pc.reset} while the part was on its way; no reply (the client retries, the EndpointSlice already lists others)`); }
+      // the handler ran and called the next Service in the chain: with no Ready endpoint there it answers 502, and stays Ready itself
+      else if (pc.fail){ pc.col = LAMPC.red; st.reqs.err++; st.reqs.bad = (st.reqs.bad || 0) + 1; say('502-' + pc.fail.missing, `502 Bad Gateway from ${pc.pod.name}: ${pc.fail.caller} called Service ${pc.fail.missing} and its EndpointSlice is empty (connection refused). ${pc.fail.caller}'s own readiness probe still passes, so it stays an endpoint and keeps taking parts; a probe that checked ${pc.fail.missing} would empty ${pc.fail.caller}'s Service too and leave nothing to answer at all`, 4200); }
+      else { pc.col = LAMPC.green; st.reqs.ok++; if (st.mode === 'demo' && !pc.link && depOf(pc.pod.app) && depOf(pc.pod.app).dependsOn && podsOf(depOf(pc.pod.app).dependsOn).some(isReady)) callNext(pc.pod); } }
     return true; }
   for (const dv of pc.divs || []) if (pc.t > dv.d && pc.t - spd*dt*1.15 <= dv.d) flick(dv.row, dv.lane);   // and merges it back on the way out
   { const cn = [pc.pod, pc.from].map(p => p && st.nodes.find(n => n.name === p.node)).find(n => n && n.cut), bd = cn ? breakD(pc, cn) : -1;
@@ -592,13 +678,14 @@ function tick(dt){
   if (st.boot && bootTick(dt)) busy = true;
   // cp.hold: etcd has no leader, so the API server cannot write; controllers and the scheduler wait (the crane finishes
   // a bind it already has, the kubelets carry on, nothing new is created or bound)
-  if (st.cp.ctrl){ if (!st.cp.hold){ if (st.mode === 'demo'){ reconcile(); checkDependencies(); } schedule(); } if (!isShop() && (craneTick(dt) || st.crane.queue.length)) busy = true; }
+  if (st.cp.ctrl){ if (!st.cp.hold){ if (st.mode === 'demo') reconcile(); schedule(); } if (!isShop() && (craneTick(dt) || st.crane.queue.length)) busy = true; }
+  if (drainTick(dt)) busy = true;
   if (isShop() && shopTick(dt)) busy = true;
   for (const n of st.nodes) if (n.joining && n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }   // a node joins only once its own kubeadm join has run
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
   if (secTick(dt)) busy = true; if (netTick(dt)) busy = true;
-  { let q = 0; for (const pc of st.parcels) if (pc.dir === 1 && pc.dirD >= 0 && !pc.looked){ pc.qi = q; if (pc.dhold > 0) q++; } }   // parts waiting at the board queue up behind each other
+  { let q = 0; for (const pc of st.parcels) if (pc.dir === 1 && pc.dirD >= 0 && !pc.looked && !pc.link){ pc.qi = q; if (pc.dhold > 0) q++; } }   // parts waiting at the board queue up behind each other
   st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
   const boomUp = st.parcels.some(pc => Math.abs(pc.t - 20) < 30 || pc.t < 50) ? 1 : 0;
   if (st.boom !== boomUp){ st.boom = Math.max(0, Math.min(1, st.boom + (boomUp ? dt/.35 : -dt/.5))); busy = true; }
@@ -613,17 +700,21 @@ function bootstrap(){
   if (st.mode === 'live') return liveNote('kubeadm init (control plane), then kubeadm join on each node');
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
   for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.joining = false; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; n.cut = false; n.unreach = false; n.evicted = false; n.cutT = 0; }
-  st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
+  st.cp = { etcd:0, api:0, ctrl:0, hold:0, members:0 }; st.pvs = {}; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
   Object.assign(st.sec, { ca: 0, badges: 0, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); for (const n of st.nodes){ n.cert = null; n.csr = false; }
+  // the office is a stacked control plane of three: kubeadm init on the first, kubeadm join --control-plane on two more, so the ledger's
+  // Raft group really has three members and the elections in the control room have something to elect
   const V = VOC(); const ev = [
     [.2, () => say('b0', V.b0)],
     [1.4, () => { st.sec.ca = 1; st.sec.badges = 3; st.sec.stamp = 1.5; say('bca', V.bca); }],   // the CA first: nothing below can talk to anything without its certificate
-    [2.8, () => { st.cp.etcd = 1; say('b1', V.b1); }],
+    [2.8, () => { st.cp.etcd = 1; st.cp.members = 1; say('b1', V.b1); }],
     [4.2, () => { st.cp.api = 1; say('b2', V.b2); }],
-    [5.6, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
-  st.nodes.forEach((n, i) => { ev.push([7.2 + i*1.7, () => { n.joining = true; n.csr = true; say('bj' + i, V.bj(n.name)); }]);
-    ev.push([7.2 + i*1.7 + 1.1, () => { issueCert(n); n.ready = true; say('br' + i, V.br(n.name)); }]); });
-  const tEnd = 7.2 + st.nodes.length*1.7 + .8;
+    [5.6, () => { st.cp.ctrl = 1; say('b3', V.b3); }],
+    [7.2, () => { st.cp.members = 2; say('bcp2', 'kubeadm join --control-plane cp-2 (with the certificate key): the second office node runs its own etcd, API server, scheduler and controller manager; etcd-2 joins the Raft group as a learner, then a voter (2 members: both needed for quorum)', 3600); }],
+    [8.9, () => { st.cp.members = 3; say('bcp3', 'kubeadm join --control-plane cp-3: etcd-3 joins; the ledger is a group of three, quorum 2, and can lose one member. Three API servers sit behind the control-plane endpoint; one scheduler and one controller manager hold the leader Lease', 3600); }] ];
+  st.nodes.forEach((n, i) => { ev.push([10.8 + i*1.7, () => { n.joining = true; n.csr = true; say('bj' + i, V.bj(n.name)); }]);
+    ev.push([10.8 + i*1.7 + 1.1, () => { issueCert(n); n.ready = true; say('br' + i, V.br(n.name)); }]); });
+  const tEnd = 10.8 + st.nodes.length*1.7 + .8;
   ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
   ev.push([tEnd + .3, () => { st.boot = null; }]);
   st.boot = { t: 0, i: 0, ev }; run();
@@ -633,6 +724,11 @@ function bootTick(dt){ const b = st.boot; b.t += dt; while (b.i < b.ev.length &&
   return !!st.boot; }
 
 /* ---------- snapshots: the demo, a kubectl JSON file, or a polled URL ---------- */
+// Kubernetes quantities: cpu to millicores, memory to MiB
+const qCpu = q => q == null ? undefined : /m$/.test(q) ? +String(q).slice(0, -1) : Math.round(+q*1000);
+const qMem = q => { if (q == null) return undefined; const m = /^(\d+(?:\.\d+)?)([KMGTPE]i?)?$/.exec(String(q)); if (!m) return undefined; const u = { K:1e3, M:1e6, G:1e9, T:1e12, Ki:1024, Mi:1024**2, Gi:1024**3, Ti:1024**4 }[m[2] || ''] || 1; return Math.round(+m[1]*u/1024**2); };
+const resOf = c => { const r = (c.resources || {}).requests || {}, l = (c.resources || {}).limits || {}, o = {};
+  if (r.cpu != null || r.memory != null) o.req = { cpu: qCpu(r.cpu) || 0, mem: qMem(r.memory) || 0 }; if (l.cpu != null || l.memory != null) o.lim = { cpu: qCpu(l.cpu), mem: qMem(l.memory) }; return o; };
 function normalize(raw){
   if (raw && Array.isArray(raw.nodes) && !raw.items) return raw;
   const items = raw && raw.items ? raw.items : Array.isArray(raw) ? raw : [];
@@ -641,13 +737,13 @@ function normalize(raw){
   const appOf = o => { const m = o.metadata || {}, l = m.labels || {}; if (l.app) return l.app; if (l['app.kubernetes.io/name']) return l['app.kubernetes.io/name']; if (l['k8s-app']) return l['k8s-app'];
     const own = (m.ownerReferences || [])[0]; if (own && own.kind === 'ReplicaSet') return own.name.replace(/-[a-z0-9]{6,10}$/, ''); if (own) return own.name; return (m.name || 'pod').replace(/(-[a-z0-9]{5,10}){1,2}$/, ''); };
   for (const o of items){ const m = o.metadata || {}, sp = o.spec || {}, stt = o.status || {};
-    if (o.kind === 'Node') out.nodes.push({ name: m.name, ready: (stt.conditions || []).some(c => c.type === 'Ready' && c.status === 'True'), cordoned: !!sp.unschedulable, gpus: +((stt.allocatable || {})['nvidia.com/gpu'] || 0) });
+    if (o.kind === 'Node'){ const al = stt.allocatable || {}; out.nodes.push({ name: m.name, ready: (stt.conditions || []).some(c => c.type === 'Ready' && c.status === 'True'), cordoned: !!sp.unschedulable, gpus: +(al['nvidia.com/gpu'] || 0), cpu: qCpu(al.cpu), mem: qMem(al.memory) }); }
     else if (o.kind === 'Pod'){ const cs = stt.containerStatuses || [], own = (m.ownerReferences || [])[0];
       const vols = sp.volumes || [], img = ((sp.containers || [])[0] || {}).image || '';
       const gpuOf = c => +(((c.resources || {}).limits || {})['nvidia.com/gpu'] || ((c.resources || {}).requests || {})['nvidia.com/gpu'] || 0);
-      out.pods.push({ name: m.name, namespace: m.namespace, node: sp.nodeName || null, app: appOf(o), phase: stt.phase, gpu: (sp.containers || []).reduce((a, c) => a + gpuOf(c), 0),
+      out.pods.push({ name: m.name, namespace: m.namespace, node: sp.nodeName || null, app: appOf(o), phase: stt.phase, gpu: (sp.containers || []).reduce((a, c) => a + gpuOf(c), 0), labels: m.labels,
         ready: cs.length > 0 && cs.every(c => c.ready), restarts: cs.reduce((a, c) => a + (c.restartCount || 0), 0),
-        containers: (sp.containers || []).map(c => ({ name: c.name, image: c.image })),
+        containers: (sp.containers || []).map(c => ({ name: c.name, image: c.image, ports: (c.ports || []).map(x => x.containerPort), ...resOf(c) })),
         version: lab(o, 'version') || lab(o, 'app.kubernetes.io/version') || (own && own.kind === 'ReplicaSet' ? own.name.slice(-5) : (img.split(':')[1] || 'v1')),
         pvc: (vols.find(v => v.persistentVolumeClaim) || {}).name, configMap: (vols.find(v => v.configMap) || {}).name, secret: (vols.find(v => v.secret) || {}).name,
         system: m.namespace === 'kube-system' || (own && own.kind === 'DaemonSet') }); }
@@ -656,7 +752,9 @@ function normalize(raw){
     if (o.kind === 'Deployment' || o.kind === 'StatefulSet' || o.kind === 'DaemonSet'){ const sel = (sp.selector && sp.selector.matchLabels) || {};
       const tpl = (sp.template && sp.template.spec) || {}, img = ((tpl.containers || [])[0] || {}).image || '';
       out.deployments.push({ name: m.name, namespace: m.namespace, kind: o.kind, app: sel.app || sel['app.kubernetes.io/name'] || sel['k8s-app'] || m.name, replicas: sp.replicas != null ? sp.replicas : (stt.desiredNumberScheduled || 0),
-        ready: stt.readyReplicas || stt.numberReady || 0, version: img.split(':')[1] || 'v1', containers: (tpl.containers || []).map(c => ({ name: c.name, image: c.image })), system: m.namespace === 'kube-system' || o.kind === 'DaemonSet' }); }
+        ready: stt.readyReplicas || stt.numberReady || 0, version: img.split(':')[1] || 'v1', containers: (tpl.containers || []).map(c => ({ name: c.name, image: c.image, ports: (c.ports || []).map(x => x.containerPort), ...resOf(c) })), system: m.namespace === 'kube-system' || o.kind === 'DaemonSet',
+        antiAffinity: tpl.affinity && tpl.affinity.podAntiAffinity ? (tpl.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ? 'required' : 'preferred') : undefined }); }
+    else if (o.kind === 'PodDisruptionBudget'){ const sel = (sp.selector && sp.selector.matchLabels) || {}; out.pdbs = out.pdbs || []; out.pdbs.push({ name: m.name, namespace: m.namespace, app: sel.app || sel['app.kubernetes.io/name'] || sel['k8s-app'], minAvailable: sp.minAvailable, maxUnavailable: sp.maxUnavailable }); }
     else if (o.kind === 'Service') out.services.push({ name: m.name, namespace: m.namespace, selector: sp.selector || {}, ports: (sp.ports || []).map(p => p.port), clusterIP: sp.clusterIP });
     else if (o.kind === 'Ingress'){ for (const r of (sp.rules || [])){ const pth = ((r.http || {}).paths || [])[0] || {}, be = (pth.backend || {}).service || {}; out.ingresses.push({ host: r.host || '*', service: be.name, port: (be.port || {}).number }); } }
   }
@@ -667,24 +765,26 @@ function applySnapshot(data, instant){
   data = normalize(data); if (st.mode === 'live' && data.managed != null && data.managed !== st.net.managed) setManaged(data.managed, true);
   const nodeNames = (data.nodes || []).map(n => n.name), sameNodes = nodeNames.length === st.nodes.length && nodeNames.every((n, i) => st.nodes[i].name === n);
   if (!sameNodes){ const old = new Map(st.nodes.map(n => [n.name, n]));
-    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, joining: true, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
+    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, joining: true, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0, cpu: n.cpu, mem: n.mem }));
     for (const p of st.pods){ if (!st.nodes.find(n => n.name === p.node)){ p.node = null; p.slot = null; p.pos = null; p.phase = 'pending'; } }
     for (const n of st.nodes){ n.used = new Set(); for (const p of st.pods) if (p.node === n.name && p.slot) n.used.add(slotKey(p.slot)); }
     layout(st); }
-  else for (const n of st.nodes){ const d = data.nodes.find(x => x.name === n.name); n.ready = d.ready !== false; n.cordoned = !!d.cordoned; n.gpus = d.gpus || 0; if (instant) n.tape = n.cordoned ? 1 : 0; }
-  st.deploys = (data.deployments || []).map(d => ({ name: d.name, ns: d.namespace || 'default', app: d.app || d.name, kind: d.kind || 'Deployment', replicas: d.replicas || 0, ready: d.ready, version: d.version || 'v1', containers: d.containers, pvc: d.pvc, configMap: d.configMap, secret: d.secret, sys: !!d.system, dependsOn: d.dependsOn, gpu: d.gpu || 0, gang: !!d.gang, minMember: d.minMember }));
+  else for (const n of st.nodes){ const d = data.nodes.find(x => x.name === n.name); n.ready = d.ready !== false; n.cordoned = !!d.cordoned; n.gpus = d.gpus || 0; n.cpu = d.cpu; n.mem = d.mem; if (instant) n.tape = n.cordoned ? 1 : 0; }
+  st.deploys = (data.deployments || []).map(d => ({ name: d.name, ns: d.namespace || 'default', app: d.app || d.name, kind: d.kind || 'Deployment', replicas: d.replicas || 0, ready: d.ready, version: d.version || 'v1', containers: d.containers, tags: d.tags, pvc: d.pvc, configMap: d.configMap, secret: d.secret, sys: !!d.system, dependsOn: d.dependsOn, gpu: d.gpu || 0, gang: !!d.gang, minMember: d.minMember, antiAffinity: d.antiAffinity, pdb: d.pdb }));
+  // PodDisruptionBudgets: the demo's ride on their workloads; a kubectl List carries its own
+  for (const b of (data.pdbs || [])){ const d = st.deploys.find(x => x.app === b.app && (x.ns || 'default') === (b.namespace || 'default')); if (d) d.pdb = { name: b.name, minAvailable: b.minAvailable, maxUnavailable: b.maxUnavailable }; }
   st.services = data.services || []; st.ingresses = data.ingresses || [];
   if (st.mode === 'demo' && !(data.pods || []).length){ /* the demo builds its pods from the deployments */ }
   else {
     const seen = new Set();
     for (const d of (data.pods || [])){ seen.add(d.name); let p = st.pods.find(p => p.name === d.name);
       const dep = st.deploys.find(x => x.app === d.app) || { name: d.app, app: d.app, version: d.version, containers: d.containers };
-      if (!p){ p = makePod(dep, d.version || 'v1'); p.name = d.name; p.ns = d.namespace || 'default'; p.containers = d.containers && d.containers.length ? d.containers : p.containers; p.pvc = d.pvc; p.configMap = d.configMap; p.secret = d.secret; p.sys = !!d.system; p.gpu = d.gpu || 0; st.pods.push(p); }
+      if (!p){ p = makePod(dep, d.version || 'v1'); p.name = d.name; p.ns = d.namespace || 'default'; p.containers = d.containers && d.containers.length ? d.containers : p.containers; p.pvc = d.pvc; p.configMap = d.configMap; p.secret = d.secret; p.sys = !!d.system; p.gpu = d.gpu || 0; if (d.labels) p.labels = d.labels; st.pods.push(p); }
       p.wantNode = d.node; p.restarts = d.restarts || 0;
       const want = d.phase === 'Running' ? (d.ready ? 'running' : 'unready') : d.phase === 'Pending' ? 'pending' : d.phase === 'Failed' || d.phase === 'CrashLoopBackOff' ? 'crash' : d.phase === 'Succeeded' ? 'terminating' : 'running';
       if (p.node && p.node !== d.node){ removeFromNode(p); }
       if (!p.node && d.node){ const n = st.nodes.find(n => n.name === d.node); const sl = n && freeSlot(n);
-        if (n && sl && (instant || p.sys && !st.showSys)){ placePod(p, n, sl); p.phase = want === 'pending' ? 'creating' : want; p.ready = want === 'running'; if (n.cache) n.cache.add(p.app + ':' + p.ver); }
+        if (n && sl && (instant || p.sys && !st.showSys)){ placePod(p, n, sl); p.phase = want === 'pending' ? 'creating' : want; p.ready = want === 'running'; if (n.cache) for (const c of p.containers) n.cache.add(c.image); }
         else if (n && sl){ p.phase = 'pending'; }
         else { p.phase = 'pending'; } }
       else if (p.node && p.phase !== 'scheduled' && p.phase !== 'creating' && want !== 'pending'){
@@ -705,7 +805,8 @@ function startDemo(){
   for (const n of st.nodes){ n.used = new Set(); n.tape = 0; n.cordoned = false; n.cache = new Set(); n.pull = null; }
   // the demo starts deployed: pods spread over the nodes, all Running (so every node has those images cached)
   const order = ['web', 'api', 'db', 'coredns']; let i = 0;
-  for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; n.cache.add(p.app + ':' + p.ver); st.pods.push(p); } }
+  st.pvs = {}; st.cp.members = 3;
+  for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); st.pods.push(p); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; p.since = st.t; p.mounted = true; if (p.pvc) pvOf(p.pvc).node = n.name; for (const c of p.containers) n.cache.add(c.image); } }
   markBands(); refreshRegistry(); layout(st); st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; st.crane.z = HZT; if (ui) reframe();
   Object.assign(st.sec, { ca: 1, badges: 3, netpol: null, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); st.reqs = { sent:0, ok:0, err:0, reset:0 };
   st.nodes.forEach((n, i) => { n.cert = { issued: st.t - 7 - i*60, exp: st.t - 7 - i*60 + ROT, ok: true, flash: 0 }; n.csr = false; n.rotated = 0; }); st.sec.badges = 3 + st.nodes.length;
@@ -732,28 +833,56 @@ const liveNote = cmd => say('ro-' + cmd, `${VOC().live}. Run: ${cmd}`, 3400);
 
 /* ---------- buttons ---------- */
 function scaleTo(app, n){ if (st.mode === 'live') return liveNote(`kubectl scale deploy/${app} --replicas=${n}`); const d = depOf(app); if (!d) return; d.replicas = n; say('scale', `kubectl scale deploy/${app} --replicas=${n}`); run(); }
-function rollout(app, ver){ if (st.mode === 'live') return liveNote(`kubectl set image deploy/${app} ${app}=${app}:${ver}`); const d = depOf(app); if (!d || d.version === ver) return; d.version = ver;
-  say('rollout', `kubectl set image deploy/${app} ${app}=${app}:${ver}  (rolling update, one at a time)`); run(); }
+function rollout(app, ver){ const d = depOf(app); if (!d) return; const c = (d.containers || [])[0] || { name: app }, img = imageAt(d, c, ver);
+  if (st.mode === 'live') return liveNote(`kubectl set image deploy/${app} ${c.name}=${img}`); if (d.version === ver) return; d.version = ver;
+  const surge = Math.max(1, Math.ceil(d.replicas*.25)), unavail = Math.floor(d.replicas*.25);
+  say('rollout', `kubectl set image ${isSts(d) ? 'sts' : 'deploy'}/${d.name} ${c.name}=${img}: a new pod template, so a new ReplicaSet ${d.name}-${rsHash(app, ver)}; RollingUpdate with the defaults, maxSurge 25% (${surge} of ${d.replicas}) and maxUnavailable 25% (${unavail})`, 3400); run(); }
 function applyTrain(){ if (st.mode === 'live') return liveNote('kubectl apply -f train.yaml'); if (depOf('train')) return say('train', 'train is already applied');
-  st.deploys.push({ name:'train', ns:'default', app:'train', kind:'Deployment', replicas:3, version:'v1', containers:[{ name:'trainer', image:'pytorch:2.4-cuda' }], gpu:1 });
-  say('apply', 'kubectl apply -f train.yaml: 3 replicas, each requests nvidia.com/gpu: 1; only node-c has GPUs (2)'); run(); }
+  st.deploys.push({ name:'train', ns:'default', app:'train', kind:'Deployment', replicas:3, version:'v1', containers:[{ name:'trainer', image:'pytorch:2.4-cuda', req:{ cpu:2000, mem:4096 }, lim:{ cpu:2000, mem:4096 } }], gpu:1 });
+  say('apply', 'kubectl apply -f train.yaml: 3 replicas, each requests 2 cpu, 4Gi and nvidia.com/gpu: 1; only node-c has GPUs (2)'); run(); }
 function applySpark(){ if (st.mode === 'live') return liveNote('kubectl apply -f spark-podgroup.yaml'); if (depOf('spark')) return say('spark', 'spark is already applied');
-  st.deploys.push({ name:'spark', ns:'default', app:'spark', kind:'Job', replicas:4, version:'v1', containers:[{ name:'executor', image:'spark:3.5' }], gang:true, minMember:4 });
-  say('apply', 'kubectl apply -f spark-podgroup.yaml: Job spark with schedulerName: volcano, PodGroup minMember 4'); run(); }
+  st.deploys.push({ name:'spark', ns:'default', app:'spark', kind:'Job', replicas:4, version:'v1', containers:[{ name:'executor', image:'spark:3.5', req:{ cpu:1000, mem:2048 }, lim:{ cpu:2000, mem:4096 } }], gang:true, minMember:4 });
+  say('apply', 'kubectl apply -f spark-podgroup.yaml: Job spark with schedulerName: volcano, PodGroup minMember 4; each executor requests 1 cpu, 2Gi'); run(); }
 function applyCache(){ if (st.mode === 'live') return liveNote('kubectl apply -f cache.yaml'); if (depOf('cache')) return say('cache', 'cache is already applied');
-  st.deploys.push({ name:'cache', ns:'default', app:'cache', kind:'Deployment', replicas:2, version:'v1', containers:[{ name:'redis', image:'redis:7' }] });
-  say('apply', 'kubectl apply -f cache.yaml: Deployment cache created, ReplicaSet wants 2'); run(); }
+  st.deploys.push({ name:'cache', ns:'default', app:'cache', kind:'Deployment', replicas:2, version:'v1', containers:[{ name:'redis', image:'redis:7', ports:[6379], req:{ cpu:2000, mem:2048 }, lim:{ cpu:2000, mem:4096 } }] });
+  say('apply', 'kubectl apply -f cache.yaml: Deployment cache created, ReplicaSet wants 2 (each requests 2 cpu, 2Gi)'); run(); }
 function deleteDep(app){ if (st.mode === 'live') return liveNote(`kubectl delete deploy/${app}`); if (!depOf(app)) return say('nodep', `${app} is not deployed`); st.deploys = st.deploys.filter(d => d.app !== app); say('del', `kubectl delete deploy/${app}: its ReplicaSet and Pods go with it`); run(); }
 function pickPod(app){ const c = st.pods.filter(p => p.app === app && isReady(p) && p.pos); return c.length ? c[Math.floor(rnd()*c.length)] : null; }
+// kubectl delete pod: a deletionTimestamp, nothing more. The pod leaves its EndpointSlices at once, its owner creates the replacement at
+// once, and the kubelet sends SIGTERM and waits terminationGracePeriodSeconds (30 s; GRACE here) before SIGKILL: no fire, a drain
 function deletePod(app = 'web', pod){ if (st.mode === 'live') return liveNote('kubectl delete pod <name>'); const p = pod || pickPod(app); if (!p) return say('nopod', `No Ready ${app} Pod to delete right now`);
-  p.phase = 'crash'; p.phaseT = .4; p.fire = 1; p.ready = false; p.doomed = true; p.down = true; st.sec.queue.push([st.t + .7, () => terminate(p)]); say('delpod', `kubectl delete pod ${p.name}: the ReplicaSet will replace it`); run(); }
-function crashPod(pod){ if (st.mode === 'live') return liveNote('kubectl exec <pod> -- kill 1'); const p = pod || pickPod('api') || pickPod('web'); if (!p) return say('nopod', 'No Ready Pod to crash right now');
-  p.phase = 'crash'; p.phaseT = 0; p.fire = 1; p.ready = false; say('crash', `Crash: ${p.name} container exited; the kubelet restarts it in place (the Pod keeps its name and node)`); run(); }
+  const d = depOf(p.app); p.doomed = true; terminate(p);
+  say('delpod', `kubectl delete pod ${p.name}: deletionTimestamp set, so it leaves Service ${p.app}'s endpoints now and ${isSts(d) ? `StatefulSet ${d.name} recreates ${p.name} once this one is gone (same name, same claim ${p.pvc})` : `its ReplicaSet creates a replacement now, while it drains`}; the kubelet sends SIGTERM and gives it ${GRACE} s (terminationGracePeriodSeconds 30 in real life) to finish its parts before SIGKILL`, 3800); run(); }
+// a crash: the container exits (kill 1), or the kernel kills it for passing its memory limit (OOMKilled, exit 137)
+function crashPod(pod, reason){ if (st.mode === 'live') return liveNote(reason === 'OOMKilled' ? '(a process that allocates past the container\'s memory limit: the cgroup OOM killer ends it, exit 137)' : 'kubectl exec <pod> -- kill 1'); const p = pod || pickPod('api') || pickPod('web'); if (!p) return say('nopod', 'No Ready Pod to crash right now');
+  if (p.phase === 'crash') return say('crashing', `${p.name} is already down: ${p.wait ? 'CrashLoopBackOff, ' + p.wait + ' s' : 'restarting'}`);
+  const c = p.containers[0], lim = c.lim && c.lim.mem; p.reason = reason || 'Error (exit 1)'; p.phase = 'crash'; p.phaseT = 0; p.fire = 1; p.ready = false;
+  say(reason === 'OOMKilled' ? 'oom' : 'crash', reason === 'OOMKilled' ? `OOMKilled: ${c.name} in ${p.name} passed its memory limit${lim ? ` (${fmtMem(lim)})` : ''} and the kernel's OOM killer ended it (exit 137); the kubelet restarts it in place with the same limit (restartPolicy Always), after any back-off` : `Crash: ${p.name} container exited; the kubelet restarts it in place (the Pod keeps its name and node)${p.backoff ? ', after a back-off of ' + p.backoff + ' s' : ''}`); run(); }
 function unreadyPod(pod){ if (st.mode === 'live') return liveNote('(make a readiness probe fail: e.g. stop the health endpoint)'); const p = pod || pickPod('web'); if (!p) return say('nopod', 'No Ready web Pod right now');
   p.phase = 'unready'; p.phaseT = 0; p.ready = false; say('unready', `Probe: ${p.name} readiness failing, so the Service stops sending it traffic (the Pod is not restarted)`); run(); }
-function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); n.cordoned = true; announce(n, true); const ev = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); ev.forEach(terminate);
-  say('drain', `kubectl drain ${n.name}: cordoned, ${ev.length} Pod${ev.length === 1 ? '' : 's'} evicted; ReplicaSets recreate them elsewhere`); run(); }
-function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; announce(n, false); say('uncordon', `kubectl uncordon ${n.name}: schedulable again`); run(); }
+/* kubectl drain: cordon, then one Eviction per pod through the API. An eviction is refused (429) while it would break a
+   PodDisruptionBudget, and drain retries it every few seconds until the owner has a replacement Ready elsewhere; pods without a
+   budget go at once. Nothing is moved: each pod is deleted and its owner makes a new one wherever the scheduler says.
+   BGP has nothing to say about it: the node is up, its speaker keeps announcing its PodCIDR, the routes stay */
+const DRAIN_RETRY = 5;
+function pdbOf(app){ const d = depOf(app); return d && d.pdb ? d.pdb : null; }
+// may this pod be disrupted now: the budget's minAvailable (or replicas - maxUnavailable) must still hold after it goes
+function pdbAllows(p){ const b = pdbOf(p.app), d = depOf(p.app); if (!b || !d) return true; const ready = podsOf(p.app).filter(isReady).length;
+  const minA = b.minAvailable != null ? +b.minAvailable : d.replicas - +b.maxUnavailable; return ready - (isReady(p) ? 1 : 0) >= minA; }
+function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); if (n.drain) return say('draining', `${n.name} is already draining`);
+  n.cordoned = true; const left = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); n.drain = { left, t: 0, refused: new Set() };
+  const budgets = [...new Set(left.map(p => p.app))].filter(pdbOf).map(a => `${pdbOf(a).name} (${a})`);
+  say('drain', `kubectl drain ${n.name}: cordoned (node.kubernetes.io/unschedulable:NoSchedule), then an Eviction for each of its ${left.length} Pod${left.length === 1 ? '' : 's'}${budgets.length ? '; ' + budgets.join(', ') + ' decides how many may be down at once, the rest are evicted now' : ''}`, 3600); run(); }
+function drainTick(dt){ let busy = false;
+  for (const n of st.nodes){ const D = n.drain; if (!D) continue; busy = true; D.t += dt;
+    D.left = D.left.filter(p => st.pods.includes(p) && p.phase !== 'terminating');
+    if (!D.left.length){ n.drain = null; say('drained', `${n.name} drained: every pod is evicted, each replaced by its owner on another node; the node is still cordoned (kubectl uncordon to take pods again)`, 3200); continue; }
+    if (D.t < DRAIN_RETRY && D.tried) continue;   // drain retries the refused evictions every few seconds
+    D.t = 0; D.tried = true;
+    for (const p of D.left.slice()){ if (pdbAllows(p)){ terminate(p); if (D.refused.has(p.id)) say('evictok-' + p.id, `Eviction of ${p.name} allowed now: a replacement is Ready, so the budget holds without it`); }
+      else { const b = pdbOf(p.app); if (!D.refused.has(p.id)) say('evictno-' + p.app, `Eviction of ${p.name} refused (429 Too Many Requests): PodDisruptionBudget ${b.name} ${b.minAvailable != null ? 'needs ' + b.minAvailable + ' available' : 'allows ' + b.maxUnavailable + ' unavailable'} and ${p.app} is at its limit until a replacement is Ready; kubectl drain retries every ${DRAIN_RETRY} s`, 3600); D.refused.add(p.id); } } }
+  return busy; }
+function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; if (n.drain){ n.drain = null; say('drainstop', `${n.name}: drain abandoned, the remaining pods stay`); } say('uncordon', `kubectl uncordon ${n.name}: the unschedulable taint is gone, the scheduler may bind here again (nothing moves back on its own)`); run(); }
 function podInfo(p){ const d = depOf(p.app); say('info-' + p.id, `${p.name} · ${p.node || 'Pending'} · ${p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase} · ${p.containers.length} container${p.containers.length === 1 ? '' : 's'} · restarts ${p.restarts}${p.pvc ? ' · volume ' + p.pvc : ''}${d && d.kind === 'StatefulSet' ? ' · StatefulSet' : ''}`, 3000); }
 
 
@@ -778,11 +907,17 @@ function secTick(dt){ let busy = false; const S = st.sec;
     if (n.cut){ if (c.ok && st.t > c.exp){ c.ok = false; n.certCut = true; busy = true; say('certcut', `${n.name}'s kubelet certificate expired while its uplink was cut: it could not send the CSR to rotate it (the badge goes red); once reconnected the cell needs the CA again before it can report`, 4200); } continue; }
     if (c.ok && st.t > c.exp - ROT*.2){ c.issued = st.t; c.exp = st.t + ROT; c.flash = .9; n.rotated = (n.rotated || 0) + 1; st.sec.badges++; busy = true;
       if (!rotToasted){ rotToasted = true; say('rot', `${n.name}: the kubelet rotated its client certificate before it expired (a new CSR, approved and signed by the CA; the badge flashes). kubeadm issues kubelet certificates for a year and the kubelet renews them at 70-90% of their lifetime; here a badge lasts ${ROT/60} simulated minutes and rotates at 80%. Later rotations only flash the badge; the cell's card shows the expiry`, 5200); } }   // the toast once per session; the flash every time
+    // an expired badge: every status update and Lease renewal is a 401, so to the node lifecycle controller the node has simply gone quiet;
+    // it waits the same node-monitor-grace-period as for a cut cable, then marks it NotReady. Nothing heals this on its own
     if (!c.ok){ n.certDown = (n.certDown || 0) + dt; busy = true;
-      if (n.certDown > .6 && n.ready){ n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.nodeDown = true; }
-        say('certdown', `${n.name}'s kubelet certificate has expired: the counter refuses its status updates (401), the node-lifecycle controller marks it NotReady, its machines stop being endpoints and the dispatcher sends it nothing`); }
-      if (n.certDown > 4.5){ issueCert(n); n.ready = true; say('certback', `${n.name}: re-bootstrapped with a fresh token, a new CSR is approved and signed by the CA; the kubelet reports again and the node is Ready (in real life: kubeadm certs renew, or a new kubeadm join)`); } } }
+      if (n.certDown > NODE_GRACE && n.ready){ n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.nodeDown = true; }
+        say('certdown', `${n.name} is NotReady: its kubelet certificate expired ${NODE_GRACE} s ago and every status update since was refused (401), so no Lease was renewed for node-monitor-grace-period. Its machines leave their Services and the dispatcher sends it nothing. It stays so until someone acts: kubeadm certs renew, or Break ▸ re-join ${n.name}`, 5200); } } }
   return busy; }
+// the fix for an expired kubelet certificate is a person: a fresh bootstrap token and kubeadm join (or kubeadm certs renew on the node)
+function rejoinNode(name = 'node-b'){ if (st.mode === 'live') return liveNote('kubeadm token create --print-join-command; on the node: kubeadm reset && kubeadm join ...'); const n = st.nodes.find(n => n.name === name); if (!n) return;
+  if (n.cut) return say('cutstill', `${n.name}'s uplink is still cut: nothing it sends reaches the counter`); if (n.cert && n.cert.ok && n.ready) return say('nojoin', `${n.name} is Ready with a valid badge; nothing to re-join`);
+  n.csr = true; issueCert(n); n.certDown = 0; n.certCut = false; n.ready = true; st.sec.queue.push([st.t + .5, () => { for (const p of st.pods) if (p.node === n.name && p.nodeDown){ p.phaseT = 0; } }]);
+  say('rejoin', `kubeadm join on ${n.name} again, with a fresh bootstrap token: a new CSR is approved and signed by the CA, the kubelet reports with its new badge, the node is Ready and its machines are endpoints again`, 4200); run(); }
 function forgeCard(){ if (st.mode === 'live') return liveNote('(send the API server a request with no credentials: curl -k https://<api>:6443/api/v1/pods)'); if (!st.cp.api) return say('noapi', 'The counter is closed: nothing to refuse yet');
   st.sec.forged.push({ t: 0, dur: 2.4 }); say('forge', 'A forged job card comes up the tube from the floor: no seal on it, no client certificate, no token (kubectl with a made-up kubeconfig)'); run(); }
 function expireBadge(name = 'node-b'){ if (st.mode === 'live') return liveNote('kubeadm certs check-expiration   # on the node: openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -dates');
@@ -802,9 +937,13 @@ function applyNetpol(quiet){ if (st.mode === 'live') return liveNote('kubectl ap
 function removeNetpol(){ if (st.mode === 'live') return liveNote('kubectl delete networkpolicy db-from-api'); if (!st.sec.netpol) return say('nonetpol', 'No NetworkPolicy to remove');
   st.sec.netpol = null; say('netpoldel', 'kubectl delete networkpolicy db-from-api: with no policy selecting them the db gates are open again (the default is allow-all)'); run(); }
 // a part from one machine to another: web calling db, api calling db
-function linkRequest(fromApp, toApp){ const a = pickPod(fromApp), b = pickPod(toApp); if (!a || !b) return say('nolink', `No Ready ${!a ? fromApp : toApp} machine right now`);
-  const pol = st.sec.netpol, blocked = !!(pol && pol.to === toApp && !pol.from.includes(fromApp)); st.reqs.sent++; st.parcels.push(makeLink(a, b, blocked));
-  say('link-' + fromApp, `${a.name} -> Service ${toApp}:${(st.services.find(s => s.name === toApp) || { ports: [0] }).ports[0] || ''} -> ${b.name}${blocked ? ' (the policy will drop it at the gate)' : pol && pol.to === toApp ? ' (allowed by the policy)' : ''}`); run(); }
+function linkRequest(fromApp, toApp, from){ const a = from || pickPod(fromApp), svc = st.services.find(s => s.name === toApp), eps = svc ? endpointsOf(svc) : st.pods.filter(p => p.app === toApp && isReady(p) && p.pos), b = eps.length ? pickEndpoint(eps) : null;
+  if (!a || !b) return say('nolink', `No Ready ${!a ? fromApp : toApp} machine right now`);
+  const pol = st.sec.netpol, blocked = !!(pol && pol.to === toApp && !pol.from.includes(fromApp)); st.reqs.sent++; const pc = makeLink(a, b, blocked); st.parcels.push(pc);
+  const headless = svc && svc.clusterIP === 'None', sw = st.net.svc === 'ebpf' ? 'the CNI\'s eBPF program' : 'kube-proxy\'s iptables';
+  say('link-' + fromApp, `${a.name} -> ${pc.dnsPod ? `lookup ${toApp}.default.svc at kube-dns (UDP, answered by ${pc.dnsPod.name})` : `lookup ${toApp}.default.svc: kube-dns has no endpoint, the caller waits ${DNS_TIMEOUT} s`} -> ${headless ? `the pod addresses themselves (headless), it picks ${b.name}` : `ClusterIP, rewritten on ${a.node}'s own cabinet by ${sw} to one Ready endpoint at random: ${b.name}`}${blocked ? ' (the policy will drop it at the gate)' : pol && pol.to === toApp ? ' (allowed by the policy)' : ''}`, 3400); run(); }
+// a handler that answered a part now calls the next Service in its chain (web calls api, api calls db), as a part of its own
+function callNext(a){ const d = depOf(a.app); if (!d || !d.dependsOn) return; linkRequest(a.app, d.dependsOn, a); }
 // a slow heartbeat so the badges age while the floor is idle (the loop only runs while something moves); it follows the Clock and never draws a frame of its own
 setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st.sec.ca) return; st.t += SPEED; if (secTick(SPEED)) run(); else if (document.querySelector('.card.open')) ui.render(); }, 1000);
 
@@ -816,9 +955,12 @@ setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st
    every pod's resolv.conf points at the board's ClusterIP, and a lookup is data plane: a UDP part to that address through kube-proxy.
    The mesh adds a sidecar escort to each meshed machine, its own CA and a weighted split the Service never had. */
 const MESHED = new Set(['web', 'api']);
-function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: cordoned, its BGP speaker withdraws 10.200.${st.nodes.indexOf(n)}.0/24: the pulse runs up the spur, the line greys on the diverter's strip and the arm no longer sends that way` : `${n.name}: its BGP speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 again; its line is back on the diverter's strip`); run(); }
+// a route lives as long as the BGP session: a cordon or a drain changes nothing on the diverter (the node is up, its speaker still
+// peers, DaemonSet pods still need the route); a cut uplink drops the session (BFD in milliseconds, the hold timer in 90 s without it)
+// and the diverter withdraws the PodCIDR; the session comes back with the cable
+function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: the BGP session to its diverter drops (BFD notices in milliseconds; the hold timer would take 90 s), so the diverter withdraws 10.200.${st.nodes.indexOf(n)}.0/24: the line greys on its strip and the arm no longer sends that way` : `${n.name}: the BGP session is back, its speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 again; its line is back on the diverter's strip`); run(); }
 function setFabric(f, quiet){ if (st.net.fabric === f) return quiet ? 0 : say('fabric', `The fabric already runs ${f === 'bgp' ? 'BGP' : 'static routes'}`); st.net.fabric = f;
-  if (f === 'bgp'){ for (const n of st.nodes) if (n.joined >= 1 && !n.cordoned) st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: false }); }
+  if (f === 'bgp'){ for (const n of st.nodes) if (n.joined >= 1 && !n.cut) st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: false }); }
   if (!quiet) say('fabric', f === 'bgp' ? 'Fabric: BGP. Every cabinet runs a speaker (Cilium or Calico) that announces its PodCIDR up the spur to the row\'s diverter (the top-of-rack switch); the diverters share what they learn over the spine, whose two belts carry parts in turn (ECMP)' : 'Fabric: static routes, the Hard Way: every host carries a route to each other cell\'s range, written by hand; the diverter\'s strip is painted on, one belt, no announcements');
   run(); }
 function setSvcMode(m, quiet){ if (st.net.svc === m) return quiet ? 0 : say('svcmode', 'Already set'); st.net.svc = m;
@@ -840,7 +982,7 @@ function boardLines(){ const main = svcMain(); return st.services.filter(s => s.
 function lookup(pc){ st.net.hops.push({ pod: pc.dnsPod, t: 0, dur: .35 }); st.net.dns.hl = pc.svc.name; st.net.dns.hlT = .5; st.net.dns.flash = .3; }
 function stopDns(){ if (st.mode === 'live') return liveNote('kubectl -n kube-system delete pod -l k8s-app=kube-dns'); const ps = st.pods.filter(p => isDnsPod(p) && p.phase !== 'terminating' && p.phase !== 'crash'); if (!ps.length) return say('dnsdown', 'No CoreDNS machine is up to stop');
   for (const p of ps){ p.phase = 'crash'; p.phaseT = .4; p.fire = 1; p.ready = false; p.doomed = true; p.down = true; st.sec.queue.push([st.t + .7, () => terminate(p)]); }   // on the simulation clock, like everything else
-  say('dnsstop', `kubectl -n kube-system delete pod -l k8s-app=kube-dns: both CoreDNS machines go down, kube-dns has no endpoints and the directory board goes blank (NO ANSWER); new parts stall at the dock while parts already on the floor finish, open connections do not notice. The kube-system Deployment is already raising replacement cards`); run(); }
+  say('dnsstop', `kubectl -n kube-system delete pod -l k8s-app=kube-dns: both CoreDNS machines go down, kube-dns has no endpoints and the directory board goes blank (NO ANSWER). A machine calling another Service by name now waits ${DNS_TIMEOUT} s at its own door and gives up; open connections do not notice, and parts from the dock are untouched (the Ingress controller holds the endpoints itself). The kube-system Deployment is already raising replacement cards, one per cell by its anti-affinity`, 5200); run(); }
 function applyMesh(quiet){ if (st.mode === 'live') return liveNote('istioctl install / linkerd install, then label the namespace for injection'); const M = st.net.mesh; if (M.on) return quiet ? 0 : say('mesh', 'The mesh is already installed'); M.on = true;
   if (!quiet) say('mesh', 'kubectl label ns default istio-injection=enabled, then a rollout restart: every web and api machine gets an escort cartridge (the sidecar proxy); the mesh desk in the annex issues each one a certificate from the mesh\'s own CA, and parts between them travel in a sealed sleeve (mutual TLS the cluster CA knows nothing about)'); run(); }
 function applyCanary(pct, quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f virtualservice-web.yaml   # weight 90 / 10'); if (!st.net.mesh.on) applyMesh(true); const M = st.net.mesh, d = depOf('web'); if (!d) return;
@@ -849,29 +991,31 @@ function applyCanary(pct, quiet){ if (st.mode === 'live') return liveNote('kubec
 function removeMesh(){ if (st.mode === 'live') return liveNote('istioctl uninstall --purge'); const M = st.net.mesh, d = depOf('web'); if (!M.on && !M.canary) return say('nomesh', 'No mesh to remove'); M.on = false; M.canary = 0;
   if (d && d.paused){ d.paused = false; say('meshoff', 'Mesh removed: the escorts and the sleeves go, the sorting station is back to round robin, and kubectl rollout resume deploy/web lets the paused rollout finish to v2'); } else say('meshoff', 'Mesh removed: the escorts and the sleeves go, parts travel in the clear again and the station is back to round robin'); run(); }
 function setManaged(on, quiet){ if (st.net.managed === !!on) return; st.net.managed = !!on; OFFICE[0] = on ? -22 : 20;
-  if (!quiet) say('managed', on ? 'Managed control plane: the planning office moves into the provider\'s building behind the fence. The counter still takes every request; the cells reach it, and it reaches them for logs and exec, through the konnectivity tunnel (a relay on every cabinet). The provider owns the office, you own the cells' : 'The control plane is yours again: the office is back on the mezzanine, no tunnel needed');
+  if (!quiet) say('managed', on ? 'Managed control plane: the planning office moves into the provider\'s building behind the fence. The cells reach the counter the ordinary way, over the network to its public endpoint (every kubelet, every watch, every kubectl). What cannot cross the fence is the other direction: the counter calling a cabinet for logs, exec or a webhook. For that each cabinet runs a konnectivity relay that dials out to the provider and keeps a tunnel open; the counter\'s calls ride back through it. The provider owns the office, you own the cells' : 'The control plane is yours again: the office is back on the mezzanine, no tunnel needed');
   if (ui) reframe(); run(); }
 // a node's uplink: with it cut the kubelet cannot renew its Lease; the node lifecycle controller marks the node NotReady after
 // node-monitor-grace-period, and the taint manager evicts its pods after the unreachable toleration (the real defaults, on the clock)
 const NODE_LEASE = 10, NODE_GRACE = 40, NODE_TOLERATION = 300;
 function cutUplink(name = 'node-b'){ if (st.mode === 'live') return liveNote('(on the node: ip link set eth0 down, or pull the cable; then kubectl get nodes -w)'); const n = st.nodes.find(n => n.name === name) || st.nodes[1] || st.nodes[0]; if (!n || n.joined < 1) return say('nocut', `${name} has not joined yet`); if (n.cut) return say('cutalready', `${n.name}'s uplink is already cut`);
-  n.cut = true; n.cutT = 0; n.unreach = false; n.evicted = false;
+  n.cut = true; n.cutT = 0; n.unreach = false; n.evicted = false; announce(n, true);
   say('cut', `${n.name}'s uplink is cut: the belt and the tube into its cell are severed at the corridor. Its kubelet can no longer renew its Lease (it tries every ${NODE_LEASE} s, node-status-update-frequency) and nothing reaches the cell; the node lifecycle controller waits node-monitor-grace-period (${NODE_GRACE} s) before it marks the node NotReady. Parts and job cards for ${n.name} stop at the break`, 5200); run(); }
 function restoreUplink(name = 'node-b'){ const n = st.nodes.find(n => n.name === name); if (!n || !n.cut) return say('nocut2', `${name}'s uplink is not cut`); n.cut = false;
-  if (n.certCut){ n.certCut = false; n.certDown = 0; say('certcut2', `${n.name} is reconnected, but its kubelet certificate expired while it was cut off: the counter refuses its first status update (401), so it re-bootstraps with a fresh token and a new CSR before the node can be Ready`, 4600); }
-  const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating');
-  if (n.evicted){ for (const p of mine){ p.unknown = false; p.down = true; terminate(p); } n.unreach = false; n.evicted = false; n.ready = true;
-    say('restore', `${n.name}'s uplink is back: the kubelet reports in, finds its pods deleted (evicted while it was unreachable) and tears the orphaned machines down; the replacements are already running in other cells`, 4600); }
+  const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'), sts = mine.filter(p => p.orphan && isSts(depOf(p.app)));
+  if (n.evicted){ for (const p of mine){ p.unknown = false; p.down = true; p.orphan = false; terminate(p); } n.unreach = false; n.evicted = false; n.ready = true;
+    say('restore', `${n.name}'s uplink is back: the kubelet reports in, sees the deletionTimestamps on its pods and stops their containers; the API finally removes the objects. The Deployments' replacements have been running elsewhere since the eviction${sts.length ? `; only now does the StatefulSet create ${sts.map(p => p.name).join(', ')} again, with its volume detached from here first` : ''}`, 5200); }
   else if (n.unreach){ for (const p of mine){ if (p.unknown){ p.unknown = false; p.ready = !!p.wasReady; } } n.unreach = false; n.ready = true;
     say('restore', `${n.name}'s uplink is back before the toleration ran out: the kubelet renews its Lease, the node is Ready again and its machines rejoin their Services; nothing moved`, 4200); }
   else say('restore', `${n.name}'s uplink is back within the grace period: the Lease is renewed and the controller never noticed; the parts and cards waiting at the break go on`, 3600);
-  run(); }
+  if (n.certCut){ n.certCut = false; n.certDown = NODE_GRACE + 1; n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.nodeDown = true; }
+    say('certcut2', `${n.name} is reconnected, but its kubelet certificate expired while it was cut off: every report it sends is refused (401), so it stays NotReady until someone runs kubeadm certs renew on it, or Break ▸ re-join ${n.name}`, 4600); }
+  announce(n, false); run(); }
 function uplinkTick(dt){ let busy = false;
   for (const n of st.nodes){ if (!n.cut) continue; n.cutT += dt; busy = true;
     if (!n.unreach && n.cutT >= NODE_GRACE){ n.unreach = true; n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.unknown = true; p.wasReady = p.ready; p.ready = false; }
       say('unreach', `${n.name} is NotReady: no Lease renewal for ${NODE_GRACE} s (node-monitor-grace-period). Its machines' status is Unknown and they leave their Services; the node gets the taint node.kubernetes.io/unreachable:NoExecute, which its pods tolerate for ${NODE_TOLERATION} s (tolerationSeconds) before they are evicted`, 5200); }
     if (n.unreach && !n.evicted && n.cutT >= NODE_GRACE + NODE_TOLERATION){ n.evicted = true; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); for (const p of mine){ p.orphan = true; p.ready = false; }
-      say('evict', `${NODE_TOLERATION} s up: the taint manager evicts ${n.name}'s ${mine.length} pods (their API objects are deleted) and the ReplicaSets raise replacement cards for other cells. The cell keeps its machines running, orphaned, until its uplink returns`, 5200); } }
+      const sts = mine.filter(p => isSts(depOf(p.app)));
+      say('evict', `${NODE_TOLERATION} s up: the taint manager deletes ${n.name}'s ${mine.length} pods, but a kubelet that cannot be reached cannot confirm, so they only get a deletionTimestamp and sit Terminating. The ReplicaSets count them as gone and raise replacement cards now${sts.length ? `; StatefulSet ${sts.map(p => p.app).join(', ')} does not: ${sts.map(p => p.name).join(', ')} stays Terminating, its volume attached to ${n.name}, and no second copy is made (force-delete it and you choose the split brain yourself)` : ''}. The cell keeps its machines running, orphaned, until its uplink returns`, 6200); } }
   return busy; }
 function netTick(dt){ let busy = false; const N = st.net; if (uplinkTick(dt)) busy = true;
   for (const a of N.ann){ a.t += dt/a.dur; busy = true; } N.ann = N.ann.filter(a => a.t < 1.25);
@@ -880,7 +1024,7 @@ function netTick(dt){ let busy = false; const N = st.net; if (uplinkTick(dt)) bu
   if (N.dns.hlT > 0){ N.dns.hlT -= dt; busy = true; if (N.dns.hlT <= 0) N.dns.hl = null; }
   // a Service (or a headless Service's pods) changed: one CoreDNS machine updates the board
   if (isShop()){ const bk = boardLines().map(l => l.text).join('|'); if (bk !== N.dns.key){ const first = !N.dns.key, dp = dnsPick(); N.dns.key = bk; if (dp && !first){ N.hops.push({ pod: dp, t: 0, dur: .35 }); N.dns.flash = .3; } } }
-  const up = dnsUp(); if (up && N.dns.wasDown){ N.dns.wasDown = false; say('dnsback', 'A replacement CoreDNS machine is Ready: kube-dns has an endpoint again, the directory board lights up and the parts waiting at the dock look up their names'); } if (!up && !N.dns.wasDown && st.pods.some(isDnsPod)) N.dns.wasDown = true;
+  const up = dnsUp(); if (up && N.dns.wasDown){ N.dns.wasDown = false; say('dnsback', 'A replacement CoreDNS machine is Ready: kube-dns has an endpoint again, the directory board lights up and the machines waiting on a lookup get their answer'); } if (!up && !N.dns.wasDown && st.pods.some(isDnsPod)) N.dns.wasDown = true;
   return busy; }
 
 </script>
@@ -1018,7 +1162,7 @@ function render(){
     const last = m.log.slice(-9); last.forEach((e, j) => { const ex = mx(i) - 40 + j*9.5, ey = y + 64; mem += `<rect x="${ex}" y="${ey}" width="7" height="7" rx="1.5" fill="${e.state === 'applied' ? INKC : e.state === 'committed' ? '#9a948a' : 'none'}" stroke="${INKC}" stroke-width=".8"/>`; });
     mem += text(`log ${m.log.length} · commit ${m.commit}`, mx(i), y + 88, { size: 8.5, weight: 600, col: MUTED }); });
   svg.querySelector('#members').innerHTML = mem;
-  svg.querySelector('#term').innerHTML = text(`term ${R.term}${R.noLeader ? ' · NO LEADER: ELECTION' : R.down != null ? ' · quorum 2 of 3' : ' · quorum 3 of 3'}`, 968, 42, { size: 10, anchor: 'end', col: R.noLeader ? REDC : MUTED, ls: '.08em' });
+  { const up = R.members.filter(m => m.up).length, N = cfg ? (cfg.st.cp.members || 3) : 3; svg.querySelector('#term').innerHTML = text(`term ${R.term}${R.noLeader ? ' · NO LEADER: ELECTION' : ` · ${up} of ${N} up, quorum ${Math.floor(N/2) + 1}`}`, 968, 42, { size: 10, anchor: 'end', col: R.noLeader ? REDC : MUTED, ls: '.08em' }); }
   svg.querySelector('#rv').innerHTML = text(`resourceVersion ${R.rv}${R.waiting ? `  ·  ${R.waiting} write${R.waiting > 1 ? 's' : ''} waiting for etcd` : ''}`, 608, 42, { size: 10, anchor: 'end', col: R.waiting ? REDC : MUTED, ls: '.08em' });
   // queue chips on the controllers
   for (const [id, keys] of Object.entries(R.chips)){ const x = CTRL[id].x; keys.slice(0, 3).forEach((k, i) => { s += box(x + 92 + i*28, 294, 26, 16, { r: 8, fill: A, sw: .9 }) + text(k.slice(0, 4), x + 105 + i*28, 302, { size: 8 }); }); }
@@ -1130,7 +1274,7 @@ function observe(){
     if (o.phase === n.phase) continue;
     if (n.phase === 'scheduled' || n.phase === 'bound') bound.push(p); else if (n.phase === 'dropping') dropped.push(p); else if (n.phase === 'creating' && o.phase !== 'pulling' && o.phase !== 'staged' || n.phase === 'pulling') started.push(p);
     else if (n.phase === 'running' && (o.phase === 'creating')) ready.push(p); else if (n.phase === 'creating' || n.phase === 'queued' || n.phase === 'staged') continue; else if (n.phase === 'running' && (o.phase === 'unready' || o.phase === 'crash')) reready.push(p);
-    else if (n.phase === 'crash' && n.doomed) deleted.push(p); else if (n.phase === 'crash') crashed.push(p); else if (n.phase === 'unready') unready.push(p);
+    else if (n.phase === 'terminating' && n.doomed && !o.doomed) deleted.push(p); else if (n.phase === 'crash') crashed.push(p); else if (n.phase === 'unready') unready.push(p);
     else if (n.phase === 'terminating' && !o.doomed) (gone[p.app] = gone[p.app] || []).push(p); }
   for (const [app, ps] of Object.entries(created)){ const c = col(ps[0]), key = `dep:${depOfName(app)}`;
     if (R.inflight.has(key)){ R.expect = R.expect || {}; (R.expect[app] = R.expect[app] || []).push(...ps); }
@@ -1141,13 +1285,13 @@ function observe(){
       else { const d = st.deploys.find(d => d.app === app); if (!R.inflight.has(`dep:${d ? d.name : app}`)) await controllerLoop('rs', app, () => apiCall('rs', `delete Pod ${ps[0].name.slice(0, 12)}${ps.length > 1 ? ' x' + ps.length : ''}`, c, ['kubelet', 'ep'], { method: 'DELETE', verb: 'replicaset ctrl' })); }
       await withdraw(ps[0], c);
       R.node = ps[0].node || R.node; lit('k2', 700); logLine(`kubelet ${R.node}: SIGTERM; the containers finish what they have and stop (terminationGracePeriodSeconds, then SIGKILL)`); await sleep(500); lit('k4', 500); }); }
-  for (const p of deleted) chain(`del:${p.id}`, async () => { await apiCall(who, `delete Pod ${p.name.slice(0, 14)}`, col(p), ['kubelet', 'rs', 'ep'], { method: 'DELETE', verb: 'kubectl delete pod' }); await withdraw(p, col(p)); R.node = p.node; lit('k2', 600); });
+  for (const p of deleted) chain(`del:${p.id}`, async () => { await apiCall(who, `delete Pod ${p.name.slice(0, 14)}`, col(p), ['kubelet', 'rs', 'ep'], { method: 'DELETE', verb: 'kubectl delete pod' }); logLine(`API server: deletionTimestamp set on ${p.name.slice(0, 14)} (graceful: the object stays until the kubelet confirms); the ReplicaSet controller no longer counts it and creates the replacement now`); await withdraw(p, col(p)); R.node = p.node; lit('k2', 600); logLine(`kubelet ${R.node}: SIGTERM, then SIGKILL after terminationGracePeriodSeconds`); });
   if (bound.length) bound.forEach((p, i) => chain(`bind:${p.id}`, async () => { await raced(promised(gateOf(p), 'created'), 9000); await sleep(i*180); await schedulerCycle(p, p.node); settle(gateOf(p), 'bound'); }));
   if (dropped.length){ const p = dropped[0]; chain(`gang:${p.app}`, async () => { await raced(promised(gateOf(p), 'created'), 9000); lit('f-gang', 1200); logLine(`Volcano: PodGroup ${p.app} admitted, ${dropped.length} of ${dropped.length} fit at once`); await schedulerCycle(p, p.node, { label: `Binding x${dropped.length} (PodGroup ${p.app})` }); dropped.forEach(q => settle(gateOf(q), 'bound')); }); }
   for (const p of started) chain(`start:${p.id}`, async () => { await raced(promised(gateOf(p), 'bound'), 9000); await kubeletStart(p); settle(gateOf(p), 'started'); });
   for (const p of dropped) chain(`start:${p.id}`, async () => { await raced(promised(gateOf(p), 'bound'), 9000); await kubeletStart(p); settle(gateOf(p), 'started'); });
   for (const p of ready) chain(`ready:${p.id}`, async () => { await raced(promised(gateOf(p), 'started'), 9000); await kubeletStatus(p, `Pod ${p.name.slice(0, 12)} Ready=true`, ['ep', 'rs'], { event: 'Pod Ready' }); if (!p.job) await endpointsUpdate(p.app, col(p)); });
-  for (const p of crashed) chain(`crash:${p.id}`, async () => { R.node = p.node; lit('k3', 600); logLine(`kubelet ${R.node}: container exited (${p.containers[0].name}); restartPolicy Always`); await sleep(400); lit('k2', 700); await sleep(500); await kubeletStatus(p, `Pod ${p.name.slice(0, 12)} restarts=${p.restarts + 1}`, ['rs'], { event: 'Pod status' }); });
+  for (const p of crashed) chain(`crash:${p.id}`, async () => { R.node = p.node; lit('k3', 600); logLine(`kubelet ${R.node}: container exited (${p.containers[0].name}, ${p.reason || 'Error'}); restartPolicy Always${p.backoff ? `, back-off ${p.backoff} s before the restart (CrashLoopBackOff)` : ''}`); await sleep(400); lit('k2', 700); await sleep(500); await kubeletStatus(p, `Pod ${p.name.slice(0, 12)} restarts=${p.restarts + 1}`, ['rs'], { event: 'Pod status' }); });
   for (const p of unready) chain(`unready:${p.id}`, async () => { await kubeletStatus(p, `Pod ${p.name.slice(0, 12)} Ready=false`, ['ep'], { event: 'Pod NotReady' }); await endpointsUpdate(p.app, col(p)); });
   for (const p of reready) chain(`reready:${p.id}`, async () => { await kubeletStatus(p, `Pod ${p.name.slice(0, 12)} Ready=true`, ['ep'], { event: 'Pod Ready' }); await endpointsUpdate(p.app, col(p)); });
   // Nodes: cordon / uncordon, joining and registering
@@ -1163,7 +1307,7 @@ function observe(){
     if (!o.unreach && n.unreach) chain(`node:${name}`, async () => { lit('nlc', 1600, REDC); await apiCall('nlc', `Node ${name} Ready=Unknown`, REDC, ['sched', 'ep'], { method: 'PATCH', verb: 'node lifecycle ctrl', event: 'Node' });
       lit('f-cordon', 900); lit('c-ep', 900); lit('p-rules', 900); logLine(`node lifecycle controller: no Lease renewal from ${name} for 40 s -> Ready=Unknown and the taint node.kubernetes.io/unreachable:NoExecute; its pods' Ready conditions go false and they leave their EndpointSlices; the taint manager starts the 300 s tolerationSeconds clock`); await sleep(800); });
     if (!o.evicted && n.evicted) chain(`node:${name}`, async () => { const k = st.pods.filter(p => p.node === name && p.orphan).length; lit('nlc', 1600, REDC); await apiCall('nlc', `delete Pods on ${name} x${k}`, REDC, ['rs', 'ep'], { method: 'DELETE', verb: 'taint manager', event: 'Pod (deleted)' });
-      logLine(`taint manager: the 300 s toleration of node.kubernetes.io/unreachable ran out, so ${name}'s ${k} pods are deleted in the API (their containers keep running in the cell, unreachable); the ReplicaSet controllers see the shortfall and create replacements`); await sleep(600); });
+      logLine(`taint manager: the 300 s toleration of node.kubernetes.io/unreachable ran out, so ${name}'s ${k} pods get a deletionTimestamp; the kubelet cannot confirm, so they stay Terminating (their containers keep running in the cell). The ReplicaSet controllers no longer count them and create replacements; a StatefulSet controller waits for the old pod to be gone`); await sleep(600); });
     if (o.cut && !n.cut) chain(`node:${name}`, async () => { R.node = name; lit('k0', 800); lit('nlc', 1200);
       if (o.evicted){ logLine(`kubelet ${name}: the uplink is back; its watch resumes and finds its pods gone from the API, so it stops their containers (SIGTERM) and reports Ready`); await sleep(500); lit('k2', 700); await sleep(400); }
       await kubeletStatus({ node: name, app: 'web', name }, o.unreach ? `Node ${name} Ready=true` : `Lease ${name} renewed`, ['sched'], { method: o.unreach ? 'PATCH' : 'PUT', verb: 'kubelet', event: 'Node' }); if (o.unreach) logLine(`node lifecycle controller: ${name} reports again, Ready=true, the unreachable taint is removed`); }); }
@@ -1174,13 +1318,16 @@ function observe(){
     : apiCall('kubectl', 'Pod privileged', REDC, [], { method: 'POST', verb: 'kubectl apply', failAt: 3, fail: 'validating admission: PodSecurity (pod-security.kubernetes.io/enforce=restricted on namespace default) forbids privileged: true -> 403 Forbidden; nothing is written' })); }
   if (prev.sec.netpol !== now.sec.netpol) chain('netpol', async () => { await apiCall('kubectl', now.sec.netpol ? 'NetworkPolicy db-from-api' : 'delete NetworkPolicy db-from-api', AMBER, ['proxy'], { method: now.sec.netpol ? 'POST' : 'DELETE', verb: 'kubectl', event: 'NetworkPolicy' });
     logLine(now.sec.netpol ? 'CNI agent on every node (Calico, Cilium, Antrea; not kube-proxy): the policy is programmed into the data plane, db pods accept 5432 from api only' : 'CNI agent on every node: the policy is removed, the default allow-all is back'); });
-  if (!prev.cp.etcd && now.cp.etcd) chain('cp:etcd', async () => { R.members.forEach(m => { m.up = true; m.log = []; m.commit = 0; m.role = 'follower'; }); R.term = 0; await election(-1); });
+  if (!prev.cp.etcd && now.cp.etcd) chain('cp:etcd', async () => { R.members.forEach((m, i) => { m.up = i < (now.cp.members || 3); m.log = []; m.commit = 0; m.role = 'follower'; }); R.term = 0; await election(-1); });
+  // kubeadm join --control-plane: another etcd member joins the group (as a learner first, then a voter) and catches up on the log
+  if (prev.cp.etcd && now.cp.etcd && (now.cp.members || 3) > (prev.cp.members || 3)) chain('cp:etcd', async () => { for (let i = prev.cp.members || 0; i < now.cp.members; i++){ const m = R.members[i], L = R.members[R.leader]; m.up = true; m.role = 'follower'; m.term = R.term; m.log = L.log.map(e => ({ ...e })); m.commit = L.commit; render(); logLine(`etcd-${i + 1} joined the Raft group (kubeadm join --control-plane): learner, then voter; ${i + 1} members, quorum ${Math.floor((i + 1)/2) + 1}`); await sleep(400); } });
   if (!prev.cp.api && now.cp.api) chain('cp:api', async () => { for (let i = 0; i < 6; i++) lit('stage' + i, 900); lit('watch', 900); logLine('kube-apiserver: serving on :6443 (etcd reachable)'); });
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
   if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => {
-      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `kube-dns ${dnsIP()}: ${pc.svc.name}.default.svc.cluster.local -> no answer: the Service has no Ready endpoints (no CoreDNS pod up); the client waits (resolv.conf timeout 5 s), the part stalls at the dock` : `kube-dns ${dnsIP()} (UDP through kube-proxy, data plane) -> ${pc.dnsPod.name} on ${pc.dnsPod.node}: ${pc.svc.name}.default.svc.cluster.local -> A ${svcIP(pc.svc) || 'the pod addresses (headless)'} (resolv.conf's search list and ndots:5 expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
-      R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
+      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `kube-dns ${dnsIP()}: ${pc.svc.name}.default.svc.cluster.local -> no answer: the Service has no Ready endpoints (no CoreDNS pod up); the caller ${pc.from ? pc.from.name.slice(0, 14) : ''} waits (resolv.conf timeout 5 s) and the part never leaves its bay` : `kube-dns ${dnsIP()} (UDP through kube-proxy, data plane) -> ${pc.dnsPod.name} on ${pc.dnsPod.node}: ${pc.svc.name}.default.svc.cluster.local -> A ${svcIP(pc.svc) || 'the pod addresses (headless)'} (resolv.conf's search list and ndots:5 expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
+      if (pc.ingress){ lit('c-ep', 600); logLine(pc.pod ? `ingress controller (at the dock): host ${cfg.st.ingresses[0] ? cfg.st.ingresses[0].host : ''} -> Service ${pc.svc.name}; it watches the EndpointSlices itself and proxies straight to ${pc.pod.name} (no DNS lookup, no ClusterIP, no kube-proxy on this path)` : `ingress controller: the EndpointSlice of ${pc.svc.name} is empty -> 503 Service Unavailable`); return; }
+      R.proxyNode = pc.from ? pc.from.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `${cfg.st.net.svc === 'ebpf' ? 'eBPF' : 'kube-proxy'} on ${R.proxyNode} (the caller's own node): ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}, picked at random` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused`);  }); }
   prev = now;
 }
 const depOfName = app => { const d = cfg.st.deploys.find(d => d.app === app); return d ? d.name : app; };
@@ -1200,13 +1347,13 @@ async function election(from){
   R.leader = cand; R.members.forEach((m, i) => { m.role = i === cand ? 'leader' : 'follower'; if (m.up) m.term = R.term; }); R.noLeader = false; render();
   logLine(`etcd-${cand + 1} is the leader for term ${R.term}: writes go through again`);
 }
-async function stopFollower(){ if (R.down != null) return cfg.say('etcd-down', 'One etcd member is already stopped: with 3 members only one can be lost and keep a quorum');
+async function stopFollower(){ if ((cfg.st.cp.members || 3) < 3) return cfg.say('etcd-one', `The ledger has ${cfg.st.cp.members} member${cfg.st.cp.members === 1 ? '' : 's'}: with fewer than three, losing one loses quorum (the office is still joining)`); if (R.down != null) return cfg.say('etcd-down', 'One etcd member is already stopped: with 3 members only one can be lost and keep a quorum');
   const i = R.members.findIndex((m, j) => j !== R.leader && m.up); R.down = i; R.members[i].up = false; render();
   cfg.say('etcd-f', `etcd-${i + 1} (a follower) stopped: the leader still has a quorum of 2 of 3, so every write goes on as before`, 3400); logLine(`etcd-${i + 1} stopped; quorum 2 of 3 holds`);
   chain('etcd:follower', async () => { await sleep(7000); const m = R.members[i]; m.up = true; m.term = R.term; const L = R.members[R.leader]; const missed = L.log.length - m.log.length; m.log = L.log.map(e => ({ ...e })); m.commit = L.commit; R.down = null; render();
     cfg.say('etcd-fb', `etcd-${i + 1} is back: the leader replays the ${missed} entr${missed === 1 ? 'y' : 'ies'} it missed and it catches up`, 3000); logLine(`etcd-${i + 1} rejoined and caught up (${missed} entries replayed)`); });
 }
-async function stopLeader(){ if (R.down != null) return cfg.say('etcd-down', 'One etcd member is already stopped: with 3 members only one can be lost and keep a quorum');
+async function stopLeader(){ if ((cfg.st.cp.members || 3) < 3) return cfg.say('etcd-one', `The ledger has ${cfg.st.cp.members} member${cfg.st.cp.members === 1 ? '' : 's'}: with fewer than three, losing one loses quorum (the office is still joining)`); if (R.down != null) return cfg.say('etcd-down', 'One etcd member is already stopped: with 3 members only one can be lost and keep a quorum');
   const i = R.leader; R.down = i; R.members[i].up = false; R.members[i].role = 'stopped'; R.noLeader = true; cfg.st.cp.hold = 1; render();
   cfg.say('etcd-l', `etcd-${i + 1} (the leader) stopped: no leader, so the API server cannot commit any write until an election finishes (reads still serve)`, 3600); logLine(`etcd-${i + 1} (leader) stopped: writes wait`);
   chain('etcd:leader', async () => { await sleep(1500); await election(i); cfg.st.cp.hold = 0; cfg.say('etcd-le', `Term ${R.term}: etcd-${R.leader + 1} elected leader; the queued writes go through and the controllers resume`, 3200); cfg.run();
@@ -1260,7 +1407,7 @@ const starts = (s, t) => String(s).trim().toLowerCase().startsWith(t.trim().toLo
 const BUTTONS = [
   { label:'Bootstrap', onClick: () => bootstrap() },
   { label:'Apply', choices: () => [
-    { label:'cache x2 (new app)', current: !!depOf('cache') && st.mode === 'demo', onClick: () => applyCache() },
+    { label:'cache x2 (new app, 2 cpu each)', current: !!depOf('cache') && st.mode === 'demo', onClick: () => applyCache() },
     { label:'delete cache', disabled: !depOf('cache'), why:'cache is not deployed', onClick: () => deleteDep('cache') },
     { label:'train x3 (1 GPU each)', current: !!depOf('train') && st.mode === 'demo', onClick: () => applyTrain() },
     { label:'delete train', disabled: !depOf('train'), why:'train is not deployed', onClick: () => deleteDep('train') },
@@ -1282,11 +1429,14 @@ const BUTTONS = [
     { label:'delete the db pod', onClick: () => deletePod('db') },
     ...(SHOP() ? [ (() => { const n = st.nodes.find(n => n.name === 'node-b') || st.nodes[1] || st.nodes[0]; return n ? { label: n.cut ? `restore ${n.name}'s uplink` : `cut ${n.name}'s uplink`, sub: n.cut ? 'the belt and the tube into the cell are joined again' : 'sever the belt and the tube into the cell; the kubelet\'s lease stops', onClick: () => n.cut ? restoreUplink(n.name) : cutUplink(n.name) } : null; })() ].filter(Boolean) : []),
     { label:'crash a container', onClick: () => crashPod() },
+    { label:'exceed a memory limit (OOMKilled)', sub:'the kernel ends the container at its limit; the kubelet restarts it, with back-off', onClick: () => crashPod(null, 'OOMKilled') },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
-    ...(SHOP() ? [ { label:'stop CoreDNS', sub:'the board goes blank; new parts stall at the dock', disabled: !dnsUp(), why:'no CoreDNS machine is up', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
+    ...(SHOP() ? [ { label:'stop CoreDNS', sub:'the board goes blank; machines calling a Service by name wait at their doors; the dock is unaffected', disabled: !dnsUp(), why:'no CoreDNS machine is up', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", sub:'401 on every report; NotReady after 40 s; stays so until re-joined', onClick: () => expireBadge('node-b') },
+      (() => { const n = st.nodes.find(n => n.cert && !n.cert.ok && !n.cut); return { label: `re-join ${n ? n.name : 'node-b'} (new token, new CSR)`, disabled: !n, why: 'no node with an expired badge', onClick: () => rejoinNode(n ? n.name : 'node-b') }; })(),
+      { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
     { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
     { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
-  { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
+  { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, sub: n.cordoned ? undefined : 'cordon, then one Eviction per pod; a PodDisruptionBudget can refuse one until a replacement is Ready', onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
   { label:'Send a request', short:'Request', onClick: () => { request(); run(); } },
   { label:'Cluster', choices: () => [
     { label: SHOP() ? 'the demo floor' : 'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
@@ -1363,7 +1513,7 @@ const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: '
   : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.', kick: 'In the yard', inflight: 'requests in the yard now', boot: 'empty the yard and bring it up in order' };
 const phaseText = p => p.phase === 'pending' ? 'Pending' : p.phase === 'scheduled' ? 'Bound, waiting for the crane' : p.phase === 'bound' ? 'Bound: the job card is in the tube to the cell' : p.phase === 'queued' ? 'Bound, waiting for the cell\'s image pull' : p.phase === 'pulling' ? 'ContainerCreating: the cell is pulling the image' : p.phase === 'staged' ? 'Image ready, waiting for the rest of the gang'
   : p.phase === 'creating' ? (SHOP() ? 'ContainerCreating: the machine is powering up' : 'ContainerCreating (pulling the image)') : p.phase === 'dropping' ? (SHOP() ? 'Bound as a gang, job cards in the tube' : 'Bound as a gang, landing')
-  : p.orphan ? 'Deleted in the API (evicted from an unreachable node); still running in the cell until its kubelet returns' : p.unknown ? 'Unknown: the node has not reported (its uplink is cut); not Ready' : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.nodeDown ? ' (its node is NotReady)' : p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
+  : p.orphan ? `Terminating (deletionTimestamp set by the taint manager; the kubelet cannot confirm it stopped, so the object stays)${depOf(p.app) && depOf(p.app).kind === 'StatefulSet' ? '; the StatefulSet makes no replacement until it is gone' : '; its ReplicaSet already replaced it'}; still running in the cell until its kubelet returns` : p.unknown ? 'Unknown: the node has not reported (its uplink is cut); not Ready' : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.nodeDown ? ' (its node is NotReady)' : ' (probe failing)'}` : p.phase === 'crash' ? (p.wait ? `CrashLoopBackOff: back-off ${p.wait} s restarting failed container (${p.reason || 'Error'})` : `Crashed (${p.reason || 'Error'}), the kubelet is restarting it`) : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
 const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
 const gatesText = (n, mine) => { const pol = st.sec.netpol; if (!pol) return 'all open: no NetworkPolicy selects anything here'; const k = mine.filter(p => p.app === pol.to).length;
   return k ? `${k} ${pol.to} machine${k > 1 ? 's' : ''} gated: ingress from ${pol.from.join(', ')} only (${pol.name})` : `open: ${pol.name} selects ${pol.to} machines and none are in this cell`; };
@@ -1380,12 +1530,12 @@ const EXPLAIN = {
   'ETCD': 'The cabinet of record: every object the cluster knows, kept by a Raft group of usually three members.',
   'API SERVER': 'The one door: authenticates, authorises, admits and validates every request, then writes it to etcd and fans the change out to watchers.',
   'CONTROLLERS': 'Loops that each watch one kind of object and nudge the world toward what it says: Deployments make ReplicaSets, ReplicaSets make Pods.',
-  'ENDPOINTS': 'The Ready pods behind the Service right now, kept in EndpointSlices and wired into every node by kube-proxy.',
+  'ENDPOINTS': 'The Ready pods behind the Service right now: in its namespace, matching every label of its selector, listening on its port; kept in EndpointSlices and wired into every node by kube-proxy.',
   'SCHEDULER': 'Picks a node for every Pending pod: filter out the nodes that cannot take it, score the rest, bind by writing spec.nodeName. It never starts anything.',
   'NODE': 'A machine with room for a number of pods, a kubelet and kube-proxy.',
-  'CAPACITY': 'How much of the node\'s room is allocated. The scheduler only binds a pod where its requests fit.',
+  'CAPACITY': 'The node\'s allocatable cpu and memory against the requests of the pods bound to it. The scheduler only binds a pod where its requests fit, and prefers the node with the most left.',
   'POD': 'The unit Kubernetes schedules: one or more containers placed and moved as one thing.',
-  'READY LAMP': 'Green: the readiness probe passes and the pod is a Service endpoint. Amber: not yet or not now. Red: crashed.',
+  'READY LAMP': 'Green: the readiness probe passes and the pod is a Service endpoint. Amber: not yet, not now, or CrashLoopBackOff. Red: crashed.',
   'GPU': 'An extended resource (nvidia.com/gpu) advertised by a device plugin. A GPU request is all-or-nothing per device.',
   'CONTROL': 'The control plane: etcd, the API server, the scheduler and the controller manager.',
   'DEPLOYMENTS': 'The desired counts and versions. The yard is reconciled to the board, never the other way round.',
@@ -1394,7 +1544,7 @@ const EXPLAIN = {
   'INGRESS': 'The HTTP front door: hostnames and paths routed to Services.',
   'GATE': 'The way traffic enters the yard from outside.',
   'CELL': 'A Node: a fenced work cell with room for a number of machines, its own controller cabinet (the kubelet) and switch (kube-proxy).',
-  'OFFICE': 'The control plane: the counter (API server), the ledger (etcd), the dispatcher (scheduler) and the order board (the controllers).',
+  'OFFICE': 'The control plane: the counter (API server), the ledger (etcd), the dispatcher (scheduler) and the order board (the controllers). Three control-plane nodes stacked in one building, so the ledger has three members.',
   'MACHINE': 'A Pod: a machine running a program. Everything inside it (its program cartridges, data port, pallet) is placed and moved as one thing.',
   'PROGRAM': 'A container: a program cartridge slotted into the machine. Sidecars are smaller cartridges in the same machine, sharing its data port and pallet.',
   'DATA PORT': 'The pod\'s one IP and port space, patched to the cell\'s kube-proxy switch.',
@@ -1408,15 +1558,15 @@ const EXPLAIN = {
   'JOB BOARD': 'Where the cell\'s bound job cards arrive from the tube: the kubelet\'s watch on Pods with its nodeName.',
   'TUBE': 'The watch stream made physical: every write the API server commits is blown to every cell that watches for it. It rides the same belts as the parts: a stock cluster has no separate control network.',
   'UPLINK CUT': 'The cell\'s spur is severed: parts and job cards stop at the break, the kubelet cannot renew its Lease, and the node lifecycle controller starts its clock (node-monitor-grace-period 40 s, then the unreachable toleration 300 s).',
-  'LEDGER': 'etcd: the cabinet of record in the office, three drawers for the three Raft members.',
+  'LEDGER': 'etcd: the cabinet of record in the office, three drawers for the three Raft members: a stacked control plane of three nodes (kubeadm init, then kubeadm join --control-plane twice).',
   'COUNTER': 'The API server: the one counter every request goes through, checked and written to the ledger.',
-  'DISPATCHER': 'The scheduler: for each job card without a cell, filter the cells that cannot take it, score the rest, write the cell\'s name on the card.',
+  'DISPATCHER': 'The scheduler: for each job card without a cell, filter the cells that cannot take it (taints, requests that do not fit), score the rest (the most cpu and memory left; a preferred anti-affinity), write the cell\'s name on the card.',
   'ORDER BOARD': 'The controllers: the orders on the wall (web x3 rev1) that the floor is kept matching to.',
   'CRIB': 'The image registry: the caged store the cells fetch crates (images) from.',
   'PRESS': 'A GPU: an extended resource only this cell advertises. A job that needs one is all-or-nothing per press.',
-  'ANDON': 'Green: Ready and a Service endpoint. Amber: starting or not ready. Red: crashed. Blue: completed. Off: terminating.',
-  'STATION': 'A Service: the sorting station that routes each incoming part to any green-andon machine of that job, round robin.',
-  'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in and are sent to a Service.',
+  'ANDON': 'Green: Ready and a Service endpoint. Amber: starting, not ready, or waiting out a CrashLoopBackOff. Red: crashed. Blue: completed. Off: terminating.',
+  'STATION': 'A Service: a name and a virtual address for any green-andon machine of that job. The floor draws it as one station, but there is no such place: the address is rewritten to one machine, at random, on the caller\'s own cabinet (kube-proxy), and the dock never uses it at all.',
+  'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in. The controller there holds the Service\'s EndpointSlice itself and proxies straight to a machine: no cluster DNS, no ClusterIP.',
   'SEAL PRESS': 'The cluster CA: kubeadm makes it first and signs a certificate for every component with it; the controller manager signs the kubelets\' CSRs with the same CA.',
   'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join, with its identity in the name: system:node:<name> in group system:nodes, which the Node authorizer and NodeRestriction hold to its own node. It rotates at about 80% of its lifetime; expired, the node cannot report.',
   'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
@@ -1429,33 +1579,36 @@ const EXPLAIN = {
   'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.',
   'DIVERTER': 'The row\'s top-of-rack switch: a switch arm on the spine belt that sends a part down the row\'s spur. Its strip lists the PodCIDRs it knows; with BGP every cabinet in the row announces its range here and the diverters trade routes over the spine.',
   'SPINE': 'The main belt of the fabric: two belts of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
-  'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR, withdrawing it when the node leaves.',
-  'DIRECTORY': 'The directory board at the dock: the kube-dns Service. Every part glances at it on the way in and the matching line lights; the CoreDNS pods in the cells keep it current. The lookup is data plane: UDP to the ClusterIP through kube-proxy, on the belts like any part.',
+  'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR for as long as the session lives. A cordon or a drain changes nothing; a dead link does.',
+  'DIRECTORY': 'The directory board at the dock: the kube-dns Service. A machine calling another Service by name looks a line up first; the CoreDNS pods in the cells keep the board current. The lookup is data plane: UDP to the ClusterIP through kube-proxy. Parts from the dock never look: the Ingress controller holds the endpoints itself.',
   'COREDNS': 'A CoreDNS pod: the coredns Deployment in kube-system, two replicas in two cells, scheduled and pulled like any other pod. They keep the directory board at the dock current (the update tick); the board is only their Service.',
   'ESCORT': 'The sidecar proxy (Envoy for Istio, the Linkerd proxy) injected beside the containers: it takes the machine\'s parts in and out, encrypts them to other escorts, retries, times out and reports.',
   'MESH DESK': 'The mesh control plane (istiod, or Linkerd\'s): it issues each escort a certificate from the mesh\'s own CA, which is not the cluster CA, and pushes routing rules such as a weighted split.',
-  'RELAY': 'The konnectivity agent: a managed control plane cannot reach into your network, so each node runs a relay that opens a tunnel to the provider\'s counter; logs and exec come back through it.',
+  'RELAY': 'The konnectivity agent: a managed control plane cannot reach into your network, so each node runs a relay that dials out and keeps a tunnel open; the counter\'s calls to the cabinet (logs, exec, webhooks) come back through it. The kubelet\'s own traffic to the counter never needs it.',
   'PROVIDER': 'A managed control plane: the API server, etcd, the scheduler and the controllers run in the provider\'s building; you see the counter\'s address and nothing behind it.' };
 function cardFor(a){
   if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (!p) return null; const d = depOf(p.app), live = st.mode === 'live';
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
       body: `<table>${row('Status', LAMP(lampOf(p)) + esc(phaseText(p)))}${row('Node', esc(p.node || '—'))}${row('Version', esc(p.ver) + (p.gpu ? ` · GPU x${p.gpu}` : ''))}` +
-        row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
-        (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '')) : '') +
+        row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}${c.ports && c.ports.length ? ' :' + c.ports.join(',') : ''}</span>`).join('<br>')) +
+        row('Resources', p.containers.map(c => `${esc(c.name)}: ${c.req ? `requests ${fmtCpu(c.req.cpu)} cpu, ${fmtMem(c.req.mem)}` : 'no requests'}${c.lim ? `; limits ${c.lim.cpu != null ? fmtCpu(c.lim.cpu) + ' cpu' : ''}${c.lim.cpu != null && c.lim.mem != null ? ', ' : ''}${c.lim.mem != null ? fmtMem(c.lim.mem) : ''}` : ''}`).join('<br>') + ` · QoS <b>${qosOf(p)}</b>` + (p.gpu ? ` · nvidia.com/gpu: ${p.gpu}` : '')) +
+        row('Restarts', `${p.restarts}${p.backoff ? ` · next back-off ${p.backoff} s (clears after ${BACKOFF_RESET/60} min running)` : ''}${p.reason && p.restarts ? ` · last: ${esc(p.reason)}` : ''}`) +
+        (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '') + (st.pvs[p.pvc] && st.pvs[p.pvc].node ? ` · PV attached to ${esc(st.pvs[p.pvc].node)} (ReadWriteOnce: one node at a time)` : ' · PV not attached yet')) : '') +
         (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
       acts: [ { label:'logs', title: 'kubectl logs: the API server calls the kubelet (watch it in the control room)', onClick: () => podLogs(p) },
-        { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
-        { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
+        { label:'delete', title: live ? 'shows the kubectl command' : d && d.kind === 'StatefulSet' ? 'graceful; the StatefulSet recreates it by name once it is gone' : 'graceful; the ReplicaSet replaces it at once', onClick: () => { deletePod(p.app, p); run(); } },
+        { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'OOMKill', title:'the container passes its memory limit', onClick: () => { crashPod(p, 'OOMKilled'); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : n.unreach ? `NotReady, Unknown: no Lease renewal for ${Math.round(n.cutT)} s; taint node.kubernetes.io/unreachable:NoExecute` + (n.evicted ? '; pods evicted' : `, pods evicted after ${NODE_TOLERATION} s`) : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` + (SHOP() && n.joined >= 1 ? row('Uplink', n.cut ? `<span style="color:#b3261e">cut ${Math.round(n.cutT)} s ago</span>: the belt and the tube into the cell are severed` : 'up: the cell\'s spur carries parts, job cards and the kubelet\'s own traffic') + row('Lease', n.cut ? `<span style="color:#b3261e">not renewed for ${Math.round(n.cutT)} s</span> (every ${NODE_LEASE} s normally; NotReady after ${NODE_GRACE} s)` : `renewed every ${NODE_LEASE} s in kube-node-lease (node-status-update-frequency)`) : '') +
-      row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
-      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to diverter ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
+      row('Pods', `${mine.length} on this node`) + (() => { const a = allocOn(n); return row('Allocatable', `cpu ${fmtCpu(nodeCpu(n))}, memory ${fmtMem(nodeMem(n))}; requested ${fmtCpu(a.cpu)} (${Math.round(100*a.cpu/nodeCpu(n))}%) and ${fmtMem(a.mem)} (${Math.round(100*a.mem/nodeMem(n))}%) by the pods bound here (Terminating ones still count)`); })() + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} · maxPods ${SHOP() ? SHOP_COLS*SHOP_MAXROWS : cap}`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
+      row('Taints', taintsOf(n).length ? taintsOf(n).map(esc).join('<br>') : 'none') + (n.drain ? row('Draining', `${n.drain.left.length} pod${n.drain.left.length === 1 ? '' : 's'} left; ${n.drain.refused.size} eviction${n.drain.refused.size === 1 ? '' : 's'} refused by a PodDisruptionBudget, retried every ${DRAIN_RETRY} s`) : '') +
+      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to diverter ${(n.row || 0) + 1}${n.cut ? ' (session down: withdrawn)' : ' (a cordon changes nothing here)'}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium) rewrite a ClusterIP to one endpoint at random on this node; no kube-proxy' : 'kube-proxy, iptables mode: a chain per Service on this node picks one endpoint at random (a probability per rule)') + (st.net.managed ? row('Tunnel', 'konnectivity agent: dials out to the provider and keeps a tunnel open; the counter\'s own calls to this cabinet (logs, exec, webhooks) come back through it. The kubelet reaches the counter the ordinary way, over the network') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80% (${ROT/60} simulated minutes here, a year with kubeadm)` + (n.rotated ? `; rotated ${n.rotated} time${n.rotated === 1 ? '' : 's'}, last ${Math.max(0, st.t - n.cert.issued).toFixed(0)} s ago` : '; not rotated yet') : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } }, ...(SHOP() && n.joined >= 1 ? [ n.cut ? { label:'restore the uplink', onClick: () => restoreUplink(n.name) } : { label:'cut the uplink', title:'sever the belt and the tube into this cell', onClick: () => cutUplink(n.name) } ] : []) ] }; }
   if (a.type === 'tower'){ const R = window.ControlRoom ? ControlRoom.R : null, cp = st.cp;
-    return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
+    return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/${cp.members || 3} up (a stacked control plane of ${cp.members || 3})` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
       row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) +
       (SHOP() && st.net.managed ? row('Owner', 'the provider: a managed control plane behind the fence, reached through the konnectivity tunnel; the cells are yours') : '') + (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
@@ -1463,11 +1616,11 @@ function cardFor(a){
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
-      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) +
+      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Choice', st.net.svc === 'ebpf' ? 'one endpoint at random, by the CNI\'s eBPF on the calling node' : 'one endpoint at random, by kube-proxy\'s iptables on the calling node (IPVS mode would go round robin)') + row('Where', 'nowhere in particular: the rewrite happens on whichever node the caller is on; this station is where the floor draws it') +
       (SHOP() ? row('Name', `${esc(svc.name)}.default.svc.cluster.local -> this ClusterIP, on the directory board at the dock (kept current by CoreDNS)`) : '') + (SHOP() && st.net.mesh.on && st.net.mesh.canary && svc.name === 'web' ? row('Mesh split', `${100 - st.net.mesh.canary} / ${st.net.mesh.canary} v1 / v2 by the sidecars (VirtualService / HTTPRoute), not by this Service`) : '') + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
-    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}${row('Answered', `${st.reqs.ok} of ${st.reqs.sent}`)}${row('Errors', st.reqs.err ? `${st.reqs.err}: ${st.reqs.reset} connection reset, ${st.reqs.err - st.reqs.reset} with no endpoint (503)` : 'none')}</table>`,
+    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'the Ingress controller proxies straight to a pod from the Service\'s EndpointSlice: no DNS lookup, no ClusterIP')}${row('Chain', (() => { const d = depOf((svc || {}).name); const c = []; let a = d && d.app; while (a && depOf(a) && depOf(a).dependsOn){ c.push(`${a} -> ${depOf(a).dependsOn}${podsOf(depOf(a).dependsOn).some(isReady) ? '' : ' (no Ready endpoint: 502)'}`); a = depOf(a).dependsOn; } return c.join('<br>') || 'none'; })())}${row('Requests', `${st.parcels.length} ${T().inflight}`)}${row('Answered', `${st.reqs.ok} of ${st.reqs.sent}`)}${row('Errors', st.reqs.err ? `${st.reqs.err}: ${st.reqs.reset} connection reset, ${st.reqs.bad || 0} 502 from a handler whose dependency had no endpoint, ${st.reqs.err - st.reqs.reset - (st.reqs.bad || 0)} with no endpoint, dropped or timed out` : 'none')}</table>`,
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'registry'){ return { kick: 'Image registry', title: T().registry, body: `<table>${st.regApps.map(app => { const d = depOf(app); return row(esc(app), esc(d && d.containers && d.containers[0] ? d.containers[0].image : app) + (d ? ` · ${esc(d.version)}` : '')); }).join('') || row('Images', 'none')}</table><p style="color:var(--muted);margin-top:6px">${T().pullNote}</p>`,
       acts: [ { label:'apply…', onClick: () => press('Apply') } ] }; }
@@ -1487,7 +1640,7 @@ function cardFor(a){
     return { kick: 'Service · kube-system', title: `The directory board: kube-dns ${esc(ip)}`, body: `<table>${row('Service', `kube-dns · ClusterIP ${esc(ip)} · 53/UDP+TCP · selector k8s-app=kube-dns`)}${row('Board', ready.length ? lines.map(l => esc(l.text)).join('<br>') || '—' : '<span style="color:#b3261e">NO ANSWER</span>' + (waiting ? ` · ${waiting} part${waiting === 1 ? '' : 's'} waiting at the dock` : ''))}${row('Endpoints', ready.length ? ready.map(p => LAMP(LAMPC.green) + esc(p.name) + ' <span style="color:var(--muted)">on ' + esc(p.node) + '</span>').join('<br>') : '<span style="color:#b3261e">none Ready: lookups wait, then fail</span>')}${all.length > ready.length ? row('Not Ready', all.filter(p => !ready.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name) + ' · ' + esc(phaseText(p))).join('<br>')) : ''}${row('Kept current by', 'the coredns Deployment in kube-system: two pods in two cells, scheduled like any other (Cluster ▸ show system pods); one of them sends the board an update tick when a Service changes or the board is consulted')}${row('resolv.conf', `nameserver ${esc(ip)} · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5`)}${row('The lookup', 'data plane: a UDP packet to the ClusterIP through kube-proxy, so it rides the belts like any part; a headless Service lists its pods\' own addresses')}</table>`,
       acts: [ { label:'stop CoreDNS', title:'delete both pods; the Deployment replaces them', onClick: () => stopDns() }, { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; run(); } }, { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'diverter'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
-    return { kick: 'Fabric', title: `Diverter ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${n.cut ? '<span style="color:#b3261e">peer down (uplink cut)</span>' : bgp ? (n.cordoned ? '<span style="color:var(--muted)">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes, the strip is painted on')}${row('Uplinks', bgp ? 'two spine belts, equal cost: parts take turns (ECMP)' : 'one belt')}${row('Arm', 'swings across the belt to send a part down this row\'s spur; a part for another row rides past')}</table>`,
+    return { kick: 'Fabric', title: `Diverter ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${n.cut ? '<span style="color:#b3261e">peer down (uplink cut)</span>' : bgp ? 'learned from ' + esc(n.name) + (n.cordoned ? ' (cordoned: still announced, the node is up)' : '') : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes, the strip is painted on')}${row('Uplinks', bgp ? 'two spine belts, equal cost: parts take turns (ECMP)' : 'one belt')}${row('Arm', 'swings across the belt to send a part down this row\'s spur; a part for another row rides past')}</table>`,
       acts: [ { label: bgp ? 'static routes' : 'switch to BGP', onClick: () => setFabric(bgp ? 'static' : 'bgp') } ] }; }
   if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;
@@ -2057,7 +2210,7 @@ function mkOffice(){
 }
 /* a row's diverter: the top-of-rack switch, a switch arm on the spine belt where the row's spur leaves it, with the route strip of
    what it has learned from the cells on its row (painted on with static routes; a line per announcement with BGP) */
-const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'peer down' : n.cordoned ? 'withdrawn' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!(n.cut || (bgp && n.cordoned)) }; }); };
+const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'withdrawn (peer down)' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!n.cut }; }); };
 const stripH = Dv => 1.5 + Dv.cells.length*1.05;
 function routeTex(r, Dv){ const bgp = st.net.fabric === 'bgp', lines = stripLines(Dv);
   return tex(`strip|${r}|${bgp}|${lines.map(l => l.text + l.off).join(';')}`, 9, stripH(Dv), (g, w, h) => { rect(g, 0, 0, w, h, '#f4f2ec'); rect(g, 0, 0, w, .95, '#1d1f22'); txt(g, bgp ? `DIVERTER ${r + 1} · ROUTES LEARNED · BGP` : `DIVERTER ${r + 1} · ROUTES · STATIC`, w/2, .5, .5, WHITE);
@@ -2328,7 +2481,7 @@ function annPath(n){ const cb = cabinet(n), Dv = DIVERTER(n.row), yd = cellEntry
 function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length){ const g = new THREE.Group(); const s = new THREE.Mesh(sphG(.9), own(LAMP.green, { e: 2, r: .3 })); s.castShadow = false; g.add(s); g.add(box(.8, -.1, .6, 1, 2.2, 2.2, own('#2d7bd6', { r: .5 }), { r: .1 })); scene.add(g); Y.ann.push({ g, s }); }
   while (Y.ann.length > st.net.ann.length){ const A = Y.ann.pop(); dispose(A.g); }
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
-  for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cordoned ? 1 : 0) + (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
+  for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
     const f = st.net.flick[Dv.r]; for (const a of Dv.arms){ const on = f && f.lane === a.lane, u = on ? 1 - f.t/.55 : 0; a.g.rotation.y = 1.1*Math.sin(Math.PI*u); setLamp(a.lamp, on ? LAMP.amber : LAMP.green); } }   // the arm swings out across the belt and back
   const Bd = Y.dnsBoard; if (Bd){ const up = dnsUp(), fl = st.net.dns.flash > 0, t = dnsBoardTex(); if (Bd.decal.material.map !== t){ Bd.decal.material.map = t; Bd.decal.material.needsUpdate = true; } setLamp(Bd.lamp, up ? (fl ? LAMP.amber : LAMP.green) : LAMP.red); Bd.decal.material.emissive.set(fl ? '#5a4a18' : '#000000'); }
   // the update tick: a dashed line and a dot from the CoreDNS machine to the board (only while those machines are drawn)
