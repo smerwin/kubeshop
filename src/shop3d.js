@@ -67,6 +67,10 @@ const rect = (g, x, y, w, h, fill, stroke, lw = .4) => { if (fill){ g.fillStyle 
 const line = (g, pts, col, lw, dash) => { g.strokeStyle = col; g.lineWidth = lw; g.setLineDash(dash || []); g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); g.setLineDash([]); };
 // a round seal: gold with a tick while the certificate is good, red with a cross when it has expired
 const badgeTex = ok => tex('badge|' + ok, 2, 2, (g, w, h) => { g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1, 1, .95, 0, Math.PI*2); g.fill(); g.strokeStyle = ok ? '#5a4408' : '#5a1410'; g.lineWidth = .1; g.stroke(); txt(g, ok ? '✓' : '✕', 1, 1.05, 1.1, ok ? '#2b2208' : WHITE); }, 48);
+// a cabinet's badge carries the kubelet's identity: the certificate's CN is system:node:<name>, its group system:nodes
+const idBadgeTex = (ok, name) => tex(`idbadge|${ok}|${name}`, 5.2, 2.2, (g, w, h) => { rect(g, 0, 0, w, h, ok ? '#fff1bf' : '#f3c9c4'); g.strokeStyle = '#5a4408'; g.lineWidth = .08; g.strokeRect(.04, .04, w - .08, h - .08);
+  g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1.1, 1.1, .85, 0, Math.PI*2); g.fill(); txt(g, ok ? '✓' : '✕', 1.1, 1.15, .95, ok ? '#2b2208' : WHITE);
+  txt(g, 'system:node:', 3.55, .72, .5, '#5e5a52', 800); txt(g, name, 3.55, 1.5, .62, '#1d1f22', 800); }, 48);
 const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h, c1); g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.strokeStyle = c2; g.lineWidth = Math.min(w, h)*.5; for (let s = -h; s < w + h; s += Math.min(w, h)*1.6){ g.beginPath(); g.moveTo(x + s, y + h); g.lineTo(x + s + h, y); g.stroke(); } g.restore(); };
 
 /* ---------- dimensions ---------- */
@@ -156,6 +160,8 @@ function mkOffice(){
   ins.add(box(sp.x - 3, sp.y - 3, z, sp.x + 3, sp.y + 3, z + 3.2, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); ins.add(cyl(sp.x - 2.2, sp.y, z + 3.2, z + 9.2, .55, M(STEEL, { r: .3, m: .7 }), { n: 10 }));
   out.pressHead = box(sp.x - 1.4, sp.y - 1.4, z + 6.4, sp.x + 1.4, sp.y + 1.4, z + 8.4, M(DARKM, { r: .4, m: .4 }), { r: .3 }); ins.add(out.pressHead); out.pressY = out.pressHead.position.y;
   out.pressLamp = lamp(sp.x + 2.3, sp.y - 2.3, z + 3.9, LAMP.green, .4); ins.add(out.pressLamp);
+  ins.add(box(sp.x - 3, sp.y + 3.6, z, sp.x + 3, sp.y + 6.6, z + 2.2, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); ins.add(cyl(sp.x, sp.y + 5.1, z + 2.2, z + 3.4, 1.1, M('#e8b923', { r: .35, m: .8 }), { n: 12 }));   // the second die: the service-account key pair, for visitor passes
+  ins.add(decal([sp.x + 3.02, sp.y + 5.1, z + 1.1], [1, 0, 0], [0, -1, 0], 5.6, 1.8, tex('passdie', 5.6, 1.8, (g, w, h) => { txt(g, 'PASS DIE', w/2, .6, .62, WHITE); txt(g, 'service-account key', w/2, 1.3, .48, LAMP.amber, 700); }, 32)));
   ins.add(decal([sp.x + 3.02, sp.y, z + 1.6], [1, 0, 0], [0, -1, 0], 5.6, 2.4, tex('sealpress', 5.6, 2.4, (g, w, h) => { txt(g, 'SEAL PRESS', w/2, .8, .8, WHITE); txt(g, 'cluster CA', w/2, 1.75, .7, LAMP.amber, 700); }, 32)));
   // the badges the press stamped: on the ledger, the counter and the dispatcher's desk
   out.badges = [decal([o.x0 + 7, o.y0 + 2.98, z + 11], [0, -1, 0], [-1, 0, 0], 2, 2, badgeTex(true)), decal([o.x0 + 22.02, o.y0 + 17, z + 2.6], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true)), decal([o.x0 + 13.02, o.y1 - 6.2, z + 2.3], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true))];
@@ -233,6 +239,11 @@ function mkNode(n){
   out.rise = new THREE.Group(); g.add(out.rise);
   const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'), 12)));   // reads left to right from the front, tops toward the back of the hall
+  // the cell's PodCIDR (where its machines' addresses come from) and the routes to the other cells' ranges, painted under the name
+  const ni = Math.max(0, st.nodes.indexOf(n)), cidr = k => `10.200.${k}.0/24`, others = st.nodes.filter(m => m !== n).slice(0, 3);
+  out.rise.add(decal([c.x1 - 7.1, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2.4, tex(`cidr|${ni}`, 40, 2.4, (g, w, h) => txt(g, `PodCIDR ${cidr(ni)}`, w/2, h/2, 1.7, '#5e5a52'), 12)));
+  if (others.length) out.rise.add(decal([c.x1 - 9.6, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2, tex(`routes|${ni}|${others.map(m => m.name).join(',')}`, 40, 2, (g, w, h) => txt(g, 'ROUTES  ' + others.map(m => `${cidr(st.nodes.indexOf(m))} via ${m.name}`).join('   '), w/2, h/2, 1.15, '#6f6a60', 800), 12)));
+  const nx = st.nodes[ni + 1]; if (nx && nx.row === n.row) out.rise.add(decal([c.x1 - 9, c.y1 + NGAP/2, .2], [0, 0, 1], [0, -1, 0], 14, 2.6, tex('route', 14, 2.6, (g, w, h) => txt(g, 'ROUTE', w/2, h/2, 2, '#e3c766'), 12)));   // the lane between two cells is the route between their ranges
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
   const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1 - 9]], [[c.x1, c.y1 - 1], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];   // the gap at y1-9..y1-1 is the parts' way in
@@ -248,8 +259,8 @@ function mkNode(n){
   out.rise.add(decal([cb.x1 + .52, (cb.y0 + cb.y1)/2, 11.5], [1, 0, 0], [0, -1, 0], 7, 3.4, tex('jobboard', 7, 3.4, (g, w, h) => { txt(g, 'KUBELET', w/2, 1, 1, '#1d1f22'); txt(g, 'job board', w/2, 2.5, .9, '#5e5a52', 700); }, 24)));
   out.gauge = new THREE.Group(); out.rise.add(out.gauge); out.gaugeKey = '';
   // the cabinet's badge: the kubelet's client certificate, stamped at join, renewed on rotation (it flashes), red once expired
-  out.badge = decal([cb.x1 + .52, cb.y1 - 3.4, 3.4], [1, 0, 0], [0, -1, 0], 2.2, 2.2, badgeTex(true)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
-  out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 5.3, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
+  out.badge = decal([cb.x1 + .52, cb.y1 - 4.2, 3.4], [1, 0, 0], [0, -1, 0], 5.2, 2.2, idBadgeTex(true, n.name)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
+  out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 7.2, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
   out.lamp = lamp(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + 1.8, LAMP.green, .8); out.rise.add(out.lamp); out.rise.add(cyl(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + .8, cb.h + 1.4, .5, M(DARKM), { n: 8 }));
   const ins = new THREE.Group(); ins.add(box(cb.x0 + 1, cb.y0 + 1, 1, cb.x1 - 1, cb.y0 + 4.5, 6, M('#2b2e32', { r: .4 }), { r: .2 })); ins.add(cyl((cb.x0 + cb.x1)/2, cb.y0 + 2.7, 6, 9, 1.4, M(STEEL, { r: .3, m: .7 }), { n: 12 }));
   ins.add(box(cb.x0 + 1, cb.y1 - 5, 1, cb.x1 - 1, cb.y1 - 1.5, 4, M('#1f2226', { r: .4 }), { r: .2 })); for (let i = 0; i < 4; i++) ins.add(lamp(cb.x1 - 1, cb.y1 - 4.4 + i*.9, 4.3, [LAMP.green, LAMP.amber, LAMP.blue, LAMP.green][i], .25));
@@ -294,7 +305,7 @@ function syncNodes(dt){
     N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
     const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
     const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
-    if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = badgeTex(n.cert.ok); N.badge.material.needsUpdate = true; }
+    if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = idBadgeTex(n.cert.ok, n.name); N.badge.material.needsUpdate = true; }
       const f = n.cert.flash || 0; N.badge.scale.setScalar(1 + .5*Math.sin(Math.min(1, f/.9)*Math.PI)); setLamp(N.badgeLamp, LAMP.amber, f > 0 && Math.floor(f*8) % 2 === 0); }
     else { N.badge.visible = false; setLamp(N.badgeLamp, LAMP.amber, false); }
     // the rack holds a crate per image this node has pulled

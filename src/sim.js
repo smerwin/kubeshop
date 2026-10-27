@@ -512,7 +512,11 @@ function expireBadge(name = 'node-b'){ if (st.mode === 'live') return liveNote('
   n.cert.ok = false; n.cert.exp = st.t; n.certDown = 0; say('expire', `${n.name}'s kubelet client certificate expires now (its badge goes red): the next status update it sends will be refused`); run(); }
 function applyPrivileged(){ if (st.mode === 'live') return liveNote('kubectl apply -f privileged.yaml   # refused by Pod Security Admission in a restricted namespace'); if (!st.cp.api) return say('noapi', 'The counter is closed');
   st.sec.inspect = 1.8; st.sec.refuseT = 1.6; st.sec.refuse.push({ kind: 'psa', t: st.t });
-  say('psa', 'kubectl apply -f privileged.yaml: the inspector at the counter refuses it. Pod Security Admission enforces restricted on this namespace, so privileged: true is a 403; nothing is written'); run(); }
+  say('psa', 'kubectl apply -f privileged.yaml: the inspector refuses it because this namespace is labelled pod-security.kubernetes.io/enforce=restricted, so privileged: true is a 403 and nothing is written. Without that label (Kubernetes The Hard Way labels none and runs --allow-privileged=true) the same card passes'); run(); }
+// kubectl logs: a read, not a write; the counter checks the badge and RBAC, then calls the cabinet itself, over TLS the other way
+function podLogs(p){ if (st.mode === 'live') return liveNote(`kubectl logs ${p.name}`); if (!p.node) return say('nologs', `${p.name} has no node yet: no kubelet to ask`);
+  say('logs-' + p.id, `kubectl logs ${p.name}: the counter checks the badge and RBAC (pods/log), then calls ${p.node}'s cabinet on :10250 with its own kubelet-client certificate; the cabinet asks the counter whether this caller may read logs (SubjectAccessReview) before it answers`, 3200);
+  if (window.ControlRoom && ControlRoom.logs) ControlRoom.logs(p); run(); }
 function applyNetpol(quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f netpol-db.yaml'); if (st.sec.netpol) return say('netpol', 'The NetworkPolicy is already in force');
   st.sec.netpol = { name: 'db-from-api', to: 'db', from: ['api'] }; if (quiet) return;
   say('netpol', 'kubectl apply -f netpol-db.yaml: NetworkPolicy db-from-api selects the db machines and allows ingress on 5432 from api only; the CNI closes every other gate into them');

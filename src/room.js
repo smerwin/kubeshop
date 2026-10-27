@@ -52,7 +52,7 @@ function staticSvg(){
   s += `<g id="watch">` + box(162, 118, 446, 40, { r: 5 }) + text('WATCH CACHE', 185, 138, { size: 10, anchor: 'start', ls: '.1em' }) + '</g>';
   s += arrow([[sx(5) + 36, 81], [648, 81]]);
   // etcd
-  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft', 662, 42) + `<g id="term"></g>`;
+  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft · :2379 / :2380', 662, 42) + `<g id="term"></g>`;
   for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) s += `<path d="M${mx(i)} ${MY}L${mx(j)} ${MY}" stroke="${INKC}" stroke-width=".8" opacity=".35"/>`;
   s += `<g id="members"></g>`;
   // the events bus: from the watch cache down to every watcher
@@ -86,6 +86,8 @@ function staticSvg(){
   KSTAGES.forEach((n, i) => { s += `<g id="k${i}">` + box(kx(i) - 50, 462, 100, 60, { r: 5 }) + text(n, kx(i), KY, { size: 10 }) + '</g>'; if (i) s += arrow([[kx(i) - 57, KY], [kx(i) - 51, KY]], { w: 1 }); });
   s += `<path d="M${kx(3)} 522L${kx(3)} 540L${kx(2)} 540L${kx(2)} 523" fill="none" stroke="${INKC}" stroke-width="1" marker-end="url(#ah)"/>` + text('liveness failed: restart', (kx(2) + kx(3))/2, 551, { size: 8.5, weight: 600, col: MUTED });
   s += `<path d="M${kx(4) + 50} 492L612 492L612 ${BUS + 8}" fill="none" stroke="${INKC}" stroke-width="1" opacity=".55"/>` + text('write', 610, BUS + 20, { size: 8.5, weight: 600, col: MUTED, anchor: 'end' });
+  // the other direction: the API server calls into the kubelet for logs, exec, port-forward and metrics
+  s += `<g id="k-in">` + box(454, 532, 156, 36, { r: 5 }) + text('inbound :10250\nlogs · exec · port-forward', 532, 550, { size: 8.5 }) + '</g>';
   // kube-proxy
   s += box(650, 410, 330, 170, { fill: PAPERC, sw: 1.8 }) + `<g id="p-title"></g>`;
   s += `<g id="p-inf">` + box(662, 456, 306, 24, { r: 4 }) + text('informer: EndpointSlices', 815, 468, { size: 10 }) + '</g>';
@@ -315,6 +317,18 @@ function mount(host, c){ cfg = c; el = host;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.lt');
   R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
-window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R,
+// kubectl logs: authenticated and authorised at the API server, then the API server calls the kubelet with its own client certificate; the kubelet asks the
+// API server back (SubjectAccessReview, authorization mode Webhook) whether this caller may read logs, and only then streams them
+function logs(p){ const c = col(p), KI = [532, 532]; chain('logs:' + p.id, async () => {
+  await bead([[120, 88], [148, 88], [sx(0) - 35, 88]], { label: `GET pods/${p.name.slice(0, 8)}/log`, col: c, dur: 420 }); lit('stage0', 600); await sleep(160); lit('stage1', 700);
+  logLine(`kubectl -> GET /api/v1/namespaces/${p.ns || 'default'}/pods/${p.name.slice(0, 14)}/log: client certificate checked, RBAC allows pods/log; a read, so no admission and nothing for etcd`); await sleep(300);
+  R.node = p.node || R.node; await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'GET /containerLogs', col: c, dur: 620 }); lit('k-in', 900);
+  logLine(`API server -> kubelet ${R.node}:10250 with its kubelet-client certificate, checking the kubelet's serving cert against --kubelet-certificate-authority; the kubelet (authz mode Webhook, anonymous off) asks the API server whether this caller may read logs`);
+  await bead([KI, [KI[0], BUS], [sx(1), BUS], [sx(1), 104]], { label: 'SubjectAccessReview', col: AMBER, dur: 620, small: true }); lit('stage1', 700);
+  await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'allowed', col: GREEN, dur: 520, small: true }); lit('k-in', 800);
+  logLine(`kubelet ${R.node}: allowed (ClusterRole system:kube-apiserver-to-kubelet, nodes/log and nodes/proxy, bound to the API server's identity); the container runtime hands over the stream`); await sleep(200);
+  await bead([KI, [KI[0], BUS], [sx(0), BUS], [sx(0), 104], [sx(0) - 35, 88], [148, 88], [120, 88]], { label: 'log stream', col: c, dur: 820 });
+  logLine(`kubectl logs ${p.name.slice(0, 14)}: the stream comes back through the API server; exec and port-forward take the same road`); }); }
+window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, logs, R,
   step: dt => { if (!cfg) return; const s = cfg.speed; cfg.speed = () => 1; tick(dt); cfg.speed = s; render(); } };
 })();

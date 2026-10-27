@@ -23,7 +23,7 @@ To run it locally, serve the folder with any static web server (`python3 -m http
 figure) or `guide.html`.
 
 - `index.html` — the figure, so the site opens on it; `guide.html` — the guide: seventeen chapters, each with prose, the
-  kubectl commands and the figure preset to that scene.
+  kubectl commands and the figure preset to that scene, and an appendix mapping the floor to Kubernetes The Hard Way lab by lab.
 - `figure/shopfloor.html` — the same figure beside the earlier drafts: the job shop in three.js with real materials and light (an environment map,
   ACES tone mapping, soft shadows, emissive andon lamps with a bloom pass, a vignette; bloom and resolution step down on
   a device that cannot keep up). It moves like a map (see [Moving around](#moving-around-the-yard)): tap anything to fly
@@ -75,8 +75,8 @@ zoom and reset, `f` is the front view. **Overview** frames the whole floor again
 the dock (D), the office (O) and the crib (C) are and turns with the camera (tap it for the front view).
 
 Tap a machine, a cell or its cabinet, the office, the sorting station, the dock, the crib or a line on the order board:
-the camera flies to frame it and a card opens with its name, state and the actions that make sense there (a pod: delete,
-crash, fail its probe, its containers, restarts, node and volume; a node: drain or uncordon, capacity, GPUs, what is on
+the camera flies to frame it and a card opens with its name, state and the actions that make sense there (a pod: logs (the
+API server calling the kubelet, drawn in the control room), delete, crash, fail its probe, its containers, restarts, node, ConfigMap, Secret and PVC; a node: drain or uncordon, capacity, GPUs, what is on
 its rack and what it is pulling; the station: its endpoints and a request to send; a board line: that app's pods, scale
 and roll out). **Follow** keeps the camera on whatever the operation is doing: the job card in the tube, the AGV on its
 run, the part on the conveyor, a crashing machine; any gesture releases it. The camera is remembered for the tab, so the

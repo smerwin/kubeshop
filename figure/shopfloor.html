@@ -723,7 +723,11 @@ function expireBadge(name = 'node-b'){ if (st.mode === 'live') return liveNote('
   n.cert.ok = false; n.cert.exp = st.t; n.certDown = 0; say('expire', `${n.name}'s kubelet client certificate expires now (its badge goes red): the next status update it sends will be refused`); run(); }
 function applyPrivileged(){ if (st.mode === 'live') return liveNote('kubectl apply -f privileged.yaml   # refused by Pod Security Admission in a restricted namespace'); if (!st.cp.api) return say('noapi', 'The counter is closed');
   st.sec.inspect = 1.8; st.sec.refuseT = 1.6; st.sec.refuse.push({ kind: 'psa', t: st.t });
-  say('psa', 'kubectl apply -f privileged.yaml: the inspector at the counter refuses it. Pod Security Admission enforces restricted on this namespace, so privileged: true is a 403; nothing is written'); run(); }
+  say('psa', 'kubectl apply -f privileged.yaml: the inspector refuses it because this namespace is labelled pod-security.kubernetes.io/enforce=restricted, so privileged: true is a 403 and nothing is written. Without that label (Kubernetes The Hard Way labels none and runs --allow-privileged=true) the same card passes'); run(); }
+// kubectl logs: a read, not a write; the counter checks the badge and RBAC, then calls the cabinet itself, over TLS the other way
+function podLogs(p){ if (st.mode === 'live') return liveNote(`kubectl logs ${p.name}`); if (!p.node) return say('nologs', `${p.name} has no node yet: no kubelet to ask`);
+  say('logs-' + p.id, `kubectl logs ${p.name}: the counter checks the badge and RBAC (pods/log), then calls ${p.node}'s cabinet on :10250 with its own kubelet-client certificate; the cabinet asks the counter whether this caller may read logs (SubjectAccessReview) before it answers`, 3200);
+  if (window.ControlRoom && ControlRoom.logs) ControlRoom.logs(p); run(); }
 function applyNetpol(quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f netpol-db.yaml'); if (st.sec.netpol) return say('netpol', 'The NetworkPolicy is already in force');
   st.sec.netpol = { name: 'db-from-api', to: 'db', from: ['api'] }; if (quiet) return;
   say('netpol', 'kubectl apply -f netpol-db.yaml: NetworkPolicy db-from-api selects the db machines and allows ingress on 5432 from api only; the CNI closes every other gate into them');
@@ -793,7 +797,7 @@ function staticSvg(){
   s += `<g id="watch">` + box(162, 118, 446, 40, { r: 5 }) + text('WATCH CACHE', 185, 138, { size: 10, anchor: 'start', ls: '.1em' }) + '</g>';
   s += arrow([[sx(5) + 36, 81], [648, 81]]);
   // etcd
-  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft', 662, 42) + `<g id="term"></g>`;
+  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft · :2379 / :2380', 662, 42) + `<g id="term"></g>`;
   for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) s += `<path d="M${mx(i)} ${MY}L${mx(j)} ${MY}" stroke="${INKC}" stroke-width=".8" opacity=".35"/>`;
   s += `<g id="members"></g>`;
   // the events bus: from the watch cache down to every watcher
@@ -827,6 +831,8 @@ function staticSvg(){
   KSTAGES.forEach((n, i) => { s += `<g id="k${i}">` + box(kx(i) - 50, 462, 100, 60, { r: 5 }) + text(n, kx(i), KY, { size: 10 }) + '</g>'; if (i) s += arrow([[kx(i) - 57, KY], [kx(i) - 51, KY]], { w: 1 }); });
   s += `<path d="M${kx(3)} 522L${kx(3)} 540L${kx(2)} 540L${kx(2)} 523" fill="none" stroke="${INKC}" stroke-width="1" marker-end="url(#ah)"/>` + text('liveness failed: restart', (kx(2) + kx(3))/2, 551, { size: 8.5, weight: 600, col: MUTED });
   s += `<path d="M${kx(4) + 50} 492L612 492L612 ${BUS + 8}" fill="none" stroke="${INKC}" stroke-width="1" opacity=".55"/>` + text('write', 610, BUS + 20, { size: 8.5, weight: 600, col: MUTED, anchor: 'end' });
+  // the other direction: the API server calls into the kubelet for logs, exec, port-forward and metrics
+  s += `<g id="k-in">` + box(454, 532, 156, 36, { r: 5 }) + text('inbound :10250\nlogs · exec · port-forward', 532, 550, { size: 8.5 }) + '</g>';
   // kube-proxy
   s += box(650, 410, 330, 170, { fill: PAPERC, sw: 1.8 }) + `<g id="p-title"></g>`;
   s += `<g id="p-inf">` + box(662, 456, 306, 24, { r: 4 }) + text('informer: EndpointSlices', 815, 468, { size: 10 }) + '</g>';
@@ -1056,7 +1062,19 @@ function mount(host, c){ cfg = c; el = host;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.lt');
   R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
-window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R,
+// kubectl logs: authenticated and authorised at the API server, then the API server calls the kubelet with its own client certificate; the kubelet asks the
+// API server back (SubjectAccessReview, authorization mode Webhook) whether this caller may read logs, and only then streams them
+function logs(p){ const c = col(p), KI = [532, 532]; chain('logs:' + p.id, async () => {
+  await bead([[120, 88], [148, 88], [sx(0) - 35, 88]], { label: `GET pods/${p.name.slice(0, 8)}/log`, col: c, dur: 420 }); lit('stage0', 600); await sleep(160); lit('stage1', 700);
+  logLine(`kubectl -> GET /api/v1/namespaces/${p.ns || 'default'}/pods/${p.name.slice(0, 14)}/log: client certificate checked, RBAC allows pods/log; a read, so no admission and nothing for etcd`); await sleep(300);
+  R.node = p.node || R.node; await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'GET /containerLogs', col: c, dur: 620 }); lit('k-in', 900);
+  logLine(`API server -> kubelet ${R.node}:10250 with its kubelet-client certificate, checking the kubelet's serving cert against --kubelet-certificate-authority; the kubelet (authz mode Webhook, anonymous off) asks the API server whether this caller may read logs`);
+  await bead([KI, [KI[0], BUS], [sx(1), BUS], [sx(1), 104]], { label: 'SubjectAccessReview', col: AMBER, dur: 620, small: true }); lit('stage1', 700);
+  await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'allowed', col: GREEN, dur: 520, small: true }); lit('k-in', 800);
+  logLine(`kubelet ${R.node}: allowed (ClusterRole system:kube-apiserver-to-kubelet, nodes/log and nodes/proxy, bound to the API server's identity); the container runtime hands over the stream`); await sleep(200);
+  await bead([KI, [KI[0], BUS], [sx(0), BUS], [sx(0), 104], [sx(0) - 35, 88], [148, 88], [120, 88]], { label: 'log stream', col: c, dur: 820 });
+  logLine(`kubectl logs ${p.name.slice(0, 14)}: the stream comes back through the API server; exec and port-forward take the same road`); }); }
+window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, logs, R,
   step: dt => { if (!cfg) return; const s = cfg.speed; cfg.speed = () => 1; tick(dt); cfg.speed = s; render(); } };
 })();
 
@@ -1231,7 +1249,7 @@ const EXPLAIN = {
   'STATION': 'A Service: the sorting station that routes each incoming part to any green-andon machine of that job, round robin.',
   'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in and are sent to a Service.',
   'SEAL PRESS': 'The cluster CA: kubeadm makes it first and signs a certificate for every component with it; the controller manager signs the kubelets\' CSRs with the same CA.',
-  'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join; it rotates at about 80% of its lifetime, and an expired one means the node cannot report.',
+  'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join, with its identity in the name: system:node:<name> in group system:nodes, which the Node authorizer and NodeRestriction hold to its own node. It rotates at about 80% of its lifetime; expired, the node cannot report.',
   'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
   'LOCKED DRAWER': 'Secrets encrypted at rest: with an EncryptionConfiguration the API server encrypts Secret values before they reach etcd, with a key only the office holds (or a KMS).',
   'INSPECTOR': 'Pod Security Admission: a validating admission check that refuses a Pod breaking the namespace\'s level (privileged, baseline, restricted) before anything is written.',
@@ -1247,12 +1265,14 @@ function cardFor(a){
         row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
         (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '')) : '') +
         (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
-      acts: [ { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
+      acts: [ { label:'logs', title: 'kubectl logs: the API server calls the kubelet (watch it in the control room)', onClick: () => podLogs(p) },
+        { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
-      row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
+      row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
+      (SHOP() ? row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
@@ -1706,6 +1726,10 @@ const rect = (g, x, y, w, h, fill, stroke, lw = .4) => { if (fill){ g.fillStyle 
 const line = (g, pts, col, lw, dash) => { g.strokeStyle = col; g.lineWidth = lw; g.setLineDash(dash || []); g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); g.setLineDash([]); };
 // a round seal: gold with a tick while the certificate is good, red with a cross when it has expired
 const badgeTex = ok => tex('badge|' + ok, 2, 2, (g, w, h) => { g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1, 1, .95, 0, Math.PI*2); g.fill(); g.strokeStyle = ok ? '#5a4408' : '#5a1410'; g.lineWidth = .1; g.stroke(); txt(g, ok ? '✓' : '✕', 1, 1.05, 1.1, ok ? '#2b2208' : WHITE); }, 48);
+// a cabinet's badge carries the kubelet's identity: the certificate's CN is system:node:<name>, its group system:nodes
+const idBadgeTex = (ok, name) => tex(`idbadge|${ok}|${name}`, 5.2, 2.2, (g, w, h) => { rect(g, 0, 0, w, h, ok ? '#fff1bf' : '#f3c9c4'); g.strokeStyle = '#5a4408'; g.lineWidth = .08; g.strokeRect(.04, .04, w - .08, h - .08);
+  g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1.1, 1.1, .85, 0, Math.PI*2); g.fill(); txt(g, ok ? '✓' : '✕', 1.1, 1.15, .95, ok ? '#2b2208' : WHITE);
+  txt(g, 'system:node:', 3.55, .72, .5, '#5e5a52', 800); txt(g, name, 3.55, 1.5, .62, '#1d1f22', 800); }, 48);
 const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h, c1); g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.strokeStyle = c2; g.lineWidth = Math.min(w, h)*.5; for (let s = -h; s < w + h; s += Math.min(w, h)*1.6){ g.beginPath(); g.moveTo(x + s, y + h); g.lineTo(x + s + h, y); g.stroke(); } g.restore(); };
 
 /* ---------- dimensions ---------- */
@@ -1795,6 +1819,8 @@ function mkOffice(){
   ins.add(box(sp.x - 3, sp.y - 3, z, sp.x + 3, sp.y + 3, z + 3.2, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); ins.add(cyl(sp.x - 2.2, sp.y, z + 3.2, z + 9.2, .55, M(STEEL, { r: .3, m: .7 }), { n: 10 }));
   out.pressHead = box(sp.x - 1.4, sp.y - 1.4, z + 6.4, sp.x + 1.4, sp.y + 1.4, z + 8.4, M(DARKM, { r: .4, m: .4 }), { r: .3 }); ins.add(out.pressHead); out.pressY = out.pressHead.position.y;
   out.pressLamp = lamp(sp.x + 2.3, sp.y - 2.3, z + 3.9, LAMP.green, .4); ins.add(out.pressLamp);
+  ins.add(box(sp.x - 3, sp.y + 3.6, z, sp.x + 3, sp.y + 6.6, z + 2.2, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); ins.add(cyl(sp.x, sp.y + 5.1, z + 2.2, z + 3.4, 1.1, M('#e8b923', { r: .35, m: .8 }), { n: 12 }));   // the second die: the service-account key pair, for visitor passes
+  ins.add(decal([sp.x + 3.02, sp.y + 5.1, z + 1.1], [1, 0, 0], [0, -1, 0], 5.6, 1.8, tex('passdie', 5.6, 1.8, (g, w, h) => { txt(g, 'PASS DIE', w/2, .6, .62, WHITE); txt(g, 'service-account key', w/2, 1.3, .48, LAMP.amber, 700); }, 32)));
   ins.add(decal([sp.x + 3.02, sp.y, z + 1.6], [1, 0, 0], [0, -1, 0], 5.6, 2.4, tex('sealpress', 5.6, 2.4, (g, w, h) => { txt(g, 'SEAL PRESS', w/2, .8, .8, WHITE); txt(g, 'cluster CA', w/2, 1.75, .7, LAMP.amber, 700); }, 32)));
   // the badges the press stamped: on the ledger, the counter and the dispatcher's desk
   out.badges = [decal([o.x0 + 7, o.y0 + 2.98, z + 11], [0, -1, 0], [-1, 0, 0], 2, 2, badgeTex(true)), decal([o.x0 + 22.02, o.y0 + 17, z + 2.6], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true)), decal([o.x0 + 13.02, o.y1 - 6.2, z + 2.3], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true))];
@@ -1872,6 +1898,11 @@ function mkNode(n){
   out.rise = new THREE.Group(); g.add(out.rise);
   const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'), 12)));   // reads left to right from the front, tops toward the back of the hall
+  // the cell's PodCIDR (where its machines' addresses come from) and the routes to the other cells' ranges, painted under the name
+  const ni = Math.max(0, st.nodes.indexOf(n)), cidr = k => `10.200.${k}.0/24`, others = st.nodes.filter(m => m !== n).slice(0, 3);
+  out.rise.add(decal([c.x1 - 7.1, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2.4, tex(`cidr|${ni}`, 40, 2.4, (g, w, h) => txt(g, `PodCIDR ${cidr(ni)}`, w/2, h/2, 1.7, '#5e5a52'), 12)));
+  if (others.length) out.rise.add(decal([c.x1 - 9.6, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2, tex(`routes|${ni}|${others.map(m => m.name).join(',')}`, 40, 2, (g, w, h) => txt(g, 'ROUTES  ' + others.map(m => `${cidr(st.nodes.indexOf(m))} via ${m.name}`).join('   '), w/2, h/2, 1.15, '#6f6a60', 800), 12)));
+  const nx = st.nodes[ni + 1]; if (nx && nx.row === n.row) out.rise.add(decal([c.x1 - 9, c.y1 + NGAP/2, .2], [0, 0, 1], [0, -1, 0], 14, 2.6, tex('route', 14, 2.6, (g, w, h) => txt(g, 'ROUTE', w/2, h/2, 2, '#e3c766'), 12)));   // the lane between two cells is the route between their ranges
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
   const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1 - 9]], [[c.x1, c.y1 - 1], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];   // the gap at y1-9..y1-1 is the parts' way in
@@ -1887,8 +1918,8 @@ function mkNode(n){
   out.rise.add(decal([cb.x1 + .52, (cb.y0 + cb.y1)/2, 11.5], [1, 0, 0], [0, -1, 0], 7, 3.4, tex('jobboard', 7, 3.4, (g, w, h) => { txt(g, 'KUBELET', w/2, 1, 1, '#1d1f22'); txt(g, 'job board', w/2, 2.5, .9, '#5e5a52', 700); }, 24)));
   out.gauge = new THREE.Group(); out.rise.add(out.gauge); out.gaugeKey = '';
   // the cabinet's badge: the kubelet's client certificate, stamped at join, renewed on rotation (it flashes), red once expired
-  out.badge = decal([cb.x1 + .52, cb.y1 - 3.4, 3.4], [1, 0, 0], [0, -1, 0], 2.2, 2.2, badgeTex(true)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
-  out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 5.3, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
+  out.badge = decal([cb.x1 + .52, cb.y1 - 4.2, 3.4], [1, 0, 0], [0, -1, 0], 5.2, 2.2, idBadgeTex(true, n.name)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
+  out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 7.2, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
   out.lamp = lamp(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + 1.8, LAMP.green, .8); out.rise.add(out.lamp); out.rise.add(cyl(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + .8, cb.h + 1.4, .5, M(DARKM), { n: 8 }));
   const ins = new THREE.Group(); ins.add(box(cb.x0 + 1, cb.y0 + 1, 1, cb.x1 - 1, cb.y0 + 4.5, 6, M('#2b2e32', { r: .4 }), { r: .2 })); ins.add(cyl((cb.x0 + cb.x1)/2, cb.y0 + 2.7, 6, 9, 1.4, M(STEEL, { r: .3, m: .7 }), { n: 12 }));
   ins.add(box(cb.x0 + 1, cb.y1 - 5, 1, cb.x1 - 1, cb.y1 - 1.5, 4, M('#1f2226', { r: .4 }), { r: .2 })); for (let i = 0; i < 4; i++) ins.add(lamp(cb.x1 - 1, cb.y1 - 4.4 + i*.9, 4.3, [LAMP.green, LAMP.amber, LAMP.blue, LAMP.green][i], .25));
@@ -1933,7 +1964,7 @@ function syncNodes(dt){
     N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
     const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
     const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
-    if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = badgeTex(n.cert.ok); N.badge.material.needsUpdate = true; }
+    if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = idBadgeTex(n.cert.ok, n.name); N.badge.material.needsUpdate = true; }
       const f = n.cert.flash || 0; N.badge.scale.setScalar(1 + .5*Math.sin(Math.min(1, f/.9)*Math.PI)); setLamp(N.badgeLamp, LAMP.amber, f > 0 && Math.floor(f*8) % 2 === 0); }
     else { N.badge.visible = false; setLamp(N.badgeLamp, LAMP.amber, false); }
     // the rack holds a crate per image this node has pulled

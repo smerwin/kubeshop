@@ -718,7 +718,11 @@ function expireBadge(name = 'node-b'){ if (st.mode === 'live') return liveNote('
   n.cert.ok = false; n.cert.exp = st.t; n.certDown = 0; say('expire', `${n.name}'s kubelet client certificate expires now (its badge goes red): the next status update it sends will be refused`); run(); }
 function applyPrivileged(){ if (st.mode === 'live') return liveNote('kubectl apply -f privileged.yaml   # refused by Pod Security Admission in a restricted namespace'); if (!st.cp.api) return say('noapi', 'The counter is closed');
   st.sec.inspect = 1.8; st.sec.refuseT = 1.6; st.sec.refuse.push({ kind: 'psa', t: st.t });
-  say('psa', 'kubectl apply -f privileged.yaml: the inspector at the counter refuses it. Pod Security Admission enforces restricted on this namespace, so privileged: true is a 403; nothing is written'); run(); }
+  say('psa', 'kubectl apply -f privileged.yaml: the inspector refuses it because this namespace is labelled pod-security.kubernetes.io/enforce=restricted, so privileged: true is a 403 and nothing is written. Without that label (Kubernetes The Hard Way labels none and runs --allow-privileged=true) the same card passes'); run(); }
+// kubectl logs: a read, not a write; the counter checks the badge and RBAC, then calls the cabinet itself, over TLS the other way
+function podLogs(p){ if (st.mode === 'live') return liveNote(`kubectl logs ${p.name}`); if (!p.node) return say('nologs', `${p.name} has no node yet: no kubelet to ask`);
+  say('logs-' + p.id, `kubectl logs ${p.name}: the counter checks the badge and RBAC (pods/log), then calls ${p.node}'s cabinet on :10250 with its own kubelet-client certificate; the cabinet asks the counter whether this caller may read logs (SubjectAccessReview) before it answers`, 3200);
+  if (window.ControlRoom && ControlRoom.logs) ControlRoom.logs(p); run(); }
 function applyNetpol(quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f netpol-db.yaml'); if (st.sec.netpol) return say('netpol', 'The NetworkPolicy is already in force');
   st.sec.netpol = { name: 'db-from-api', to: 'db', from: ['api'] }; if (quiet) return;
   say('netpol', 'kubectl apply -f netpol-db.yaml: NetworkPolicy db-from-api selects the db machines and allows ingress on 5432 from api only; the CNI closes every other gate into them');
@@ -788,7 +792,7 @@ function staticSvg(){
   s += `<g id="watch">` + box(162, 118, 446, 40, { r: 5 }) + text('WATCH CACHE', 185, 138, { size: 10, anchor: 'start', ls: '.1em' }) + '</g>';
   s += arrow([[sx(5) + 36, 81], [648, 81]]);
   // etcd
-  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft', 662, 42) + `<g id="term"></g>`;
+  s += box(650, 20, 330, 150, { fill: PAPERC, sw: 1.8 }) + title('etcd · raft · :2379 / :2380', 662, 42) + `<g id="term"></g>`;
   for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) s += `<path d="M${mx(i)} ${MY}L${mx(j)} ${MY}" stroke="${INKC}" stroke-width=".8" opacity=".35"/>`;
   s += `<g id="members"></g>`;
   // the events bus: from the watch cache down to every watcher
@@ -822,6 +826,8 @@ function staticSvg(){
   KSTAGES.forEach((n, i) => { s += `<g id="k${i}">` + box(kx(i) - 50, 462, 100, 60, { r: 5 }) + text(n, kx(i), KY, { size: 10 }) + '</g>'; if (i) s += arrow([[kx(i) - 57, KY], [kx(i) - 51, KY]], { w: 1 }); });
   s += `<path d="M${kx(3)} 522L${kx(3)} 540L${kx(2)} 540L${kx(2)} 523" fill="none" stroke="${INKC}" stroke-width="1" marker-end="url(#ah)"/>` + text('liveness failed: restart', (kx(2) + kx(3))/2, 551, { size: 8.5, weight: 600, col: MUTED });
   s += `<path d="M${kx(4) + 50} 492L612 492L612 ${BUS + 8}" fill="none" stroke="${INKC}" stroke-width="1" opacity=".55"/>` + text('write', 610, BUS + 20, { size: 8.5, weight: 600, col: MUTED, anchor: 'end' });
+  // the other direction: the API server calls into the kubelet for logs, exec, port-forward and metrics
+  s += `<g id="k-in">` + box(454, 532, 156, 36, { r: 5 }) + text('inbound :10250\nlogs · exec · port-forward', 532, 550, { size: 8.5 }) + '</g>';
   // kube-proxy
   s += box(650, 410, 330, 170, { fill: PAPERC, sw: 1.8 }) + `<g id="p-title"></g>`;
   s += `<g id="p-inf">` + box(662, 456, 306, 24, { r: 4 }) + text('informer: EndpointSlices', 815, 468, { size: 10 }) + '</g>';
@@ -1051,7 +1057,19 @@ function mount(host, c){ cfg = c; el = host;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.lt');
   R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
-window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R,
+// kubectl logs: authenticated and authorised at the API server, then the API server calls the kubelet with its own client certificate; the kubelet asks the
+// API server back (SubjectAccessReview, authorization mode Webhook) whether this caller may read logs, and only then streams them
+function logs(p){ const c = col(p), KI = [532, 532]; chain('logs:' + p.id, async () => {
+  await bead([[120, 88], [148, 88], [sx(0) - 35, 88]], { label: `GET pods/${p.name.slice(0, 8)}/log`, col: c, dur: 420 }); lit('stage0', 600); await sleep(160); lit('stage1', 700);
+  logLine(`kubectl -> GET /api/v1/namespaces/${p.ns || 'default'}/pods/${p.name.slice(0, 14)}/log: client certificate checked, RBAC allows pods/log; a read, so no admission and nothing for etcd`); await sleep(300);
+  R.node = p.node || R.node; await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'GET /containerLogs', col: c, dur: 620 }); lit('k-in', 900);
+  logLine(`API server -> kubelet ${R.node}:10250 with its kubelet-client certificate, checking the kubelet's serving cert against --kubelet-certificate-authority; the kubelet (authz mode Webhook, anonymous off) asks the API server whether this caller may read logs`);
+  await bead([KI, [KI[0], BUS], [sx(1), BUS], [sx(1), 104]], { label: 'SubjectAccessReview', col: AMBER, dur: 620, small: true }); lit('stage1', 700);
+  await bead([[sx(1), 104], [sx(1), BUS], [KI[0], BUS], KI], { label: 'allowed', col: GREEN, dur: 520, small: true }); lit('k-in', 800);
+  logLine(`kubelet ${R.node}: allowed (ClusterRole system:kube-apiserver-to-kubelet, nodes/log and nodes/proxy, bound to the API server's identity); the container runtime hands over the stream`); await sleep(200);
+  await bead([KI, [KI[0], BUS], [sx(0), BUS], [sx(0), 104], [sx(0) - 35, 88], [148, 88], [120, 88]], { label: 'log stream', col: c, dur: 820 });
+  logLine(`kubectl logs ${p.name.slice(0, 14)}: the stream comes back through the API server; exec and port-forward take the same road`); }); }
+window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, logs, R,
   step: dt => { if (!cfg) return; const s = cfg.speed; cfg.speed = () => 1; tick(dt); cfg.speed = s; render(); } };
 })();
 
@@ -1226,7 +1244,7 @@ const EXPLAIN = {
   'STATION': 'A Service: the sorting station that routes each incoming part to any green-andon machine of that job, round robin.',
   'DOCK': 'An Ingress: the receiving dock where parts for a hostname come in and are sent to a Service.',
   'SEAL PRESS': 'The cluster CA: kubeadm makes it first and signs a certificate for every component with it; the controller manager signs the kubelets\' CSRs with the same CA.',
-  'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join; it rotates at about 80% of its lifetime, and an expired one means the node cannot report.',
+  'BADGE': 'The kubelet\'s client certificate, signed by the CA through a CSR at join, with its identity in the name: system:node:<name> in group system:nodes, which the Node authorizer and NodeRestriction hold to its own node. It rotates at about 80% of its lifetime; expired, the node cannot report.',
   'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
   'LOCKED DRAWER': 'Secrets encrypted at rest: with an EncryptionConfiguration the API server encrypts Secret values before they reach etcd, with a key only the office holds (or a KMS).',
   'INSPECTOR': 'Pod Security Admission: a validating admission check that refuses a Pod breaking the namespace\'s level (privileged, baseline, restricted) before anything is written.',
@@ -1242,12 +1260,14 @@ function cardFor(a){
         row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
         (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '')) : '') +
         (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
-      acts: [ { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
+      acts: [ { label:'logs', title: 'kubectl logs: the API server calls the kubelet (watch it in the control room)', onClick: () => podLogs(p) },
+        { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
-      row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
+      row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
+      (SHOP() ? row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
