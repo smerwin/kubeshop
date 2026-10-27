@@ -65,6 +65,8 @@ function tex(key, w, h, draw, ppu = 8){ if (key && texCache.has(key)) return tex
 const txt = (g, s, x, y, size, col = WHITE, weight = 800, align = 'center') => { g.font = `${weight} ${size}px ${FONT}`; g.fillStyle = col; g.textAlign = align; g.textBaseline = 'middle'; g.fillText(s, x, y); };
 const rect = (g, x, y, w, h, fill, stroke, lw = .4) => { if (fill){ g.fillStyle = fill; g.fillRect(x, y, w, h); } if (stroke){ g.strokeStyle = stroke; g.lineWidth = lw; g.strokeRect(x, y, w, h); } };
 const line = (g, pts, col, lw, dash) => { g.strokeStyle = col; g.lineWidth = lw; g.setLineDash(dash || []); g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); g.setLineDash([]); };
+// a round seal: gold with a tick while the certificate is good, red with a cross when it has expired
+const badgeTex = ok => tex('badge|' + ok, 2, 2, (g, w, h) => { g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1, 1, .95, 0, Math.PI*2); g.fill(); g.strokeStyle = ok ? '#5a4408' : '#5a1410'; g.lineWidth = .1; g.stroke(); txt(g, ok ? '✓' : '✕', 1, 1.05, 1.1, ok ? '#2b2208' : WHITE); }, 48);
 const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h, c1); g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.strokeStyle = c2; g.lineWidth = Math.min(w, h)*.5; for (let s = -h; s < w + h; s += Math.min(w, h)*1.6){ g.beginPath(); g.moveTo(x + s, y + h); g.lineTo(x + s + h, y); g.stroke(); } g.restore(); };
 
 /* ---------- dimensions ---------- */
@@ -80,6 +82,8 @@ const rackOf = n => { const c = cellBox(n); return { x0: c.x0 - 10, x1: c.x0 - 4
 const agvHome = n => { const c = cellBox(n); return [c.x0 - 7, c.y1 - 40, 0]; };
 // the tube path from the office to a cell's job board: up from the counter, along the trunk, a branch along x, down the cabinet
 function tubePath(n){ const d = cellDoor(n); return [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, d[1], TUBE_Z], [d[0], d[1], TUBE_Z], [d[0], d[1], d[2] + 4]]; }
+// a forged job card's way in: up the trunk from the floor end, backwards, to the counter
+const FORGE = () => [[TUBE_X, D - 20, TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [OFFICE[0], OFFICE[1], TUBE_Z], [OFFICE[0], OFFICE[1], OFFICE[2] + 1]];
 function along(pts, t){ const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i + 1]); segs.push([L, l, i]); L += l; } const d = t*L;
   for (const [s0, l, i] of segs) if (d <= s0 + l + 1e-6) return lerp3(pts[i], pts[i + 1], l ? (d - s0)/l : 0); return pts[pts.length - 1]; }
 // the AGV's run: cabinet to the crib's door (a cold pull) or just to the rack (a warm one), and back
@@ -147,6 +151,23 @@ function mkOffice(){
   ins.add(box(o.x0 + 4, o.y1 - 16, z, o.x0 + 13, o.y1 - 4, z + 4.5, M(WHITE, { r: .5 }), { r: .4 }));
   out.screens.sched = box(o.x0 + 12.6, o.y1 - 14, z + 4.5, o.x0 + 13.6, o.y1 - 6, z + 9.5, own(LAMP.blue, { e: 1.3, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.sched);
   ins.add(cyl(o.x0 + 8.5, o.y1 - 10, z + 4.5, z + 5.3, 2.2, M(DARKM), { n: 12 }));
+  // the seal press (the cluster CA) on a bench behind the counter: its head stamps the badges at kubeadm init; a lamp while the CA exists
+  const sp = { x: o.x0 + 27, y: o.y0 + 31 };
+  ins.add(box(sp.x - 3, sp.y - 3, z, sp.x + 3, sp.y + 3, z + 3.2, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); ins.add(cyl(sp.x - 2.2, sp.y, z + 3.2, z + 9.2, .55, M(STEEL, { r: .3, m: .7 }), { n: 10 }));
+  out.pressHead = box(sp.x - 1.4, sp.y - 1.4, z + 6.4, sp.x + 1.4, sp.y + 1.4, z + 8.4, M(DARKM, { r: .4, m: .4 }), { r: .3 }); ins.add(out.pressHead); out.pressY = out.pressHead.position.y;
+  out.pressLamp = lamp(sp.x + 2.3, sp.y - 2.3, z + 3.9, LAMP.green, .4); ins.add(out.pressLamp);
+  ins.add(decal([sp.x + 3.02, sp.y, z + 1.6], [1, 0, 0], [0, -1, 0], 5.6, 2.4, tex('sealpress', 5.6, 2.4, (g, w, h) => { txt(g, 'SEAL PRESS', w/2, .8, .8, WHITE); txt(g, 'cluster CA', w/2, 1.75, .7, LAMP.amber, 700); }, 32)));
+  // the badges the press stamped: on the ledger, the counter and the dispatcher's desk
+  out.badges = [decal([o.x0 + 7, o.y0 + 2.98, z + 11], [0, -1, 0], [-1, 0, 0], 2, 2, badgeTex(true)), decal([o.x0 + 22.02, o.y0 + 17, z + 2.6], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true)), decal([o.x0 + 13.02, o.y1 - 6.2, z + 2.3], [1, 0, 0], [0, -1, 0], 2, 2, badgeTex(true))];
+  for (const b of out.badges) ins.add(b);
+  // the locked drawer (Secrets encrypted at rest) beside the ledger, and the office's key on the counter
+  ins.add(box(o.x0 + 3, o.y0 + 12.5, z, o.x0 + 9.5, o.y0 + 18, z + 5, M('#2f3338', { r: .45, m: .4 }), { r: .3 }));
+  ins.add(decal([o.x0 + 9.52, o.y0 + 15.25, z + 2.5], [1, 0, 0], [0, -1, 0], 5, 4, tex('drawer', 5, 4, (g, w, h) => { txt(g, 'SECRETS', w/2, .8, .75, WHITE); txt(g, 'encrypted at rest', w/2, 1.7, .5, '#c9c4b8', 700); g.fillStyle = '#e8b923'; g.beginPath(); g.arc(w/2, 3, .45, 0, Math.PI*2); g.fill(); rect(g, w/2 - .12, 3, .24, .7, '#e8b923'); }, 40)));
+  ins.add(rod([o.x0 + 15, o.y0 + 24.5, z + 5.1], [o.x0 + 16.6, o.y0 + 24.5, z + 5.1], .22, M('#e8b923', { r: .35, m: .8 }))); ins.add(cyl(o.x0 + 14.7, o.y0 + 24.5, z + 5, z + 5.25, .5, M('#e8b923', { r: .35, m: .8 }), { n: 10 }));
+  // the inspector at the counter (Pod Security Admission): raises a STOP sign when a job is refused
+  const ip = { x: o.x0 + 24.5, y: o.y0 + 11 }; ins.add(cyl(ip.x, ip.y, z, z + 4.2, 1.1, M('#2b3a66', { r: .6 }), { n: 12 })); const head = new THREE.Mesh(sphG(.9), M('#e0b48a', { r: .7 })); head.position.copy(V3(ip.x, ip.y, z + 5.2)); ins.add(head);
+  out.sign = new THREE.Group(); out.sign.add(rod([ip.x + 1.5, ip.y, z + 2.6], [ip.x + 1.5, ip.y, z + 6.4], .18, M(DARKM))); out.sign.add(box(ip.x + 1.2, ip.y - 1.4, z + 6.4, ip.x + 1.8, ip.y + 1.4, z + 8.6, M('#e2483d', { r: .5 }), { r: .3 }));
+  out.sign.add(decal([ip.x + 1.82, ip.y, z + 7.5], [1, 0, 0], [0, -1, 0], 2.6, 2, tex('stop', 2.6, 2, (g, w, h) => { txt(g, 'STOP', w/2, .7, .7, WHITE); txt(g, 'PSA', w/2, 1.45, .55, WHITE, 700); }, 48))); out.signY = out.sign.position.y; ins.add(out.sign);
   g.add(ins); out.insides.push(ins);
   // the order board on the outside wall facing the floor
   out.board = box(o.x1 + .4, o.y0 + 6, o.z0 + 4, o.x1 + 1.2, o.y1 - 6, o.z1 - 3, M(WHITE, { r: .5 }), { r: .2 }); out.board.userData.act = { type: 'board' }; pickables.push(out.board); g.add(out.board);
@@ -172,7 +193,8 @@ function mkCrib(){ const c = CRIB(), g = new THREE.Group(), out = { g, stacks: n
   for (const z of [1.2, 7.4, 13.6]) g.add(box(c.x0 + 2, c.y0 + 2, z, c.x1 - 2, c.y1 - 2, z + .5, M(STEEL, { r: .4, m: .5 }), { r: 0 }));
   g.add(out.stacks); g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 10, c.y1 - c.y0 + 10)); return out; }
 function crate(x0, y0, z0, pm, app, ver, w = 7, d = 7, h = 5){ const g = new THREE.Group(); g.add(box(x0, y0, z0, x0 + w, y0 + d, z0 + h, M(pm.l, { r: .55 }), { r: .3 }));
-  g.add(decal([x0 + w + .02, y0 + d/2, z0 + h/2], [1, 0, 0], [0, -1, 0], d - 1, h - 1, tex(`crate|${app}|${ver}`, d - 1, h - 1, (g, ww, hh) => { txt(g, app.slice(0, 7).toUpperCase(), ww/2, hh*.38, 1.4, WHITE); txt(g, ver, ww/2, hh*.72, 1.1, WHITE, 700); }, 24))); return g; }
+  g.add(decal([x0 + w + .02, y0 + d/2, z0 + h/2], [1, 0, 0], [0, -1, 0], d - 1, h - 1, tex(`crate|${app}|${ver}`, d - 1, h - 1, (g, ww, hh) => { txt(g, app.slice(0, 7).toUpperCase(), ww/2, hh*.38, 1.4, WHITE); txt(g, ver, ww/2, hh*.72, 1.1, WHITE, 700);
+    g.fillStyle = '#b3261e'; g.beginPath(); g.arc(ww - .75, .75, .55, 0, Math.PI*2); g.fill(); txt(g, '✓', ww - .75, .8, .6, WHITE); }, 24))); return g; }   // the tamper seal: the image's signature
 function syncCrib(){ const R = Y.crib, key = st.regApps.map(a => a + ':' + (depOf(a) ? depOf(a).version : 'img') + ':' + palOf(a).l).join(','); if (key === R.key) return; R.key = key;
   dispose(R.stacks); R.stacks = new THREE.Group(); R.g.add(R.stacks); const c = CRIB();
   st.regApps.forEach((app, i) => { const pm = palOf(app), dep = depOf(app), y0 = c.y0 + 4 + (i % 4)*REG_GAP; for (let z = 0; z < 3; z++) R.stacks.add(crate(c.x0 + 4 + z*8, y0, 1.7 + (z % 2)*6.2, pm, app, dep ? dep.version : 'img', 6, 8, 5)); }); }
@@ -225,6 +247,9 @@ function mkNode(n){
   out.jobBoard = box(cb.x1 - .2, cb.y0 + 1, 9.5, cb.x1 + .5, cb.y1 - 1, 13.5, M(WHITE, { r: .5 }), { r: .15 }); out.rise.add(out.jobBoard);
   out.rise.add(decal([cb.x1 + .52, (cb.y0 + cb.y1)/2, 11.5], [1, 0, 0], [0, -1, 0], 7, 3.4, tex('jobboard', 7, 3.4, (g, w, h) => { txt(g, 'KUBELET', w/2, 1, 1, '#1d1f22'); txt(g, 'job board', w/2, 2.5, .9, '#5e5a52', 700); }, 24)));
   out.gauge = new THREE.Group(); out.rise.add(out.gauge); out.gaugeKey = '';
+  // the cabinet's badge: the kubelet's client certificate, stamped at join, renewed on rotation (it flashes), red once expired
+  out.badge = decal([cb.x1 + .52, cb.y1 - 3.4, 3.4], [1, 0, 0], [0, -1, 0], 2.2, 2.2, badgeTex(true)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
+  out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 5.3, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
   out.lamp = lamp(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + 1.8, LAMP.green, .8); out.rise.add(out.lamp); out.rise.add(cyl(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + .8, cb.h + 1.4, .5, M(DARKM), { n: 8 }));
   const ins = new THREE.Group(); ins.add(box(cb.x0 + 1, cb.y0 + 1, 1, cb.x1 - 1, cb.y0 + 4.5, 6, M('#2b2e32', { r: .4 }), { r: .2 })); ins.add(cyl((cb.x0 + cb.x1)/2, cb.y0 + 2.7, 6, 9, 1.4, M(STEEL, { r: .3, m: .7 }), { n: 12 }));
   ins.add(box(cb.x0 + 1, cb.y1 - 5, 1, cb.x1 - 1, cb.y1 - 1.5, 4, M('#1f2226', { r: .4 }), { r: .2 })); for (let i = 0; i < 4; i++) ins.add(lamp(cb.x1 - 1, cb.y1 - 4.4 + i*.9, 4.3, [LAMP.green, LAMP.amber, LAMP.blue, LAMP.green][i], .25));
@@ -269,6 +294,9 @@ function syncNodes(dt){
     N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
     const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
     const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
+    if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = badgeTex(n.cert.ok); N.badge.material.needsUpdate = true; }
+      const f = n.cert.flash || 0; N.badge.scale.setScalar(1 + .5*Math.sin(Math.min(1, f/.9)*Math.PI)); setLamp(N.badgeLamp, LAMP.amber, f > 0 && Math.floor(f*8) % 2 === 0); }
+    else { N.badge.visible = false; setLamp(N.badgeLamp, LAMP.amber, false); }
     // the rack holds a crate per image this node has pulled
     const ck = [...(n.cache || [])].sort().join(','); if (ck !== N.crateKey){ N.crateKey = ck; dispose(N.crates); N.crates = new THREE.Group(); N.rise.add(N.crates); const rk = rackOf(n);
       [...(n.cache || [])].sort().slice(0, 6).forEach((key, i) => { const [app, ver] = key.split(':'); N.crates.add(crate(rk.x0 + .5, rk.y0 + 1 + (i % 3)*4.8, .8 + Math.floor(i/3)*5, palOf(app), app, ver, 5, 4.2, 3.8)); }); }
@@ -297,6 +325,14 @@ function mkPod(p){
   if (p.configMap){ const sh = box(MW - .2, 1.2, 2.2, MW + .3, 5.4, 6.6, own(WHITE, { r: .6 }), { r: .1 }); out.machine.add(sh); out.machine.add(decal([MW + .32, 3.3, 4.4], [1, 0, 0], [0, -1, 0], 3.8, 4, tex('setup', 3.8, 4, (g, w, h) => { for (let y = .8; y < h; y += .7) line(g, [[.4, y], [w - .4, y]], '#8a8580', .18); txt(g, 'SETUP', w/2, .5, .6, '#1d1f22'); }, 32))); }
   if (p.secret) out.machine.add(box(-1.8, ML - 4, 0, -.2, ML - 1, 2.6, own('#3a3d42', { r: .5, m: .4 }), { r: .2 }));
   if (p.pvc){ out.machine.add(box(-.4, -.4, 0, MW + .4, ML + .4, .5, own('#8e6236', { r: .7 }), { r: .1 })); out.machine.add(decal([MW + .42, ML/2, .25], [1, 0, 0], [0, -1, 0], 6, .4, tex(`pvtag|${p.pvc}`, 6, .4, (g, w, h) => txt(g, p.pvc.slice(0, 12), w/2, h/2, .32, WHITE), 60))); }
+  // the visitor pass (a bound ServiceAccount token) hung on the machine's side
+  out.machine.add(box(2, -.25, 2.8, 4, -.02, 5.4, own(WHITE, { r: .6 }), { r: .08 })); out.machine.add(decal([3, -.27, 4.1], [0, -1, 0], [-1, 0, 0], 1.8, 2.4, tex('pass', 1.8, 2.4, (g, w, h) => { rect(g, 0, 0, w, .55, '#2d7bd6'); txt(g, 'PASS', w/2, .28, .38, WHITE); txt(g, 'SA', w/2, 1.15, .62, '#1d1f22'); txt(g, 'token', w/2, 1.8, .4, '#5e5a52', 700); }, 48)));
+  // the policy gate on the machine's spur: drawn only while a NetworkPolicy selects this app; the boom lifts for a part the policy allows
+  out.gate = new THREE.Group(); for (const y of [1.2, ML - 1.2]) out.gate.add(cyl(MW + 2.6, y, 0, 4.2, .3, own(YEL, { r: .5 }), { n: 8 }));
+  out.boom = rod([MW + 2.6, 1.2, 2.8], [MW + 2.6, ML - 1.2, 2.8], .26, own('#e2483d', { r: .5 })); out.gate.add(out.boom); out.boomUp = 0;
+  out.gateLamp = lamp(MW + 2.6, ML/2, 4.6, LAMP.red, .35); out.gate.add(out.gateLamp);
+  out.gate.add(box(MW + 2.45, ML/2 - 1.7, .9, MW + 2.75, ML/2 + 1.7, 2.2, own(WHITE, { r: .6 }), { r: .08 })); out.gate.add(decal([MW + 2.77, ML/2, 1.55], [1, 0, 0], [0, -1, 0], 3.2, 1.1, tex('polsign', 3.2, 1.1, (g, w, h) => { rect(g, 0, 0, w, h, '#e2483d'); txt(g, 'NETWORK POLICY', w/2, h/2, .36, WHITE); }, 60)));
+  out.gate.visible = false; g.add(out.gate);
   out.machine.add(ao(MW/2, ML/2, MW + 6, ML + 6)); g.add(out.machine);
   // the job card on the bay while the cell waits for the image
   out.card = new THREE.Group(); out.card.add(box(MW/2 - 2.2, ML/2 - 1.4, 1.2, MW/2 + 2.2, ML/2 + 1.4, 1.5, own(WHITE, { r: .6 }), { r: .1 })); out.card.add(rod([MW/2, ML/2, 0], [MW/2, ML/2, 1.2], .25, own(DARKM))); g.add(out.card);
@@ -310,6 +346,9 @@ function syncPods(dt){
     P.g.position.copy(V3(...p.pos));
     const waiting = p.phase === 'queued' || p.phase === 'pulling' || p.phase === 'staged' || p.phase === 'dropping';
     P.card.visible = waiting; P.machine.visible = !waiting;
+    const pol = st.sec.netpol, gated = !!(pol && pol.to === p.app && !waiting && p.phase !== 'terminating'); P.gate.visible = gated;
+    if (gated){ const open = st.parcels.some(pc => pc.pod === p && pc.link && !pc.blocked && pc.L - pc.t < (pc.dir === 1 ? 44 : 12)) ? 1 : 0; P.boomUp = Math.max(0, Math.min(1, P.boomUp + (open ? dt : -dt)*6));   // lifts as an allowed part comes down the aisle, drops once it has left
+      rodTo(P.boom, [MW + 2.6, 1.2, 2.8 + 4*ease(P.boomUp)], [MW + 2.6, ML - 1.2, 2.8 + 4*ease(P.boomUp)], .26); setLamp(P.gateLamp, P.boomUp > .5 ? LAMP.green : LAMP.red); }
     if (!waiting){ const up = p.phase === 'creating' ? .25 + .75*ease(Math.min(1, p.phaseT/PULL.start)) : 1; P.machine.scale.set(1, up, 1);
       const bk = `${p.ver}|${p.gpu || 0}`; if (P.key !== bk){ P.key = bk; P.decal.material.map = verTex(P.pm, p.app, p.ver, p.gpu); P.decal.material.needsUpdate = true; }
       const col = lampOf(p); P.andon.forEach((l, i) => setLamp(l, [LAMP.green, LAMP.amber, LAMP.red][i], col === [LAMPC.green, LAMPC.amber, LAMPC.red][i]));
@@ -325,7 +364,14 @@ function syncPods(dt){
 function mkFire(){ const g = new THREE.Group(); for (let i = 0; i < 6; i++){ const s = new THREE.Mesh(sphG(.35), own('#ffd166', { e: 4, r: .3 })); s.userData.spark = true; s.castShadow = false; g.add(s); }
   for (let i = 0; i < 3; i++){ const s = new THREE.Mesh(sphG(1.6 + i*.5), own('#6b6a66', { a: .45, r: .9 })); s.material.depthWrite = false; s.castShadow = false; s.position.copy(V3(MW/2, ML/2, MH + 3 + i*2)); g.add(s); } return g; }
 /* capsules in the tube, parts on the conveyor */
-function syncCaps(){ while (Y.caps.length < st.caps.length){ const g = new THREE.Group(); const c = new THREE.Mesh(cylG(1, 1, 3.2, 12), M(WHITE, { r: .4 })); c.castShadow = false; g.add(c); const l = lamp(0, 0, 0, LAMP.amber, .5); g.add(l); scene.add(g); Y.caps.push({ g, cap: c }); }
+function syncCaps(){ while (Y.caps.length < st.caps.length){ const g = new THREE.Group(); const c = new THREE.Mesh(cylG(1, 1, 3.2, 12), M(WHITE, { r: .4 })); c.castShadow = false; g.add(c); const l = lamp(0, 0, 0, LAMP.amber, .5); g.add(l);
+    const wax = new THREE.Mesh(cylG(.5, .5, .22, 10), M('#8f1d1d', { r: .6 })); wax.rotation.z = Math.PI/2; wax.position.set(.95, .5, 0); wax.castShadow = false; c.add(wax);   // the wax seal: the capsule is from the counter and signed
+    scene.add(g); Y.caps.push({ g, cap: c }); }
+  // forged capsules: grey, unsealed, coming up the trunk the wrong way; refused at the counter they drop and fade
+  Y.forged = Y.forged || []; while (Y.forged.length < st.sec.forged.length){ const g = new THREE.Group(); const c = new THREE.Mesh(cylG(1, 1, 3.2, 12), own('#6b6a66', { r: .6 })); c.castShadow = false; g.add(c); scene.add(g); Y.forged.push({ g, cap: c }); }
+  while (Y.forged.length > st.sec.forged.length){ const C = Y.forged.pop(); dispose(C.g); }
+  st.sec.forged.forEach((f, i) => { const C = Y.forged[i], path = FORGE(), t = Math.min(1, f.t), a = along(path, t), b = along(path, Math.min(1, t + .01)); const sink = Math.max(0, f.t - 1);
+    C.g.position.copy(V3(a[0], a[1], a[2] - 14*sink*sink)); const d = V3(b[0] - a[0], b[1] - a[1], b[2] - a[2]); if (d.length() > 1e-4) C.cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); setAlpha(C.g, Math.max(0, 1 - sink/.3)); });
   while (Y.caps.length > st.caps.length){ const C = Y.caps.pop(); dispose(C.g); }
   st.caps.forEach((cp, i) => { const n = st.nodes.find(n => n.name === cp.node); if (!n) return; const path = tubePath(n), t = Math.min(1, cp.t), a = along(path, t), b = along(path, Math.min(1, t + .01)), C = Y.caps[i];
     C.g.position.copy(V3(...a)); const d = V3(b[0] - a[0], b[1] - a[1], b[2] - a[2]); if (d.length() > 1e-4) C.cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); }); }
@@ -333,7 +379,9 @@ function syncParts(){ while (Y.parts.length < st.parcels.length){ const g = new 
   while (Y.parts.length > st.parcels.length){ const P = Y.parts.pop(); dispose(P.g); }
   st.parcels.forEach((pc, i) => { const P = Y.parts[i], p = parcelAt(pc, pc.t); P.g.position.copy(V3(p[0], p[1], p[2] - 2.2)); if (P.b.material.color.getHexString() !== pc.col.slice(1)) P.b.material.color.set(pc.col); setLamp(P.l, pc.col); }); }
 function syncStatics(){
-  const O = Y.office, cp = st.cp; setLamp(O.screens.api, LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);
+  const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
+  setLamp(O.pressLamp, LAMP.green, !!SEC.ca); O.pressHead.position.y = O.pressY - 1.7*Math.abs(Math.sin(Math.max(0, SEC.stamp)*Math.PI*2)); for (const b of O.badges) b.visible = !!SEC.ca;
+  O.sign.position.y = O.signY + 2.6*ease(Math.min(1, Math.max(0, SEC.inspect)/.6));
   const R = window.ControlRoom ? ControlRoom.R : null; O.drawers.forEach((l, i) => { const up = cp.etcd && !(R && R.members[i] && !R.members[i].up); setLamp(l, R && R.leader === i && cp.etcd && !cp.hold ? LAMP.amber : LAMP.green, !!up); });
   const strobe = st.strobe > 0 && Math.floor(st.strobe*12) % 2 === 0; setLamp(O.beacon, LAMP.amber, strobe || !!(st.boot && cp.ctrl && !cp.hold && false)); O.beacon.material.emissiveIntensity = strobe ? 6 : .1;
   const rows = JSON.stringify(boardRows()); if (rows !== Y.boardKey){ Y.boardKey = rows; O.boardDecal.material.map = boardTex(); O.boardDecal.material.needsUpdate = true; }
@@ -396,11 +444,14 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
     for (const p of ps) for (let i = 0; i < 3; i++){ b[0][i] = Math.min(b[0][i], p.pos[i]); b[1][i] = Math.max(b[1][i], p.pos[i] + [MW, ML, MH + 4][i]); } return b; }
   return null; }
 function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH/2];
+  if (st.sec.forged.length){ const f = st.sec.forged[0]; return { p: along(FORGE(), Math.min(1, f.t)), z: zoomFor(3) }; }
+  if (st.sec.inspect > 0 || st.sec.refuseT > 0) return { p: [OFF.x0 + 21, OFF.y0 + 16, OFF.z0 + 6], z: zoomFor(3.2) };
   if (st.caps.length){ const cp = st.caps[0], n = st.nodes.find(n => n.name === cp.node); if (n) return { p: along(tubePath(n), Math.min(1, cp.t)), z: zoomFor(3) }; }
   const pn = st.nodes.find(n => n.pull); if (pn) return { p: along(agvPath(pn, pn.pull.warm), (() => { const u = pn.pull.t/pn.pull.dur; return ease(Math.min(1, u < .5 ? u*2 : 2 - u*2)); })()), z: zoomFor(3.6) };
   if (st.parcels.length){ const pc = st.parcels[0]; return { p: parcelAt(pc, pc.t), z: zoomFor(4) }; }
   const cr = st.pods.find(p => (p.fire > 0 || p.phase === 'crash') && p.pos); if (cr) return { p: mid(cr), z: zoomFor(4) };
   const st2 = st.pods.find(p => p.phase === 'creating' && p.pos); if (st2) return { p: mid(st2), z: zoomFor(4) };
+  const cf = st.nodes.find(n => n.cert && (n.cert.flash > 0 || !n.cert.ok)); if (cf){ const cb = cabinet(cf); return { p: [(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, 5], z: zoomFor(3.6) }; }
   const un = st.pods.find(p => p.phase === 'unready' && p.phaseT > -1e8 && p.pos); if (un) return { p: mid(un), z: zoomFor(3.6) };
   const bt = st.nodes.find(n => n.joined > 0 && n.joined < 1); if (bt){ const c = cellBox(bt); return { p: [(c.x0 + c.x1)/2, (c.y0 + c.y1)/2, 6], z: zoomFor(2.2) }; }
   return null; }
@@ -415,10 +466,14 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = s
   if (k > .6){ if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + 3, y + 2.5, z + 3], text:'PROGRAM', on: isReady(p0) }, { at:[x + 2, y + ML - 2, z + 3], text:'DATA PORT', on: isReady(p0) }); if (p0.configMap) items.push({ at:[x + MW, y + 3.3, z + 4.4], text:'SETUP SHEET', on:false }); }
     const sec = st.pods.find(p => p.pos && p.secret); if (sec) items.push({ at:[sec.pos[0] - 1, sec.pos[1] + ML - 2.5, sec.pos[2] + 1.3], text:'SECRET', on:false });
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
+    items.push({ at:[o.x0 + 27, o.y0 + 31, o.z0 + 10], text:'SEAL PRESS', on: st.sec.stamp > 0 }, { at:[o.x0 + 6, o.y0 + 15, o.z0 + 7], text:'LOCKED DRAWER', on:false }, { at:[o.x0 + 25, o.y0 + 11, o.z0 + 9], text:'INSPECTOR', on: st.sec.inspect > 0 });
     items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   else { const ing = st.ingresses[0], gn = st.nodes.find(n => n.gpus && n.joined >= 1);
     if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'CELL', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
-    if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }); if (p0.pvc) items.push({ at:[x + MW/2, y - .4, z + .3], text:'PALLET', on:false }); }
+    if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }, { at:[x + 3, y - .3, z + 4.1], text:'VISITOR PASS', on:false }); if (p0.pvc) items.push({ at:[x + MW/2, y - .4, z + .3], text:'PALLET', on:false }); }
+    if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
+    if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
+    { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
     items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
