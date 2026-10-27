@@ -183,7 +183,9 @@ async function schedulerCycle(p, nodeName, o = {}){
 }
 async function kubeletStart(p){ R.node = p.node || R.node; lit('k0', 500); await sleep(220); lit('k1', 900); logLine(`kubelet ${R.node}: CRI pull ${p.containers[0].image}`); await sleep(700); lit('k2', 700); await sleep(420); }
 async function kubeletStatus(p, label, watchers, o){ R.node = p.node || R.node; lit('k3', 700); await sleep(380); lit('k4', 600); await sleep(200); await apiCall('kubelet', label, col(p), watchers, { method: 'PATCH', verb: 'kubelet', ...o }); }
-async function endpointsUpdate(svcName, podCol){ await controllerLoop('ep', svcName, () => apiCall('ep', `EndpointSlice ${svcName}`, podCol, ['proxy'], { verb: 'endpointslice ctrl' })); lit('p-rules', 800); logLine(`kube-proxy: rules updated for Service ${svcName}`); }
+async function endpointsUpdate(svcName, podCol, o = {}){ await controllerLoop('ep', svcName, () => apiCall('ep', `EndpointSlice ${svcName}${o.tag ? ' ' + o.tag : ''}`, podCol, ['proxy'], { verb: 'endpointslice ctrl' })); lit('p-rules', 800); logLine(o.log || `kube-proxy: rules updated for Service ${svcName}`); }
+// a Terminating pod leaves the Service first (its endpoint is withdrawn on every node), then the kubelet stops it inside the grace period
+const withdraw = (p, c) => p.job ? Promise.resolve() : endpointsUpdate(p.app, c, { tag: '-1 endpoint', log: `kube-proxy: ${p.name.slice(0, 14)} withdrawn from Service ${p.app} (Terminating); in-flight connections finish within terminationGracePeriodSeconds` });
 const col = p => (window.palOf ? palOf(p.app).l : BLUEC);
 const gateOf = p => { if (!R.gate.has(p.id)) R.gate.set(p.id, {}); return R.gate.get(p.id); };
 const promised = (g, k) => { if (!g[k]) g[k] = new Promise(r => { g[k + 'R'] = r; }); return g[k]; };
@@ -230,8 +232,9 @@ function observe(){
   for (const [app, ps] of Object.entries(gone)){ const c = col(ps[0]), n = st.nodes.find(n => n.name === ps[0].node), evict = n && n.cordoned;
     chain(`gone:${app}`, async () => { if (evict){ await apiCall(who, `Eviction ${ps[0].name.slice(0, 12)}${ps.length > 1 ? ' x' + ps.length : ''}`, c, ['kubelet'], { method: 'POST', verb: 'kubectl drain' }); }
       else { const d = st.deploys.find(d => d.app === app); if (!R.inflight.has(`dep:${d ? d.name : app}`)) await controllerLoop('rs', app, () => apiCall('rs', `delete Pod ${ps[0].name.slice(0, 12)}${ps.length > 1 ? ' x' + ps.length : ''}`, c, ['kubelet', 'ep'], { method: 'DELETE', verb: 'replicaset ctrl' })); }
-      R.node = ps[0].node || R.node; lit('k2', 700); logLine(`kubelet ${R.node}: SIGTERM, then the containers stop (grace period)`); await sleep(500); lit('k4', 500); }); }
-  for (const p of deleted) chain(`del:${p.id}`, async () => { await apiCall(who, `delete Pod ${p.name.slice(0, 14)}`, col(p), ['kubelet', 'rs', 'ep'], { method: 'DELETE', verb: 'kubectl delete pod' }); R.node = p.node; lit('k2', 600); });
+      await withdraw(ps[0], c);
+      R.node = ps[0].node || R.node; lit('k2', 700); logLine(`kubelet ${R.node}: SIGTERM; the containers finish what they have and stop (terminationGracePeriodSeconds, then SIGKILL)`); await sleep(500); lit('k4', 500); }); }
+  for (const p of deleted) chain(`del:${p.id}`, async () => { await apiCall(who, `delete Pod ${p.name.slice(0, 14)}`, col(p), ['kubelet', 'rs', 'ep'], { method: 'DELETE', verb: 'kubectl delete pod' }); await withdraw(p, col(p)); R.node = p.node; lit('k2', 600); });
   if (bound.length) bound.forEach((p, i) => chain(`bind:${p.id}`, async () => { await raced(promised(gateOf(p), 'created'), 9000); await sleep(i*180); await schedulerCycle(p, p.node); settle(gateOf(p), 'bound'); }));
   if (dropped.length){ const p = dropped[0]; chain(`gang:${p.app}`, async () => { await raced(promised(gateOf(p), 'created'), 9000); lit('f-gang', 1200); logLine(`Volcano: PodGroup ${p.app} admitted, ${dropped.length} of ${dropped.length} fit at once`); await schedulerCycle(p, p.node, { label: `Binding x${dropped.length} (PodGroup ${p.app})` }); dropped.forEach(q => settle(gateOf(q), 'bound')); }); }
   for (const p of started) chain(`start:${p.id}`, async () => { await raced(promised(gateOf(p), 'bound'), 9000); await kubeletStart(p); settle(gateOf(p), 'started'); });
@@ -250,7 +253,7 @@ function observe(){
   if (!prev.cp.api && now.cp.api) chain('cp:api', async () => { for (let i = 0; i < 6; i++) lit('stage' + i, 900); lit('watch', 900); logLine('kube-apiserver: serving on :6443 (etcd reachable)'); });
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
-  if (now.parcels > prev.parcels) chain('req', async () => { const pc = st.parcels[st.parcels.length - 1]; R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300 }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`); });
+  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => { R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300 }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
   prev = now;
 }
 const depOfName = app => { const d = cfg.st.deploys.find(d => d.app === app); return d ? d.name : app; };

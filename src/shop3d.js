@@ -313,8 +313,9 @@ function syncPods(dt){
     if (!waiting){ const up = p.phase === 'creating' ? .25 + .75*ease(Math.min(1, p.phaseT/PULL.start)) : 1; P.machine.scale.set(1, up, 1);
       const bk = `${p.ver}|${p.gpu || 0}`; if (P.key !== bk){ P.key = bk; P.decal.material.map = verTex(P.pm, p.app, p.ver, p.gpu); P.decal.material.needsUpdate = true; }
       const col = lampOf(p); P.andon.forEach((l, i) => setLamp(l, [LAMP.green, LAMP.amber, LAMP.red][i], col === [LAMPC.green, LAMPC.amber, LAMPC.red][i]));
-      if (p.phase === 'done') setLamp(P.andon[0], LAMP.blue, true); if (p.phase === 'terminating') P.andon.forEach(l => setLamp(l, LAMP.off, false));
-      if (p.phase === 'running' || p.phase === 'unready') P.spindle.rotation.y = spinA;
+      if (p.phase === 'done') setLamp(P.andon[0], LAMP.blue, true);
+      if (p.phase === 'terminating'){ P.andon.forEach(l => setLamp(l, LAMP.off, false)); if (draining(p)) setLamp(P.andon[1], LAMP.amber, Math.floor(p.phaseT*5) % 2 === 0); }   // draining: the amber andon blinks while the machine finishes what it has
+      if (p.phase === 'running' || p.phase === 'unready' || draining(p)) P.spindle.rotation.y = spinA;
       if (p.fire > 0){ if (!P.fire){ P.fire = mkFire(); P.g.add(P.fire); } P.fire.children.forEach((c, i) => { if (c.userData.spark){ c.position.set(MW/2 + Math.sin(spinA*3 + i)*2.5, MH + 1 + Math.abs(Math.sin(spinA*2.3 + i*1.7))*3, ML/2 + Math.cos(spinA*2.7 + i)*2.5); } else c.position.y = MH + 3 + ((spinA*1.5 + i*2) % 8); }); }
       else if (P.fire){ dispose(P.fire); P.fire = null; }
       P.inside.visible = k > 0; if (P.alpha !== p.alpha || P.k !== k){ P.alpha = p.alpha; P.k = k; setAlpha(P.machine, p.alpha); setAlpha(P.body, p.alpha*(1 - .75*k)); if (k > 0) setAlpha(P.inside, p.alpha*k); } }
