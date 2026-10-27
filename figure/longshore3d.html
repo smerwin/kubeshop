@@ -49,6 +49,7 @@
   .tc::before{content:"!";flex:none;width:17px;height:17px;border-radius:50%;background:var(--ink);color:#fff1bf;font:800 11px/17px ui-monospace,Menlo,monospace;text-align:center}
   .tc span{min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
   .tc.front span,.toast.fan .tc span{display:block;-webkit-line-clamp:unset;overflow:visible}   /* the front card and a fanned stack show every line */
+  .tc span,.tc::before{transition:opacity .2s ease} .tc.in span,.tc.in::before{opacity:0}   /* a new card's paper is opaque at once; its text fades in */
   .tc.small{font-size:11.5px} .tc.xsmall{font-size:10.5px}
   html.yard .toast{top:auto;bottom:calc(76px + var(--sab) + var(--cardh,0px));left:calc(82px + var(--sal));right:calc(10px + var(--sar));width:auto;max-width:none;transform:none}
   @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
@@ -1353,26 +1354,27 @@ function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
 const TOAST = { max: 4, step: 8, scale: .96, gap: 6, fanMs: 2600 };
 const toasts = [];   // front first, each { el, h, timer, hold }
 let fanT = 0;
-// the front card shows its whole text (hFull); the ones behind it are clipped to two lines (hClip) until the stack is fanned out
+// the front card shows its whole text (hFull); the ones behind it are clipped to two lines (hClip) until the stack is fanned out, and each
+// sits with its top exactly a step above the front card's top, so only paper edges peek out, never a line of text
 function layoutToasts(){
   const fan = fanT > 0, up = isYard(), hOf = (c, i) => fan || i === 0 ? c.hFull : c.hClip, h0 = toasts.length ? toasts[0].hFull : 0; let y = 0;
   toasts.forEach((c, i) => {
     let tf, op = 1, fl = 'none'; c.el.classList.toggle('front', i === 0);
     if (fan){ if (i) y += up ? -(hOf(toasts[i - 1], i - 1) + TOAST.gap) : hOf(c, i) + TOAST.gap; tf = `translateY(${y}px)`; }
-    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + Math.max(0, h0 - s*c.hClip))}px) scale(${s})`; op = 1 - .22*i; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i})` : 'none'; }
+    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + (h0 - s*c.hClip))}px) scale(${s})`; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i}) contrast(${1 - .2*i}) brightness(${1 - .07*i})` : 'none'; }   // dimmed by filter, never by opacity: every card's paper stays opaque, so nothing shows through
     c.el.style.transform = tf; c.el.style.opacity = op; c.el.style.filter = fl; c.el.style.zIndex = 20 - i; });
 }
 function dropToast(c, dy){ const i = toasts.indexOf(c); if (i < 0) return; toasts.splice(i, 1); clearTimeout(c.timer); const el = c.el;
-  el.style.pointerEvents = 'none'; el.style.opacity = 0; el.style.transform = `translateY(${dy}px) scale(${i ? .94 : 1})`; el.style.filter = 'none'; setTimeout(() => el.remove(), 320); }
+  el.style.pointerEvents = 'none'; el.style.zIndex = 0; el.style.opacity = 0; el.style.transform = `translateY(${dy}px) scale(${i ? .94 : 1})`; el.style.filter = 'none'; setTimeout(() => el.remove(), 320); }   // it fades out underneath the stack, never over the new front card
 function expireToast(c){ if (fanT > 0){ c.timer = setTimeout(() => expireToast(c), Math.max(200, fanT - performance.now() + 200)); return; } dropToast(c, 10); layoutToasts(); }
 function toast(line, hold = 1600){
   const t = $('#toast'); if (!t) return; const el = document.createElement('div'); el.className = 'tc'; el.innerHTML = `<span>${esc(line)}</span>`;
-  el.style.transform = 'translateY(14px) scale(1.04)'; el.style.opacity = 0; el.classList.add('front'); t.appendChild(el);
+  el.style.transform = 'translateY(14px) scale(1.04)'; el.classList.add('front', 'in'); t.appendChild(el);   // the paper is opaque from the first frame; only the text fades in, so nothing behind ever shows through
   // measured once, on arrival, never per frame: the full height as the front card (a step smaller in type if it would cover more than a third
   // of the screen), and the two-line height it has behind another card
   const lim = innerHeight/3; let hFull = el.offsetHeight;
   if (hFull > lim){ el.classList.add('small'); hFull = el.offsetHeight; if (hFull > lim){ el.classList.replace('small', 'xsmall'); hFull = el.offsetHeight; } }
-  el.classList.remove('front'); const hClip = el.offsetHeight; el.classList.add('front');
+  el.classList.remove('front'); const hClip = el.offsetHeight; el.classList.add('front'); el.classList.remove('in');
   const c = { el, hFull, hClip, hold };
   toasts.unshift(c); while (toasts.length > TOAST.max) dropToast(toasts[toasts.length - 1], -TOAST.step*TOAST.max);
   c.timer = setTimeout(() => expireToast(c), hold); layoutToasts(); }
