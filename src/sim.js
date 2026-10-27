@@ -231,6 +231,7 @@ function shopTick(dt){ let busy = false;
     if (c.t >= 1){ c.done = true; const p = c.pod; if (p.orphan) removePod(p); else if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
   st.caps = st.caps.filter(c => !c.done);
   for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
+    if (n.cut){ if (n.pull || st.pods.some(p => p.node === n.name && p.phase === 'queued')) busy = true; continue; }   // no uplink: the AGV cannot reach the crib and no pull starts or finishes
     if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); const key = p && p.app + ':' + p.ver, warm = p && n.cache.has(key);
       if (p && !warm && st.lastCold != null && st.t - st.lastCold < .35){ busy = true; continue; }   // two AGVs never leave for the crib lane in the same moment
       if (p){ if (!warm) st.lastCold = st.t;
@@ -560,6 +561,8 @@ function secTick(dt){ let busy = false; const S = st.sec;
   if (S.queue.length) busy = true;
   for (const n of st.nodes){ const c = n.cert; if (!c) continue;
     if (c.flash > 0){ c.flash = Math.max(0, c.flash - dt); busy = true; }
+    // a cell with its uplink cut cannot reach the CA: no rotation; if the badge's expiry passes meanwhile it goes red, and the cell needs the CA again once reconnected
+    if (n.cut){ if (c.ok && st.t > c.exp){ c.ok = false; n.certCut = true; busy = true; say('certcut', `${n.name}'s kubelet certificate expired while its uplink was cut: it could not send the CSR to rotate it (the badge goes red); once reconnected the cell needs the CA again before it can report`, 4200); } continue; }
     if (c.ok && st.t > c.exp - ROT*.2){ c.issued = st.t; c.exp = st.t + ROT; c.flash = .9; n.rotated = (n.rotated || 0) + 1; st.sec.badges++; busy = true;
       if (!(S.rotSaid > st.t - 120)){ S.rotSaid = st.t; say('rot', `${n.name}: the kubelet rotated its client certificate before it expired (a new CSR, approved and signed by the CA); the badge flashes as it is renewed. Every cell does this on its own schedule`); } }   // the toast once in a while; the flash every time
     if (!c.ok){ n.certDown = (n.certDown || 0) + dt; busy = true;
@@ -642,6 +645,7 @@ function cutUplink(name = 'node-b'){ if (st.mode === 'live') return liveNote('(o
   n.cut = true; n.cutT = 0; n.unreach = false; n.evicted = false;
   say('cut', `${n.name}'s uplink is cut: the belt and the tube into its cell are severed at the corridor. Its kubelet can no longer renew its Lease (it tries every ${NODE_LEASE} s, node-status-update-frequency) and nothing reaches the cell; the node lifecycle controller waits node-monitor-grace-period (${NODE_GRACE} s) before it marks the node NotReady. Parts and job cards for ${n.name} stop at the break`, 5200); run(); }
 function restoreUplink(name = 'node-b'){ const n = st.nodes.find(n => n.name === name); if (!n || !n.cut) return say('nocut2', `${name}'s uplink is not cut`); n.cut = false;
+  if (n.certCut){ n.certCut = false; n.certDown = 0; say('certcut2', `${n.name} is reconnected, but its kubelet certificate expired while it was cut off: the counter refuses its first status update (401), so it re-bootstraps with a fresh token and a new CSR before the node can be Ready`, 4600); }
   const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating');
   if (n.evicted){ for (const p of mine){ p.unknown = false; p.down = true; terminate(p); } n.unreach = false; n.evicted = false; n.ready = true;
     say('restore', `${n.name}'s uplink is back: the kubelet reports in, finds its pods deleted (evicted while it was unreachable) and tears the orphaned machines down; the replacements are already running in other cells`, 4600); }
