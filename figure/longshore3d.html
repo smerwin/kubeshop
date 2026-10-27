@@ -486,7 +486,7 @@ function tick(dt){
   // a bind it already has, the kubelets carry on, nothing new is created or bound)
   if (st.cp.ctrl){ if (!st.cp.hold){ if (st.mode === 'demo'){ reconcile(); checkDependencies(); } schedule(); } if (!isShop() && (craneTick(dt) || st.crane.queue.length)) busy = true; }
   if (isShop() && shopTick(dt)) busy = true;
-  for (const n of st.nodes) if (n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }
+  for (const n of st.nodes) if (n.joining && n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }   // a node joins only once its own kubeadm join has run
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
   st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
@@ -502,14 +502,14 @@ function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { con
 function bootstrap(){
   if (st.mode === 'live') return liveNote('kubeadm init (control plane), then kubeadm join on each node');
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
-  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
+  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.joining = false; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
   const V = VOC(); const ev = [
     [.2, () => say('b0', V.b0)],
     [1.6, () => { st.cp.etcd = 1; say('b1', V.b1); }],
     [3.0, () => { st.cp.api = 1; say('b2', V.b2); }],
     [4.4, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
-  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, V.bj(n.name)); }]);
+  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joining = true; say('bj' + i, V.bj(n.name)); }]);
     ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, V.br(n.name)); }]); });
   const tEnd = 6.0 + st.nodes.length*1.7 + .8;
   ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
@@ -552,7 +552,7 @@ function applySnapshot(data, instant){
   data = normalize(data);
   const nodeNames = (data.nodes || []).map(n => n.name), sameNodes = nodeNames.length === st.nodes.length && nodeNames.every((n, i) => st.nodes[i].name === n);
   if (!sameNodes){ const old = new Map(st.nodes.map(n => [n.name, n]));
-    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
+    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, joining: true, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
     for (const p of st.pods){ if (!st.nodes.find(n => n.name === p.node)){ p.node = null; p.slot = null; p.pos = null; p.phase = 'pending'; } }
     for (const n of st.nodes){ n.used = new Set(); for (const p of st.pods) if (p.node === n.name && p.slot) n.used.add(slotKey(p.slot)); }
     layout(st); }
@@ -887,6 +887,7 @@ function observe(){
   // Nodes: cordon / uncordon, joining and registering
   for (const [name, n] of Object.entries(now.nodes)){ const o = prev.nodes[name]; if (!o) continue;
     if (o.cordoned !== n.cordoned) chain(`node:${name}`, () => apiCall(who, `Node ${name} unschedulable=${n.cordoned}`, AMBER, ['sched'], { method: 'PATCH', verb: n.cordoned ? 'kubectl cordon' : 'kubectl uncordon', event: 'Node' }).then(() => lit('f-cordon', 900)));
+    if (o.joined === 0 && n.joined > 0) chain(`node:${name}`, async () => { R.node = name; lit('k0', 500); logLine(`kubelet ${name}: kubeadm join, registering with the API server (not registered yet)`); await sleep(300); });
     if (!o.ready && n.ready) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); }); }
   // the control plane coming up
   if (!prev.cp.etcd && now.cp.etcd) chain('cp:etcd', async () => { R.members.forEach(m => { m.up = true; m.log = []; m.commit = 0; m.role = 'follower'; }); R.term = 0; await election(-1); });
@@ -1110,7 +1111,7 @@ function cardFor(a){
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
-    return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
+    return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + '</table>',

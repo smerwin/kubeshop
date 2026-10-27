@@ -115,7 +115,6 @@ function rebuildStatic(){
   const tubeM = M(GLASS, { a: .32, r: .15, m: .1 }); tubeM.depthWrite = false;
   const trunk = [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, D - 20, TUBE_Z]];
   for (let i = 0; i < trunk.length - 1; i++) S.add(rod(trunk[i], trunk[i + 1], 1.1, tubeM));
-  for (const n of st.nodes){ const p = tubePath(n); for (let i = 3; i < p.length - 1; i++) S.add(rod(p[i], p[i + 1], 1.1, tubeM)); const d = cellDoor(n); S.add(cyl(d[0], d[1], d[2] + 3, d[2] + 5, 1.6, M(DARKM, { r: .4 }), { n: 12 })); }
   Y.office = mkOffice(); S.add(Y.office.g);
   Y.crib = mkCrib(); S.add(Y.crib.g);
   Y.station = mkStation(); S.add(Y.station.g);
@@ -236,6 +235,10 @@ function mkNode(n){
   for (const [x, y] of [[rk.x0 + .4, rk.y0 + .4], [rk.x1 - .4, rk.y0 + .4], [rk.x0 + .4, rk.y1 - .4], [rk.x1 - .4, rk.y1 - .4]]) out.rise.add(rod([x, y, 0], [x, y, rk.h], .3, M(STEEL, { r: .4, m: .5 })));
   out.rise.add(decal([rk.x1 + .42, (rk.y0 + rk.y1)/2, rk.h - 1], [1, 0, 0], [0, -1, 0], 10, 1.4, tex('racksign', 10, 1.4, (g, w, h) => txt(g, 'IMAGE CACHE', w/2, h/2, 1, '#1d1f22'), 24)));
   out.rise.add(out.crates);
+  // the cell's branch of the tube, unlit until the cell joins; a power strip on the cabinet that lights with it; the gate on the opening, closed until Ready
+  out.branch = new THREE.Group(); const bm = own(GLASS, { a: .32, r: .15, m: .1 }); bm.depthWrite = false; const tp = tubePath(n); for (let i = 3; i < tp.length - 1; i++) out.branch.add(rod(tp[i], tp[i + 1], 1.1, bm)); const dr = cellDoor(n); out.branch.add(cyl(dr[0], dr[1], dr[2] + 3, dr[2] + 5, 1.6, M(DARKM, { r: .4 }), { n: 12 })); g.add(out.branch);
+  out.power = box(cb.x1 - .1, cb.y0 + 3.4, 5.5, cb.x1 + .25, cb.y1 - 1.4, 6.5, own('#ffe3a0', { e: 1.4, r: .4 }), { r: .1, shadow: false }); out.rise.add(out.power);
+  out.gate = new THREE.Group(); for (const z of [3, 6.5]) out.gate.add(rod([c.x1, c.y1 - 9, z], [c.x1, c.y1 - 1, z], .35, M(YEL, { r: .5 }))); out.gate.add(decal([c.x1 + .4, c.y1 - 5, 4.8], [1, 0, 0], [0, -1, 0], 6, 1.6, tex('gateclosed', 6, 1.6, (g, w, h) => { rect(g, 0, 0, w, h, YEL); txt(g, 'NOT READY', w/2, h/2, .9, '#1d1f22'); }, 40))); g.add(out.gate);
   // the AGV
   const h = agvHome(n); out.agv = new THREE.Group(); out.agv.add(box(-3, -4, .6, 3, 4, 2.4, M(YEL, { r: .5 }), { r: .5 })); out.agv.add(box(-2.6, -3.6, 2.4, 2.6, 3.6, 2.9, M(DARKM), { r: .2 }));
   for (const [dx, dy] of [[-2.2, -3], [2.2, -3], [-2.2, 3], [2.2, 3]]){ const w = new THREE.Mesh(cylG(.8, .8, .8, 10), M('#1f2226')); w.rotation.z = Math.PI/2; w.position.copy(V3(dx, dy, .8)); out.agv.add(w); }
@@ -261,17 +264,18 @@ function gaugeMesh(n, out){ const cb = cabinet(n), cap = cellCap(), frac = Math.
 function syncNodes(dt){
   const seen = new Set(), k = ease(st.xr || 0);
   for (const n of st.nodes){ seen.add(n.name); let N = Y.nodes.get(n.name); if (!N){ N = mkNode(n); Y.nodes.set(n.name, N); scene.add(N.g); }
-    const j = ease(n.joined); N.g.visible = j > 0; if (j <= 0) continue;
-    N.rise.scale.y = Math.max(.03, j); N.rise.position.y = 0; N.tape.visible = n.tape > 0; N.agv.visible = j >= 1;
-    const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green));
-    setLamp(N.lamp, n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : LAMP.red); gaugeMesh(n, N);
+    // a cell is there before it joins, dark: no power, no andon, gate shut, its tube branch unlit; the join lights it, Ready opens the gate
+    const j = ease(n.joined); N.tape.visible = n.tape > 0; N.gauge.visible = j >= 1; N.gate.visible = !n.ready;
+    N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
+    const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
+    const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
     // the rack holds a crate per image this node has pulled
     const ck = [...(n.cache || [])].sort().join(','); if (ck !== N.crateKey){ N.crateKey = ck; dispose(N.crates); N.crates = new THREE.Group(); N.rise.add(N.crates); const rk = rackOf(n);
       [...(n.cache || [])].sort().slice(0, 6).forEach((key, i) => { const [app, ver] = key.split(':'); N.crates.add(crate(rk.x0 + .5, rk.y0 + 1 + (i % 3)*4.8, .8 + Math.floor(i/3)*5, palOf(app), app, ver, 5, 4.2, 3.8)); }); }
     // the AGV: out to the crib or the rack and back with the crate while the node pulls
     const h = agvHome(n); if (n.pull){ const u = n.pull.t/n.pull.dur, path = agvPath(n, n.pull.warm), tt = u < .5 ? u*2 : 2 - u*2, p = along(path, ease(Math.min(1, tt)));
       N.agv.position.copy(V3(...p)); const back = u >= .5; if (N.agvHas !== back + ':' + n.pull.pod.app){ N.agvHas = back + ':' + n.pull.pod.app; dispose(N.agvCrate); N.agvCrate = new THREE.Group(); N.agv.add(N.agvCrate); if (back) N.agvCrate.add(crate(-2.5, -2.5, 2.9, palOf(n.pull.pod.app), n.pull.pod.app, n.pull.pod.ver, 5, 5, 3.6)); }
-      setLamp(N.agvLamp, LAMP.amber); } else { N.agv.position.copy(V3(...h)); if (N.agvHas){ N.agvHas = ''; dispose(N.agvCrate); N.agvCrate = new THREE.Group(); N.agv.add(N.agvCrate); } setLamp(N.agvLamp, LAMP.green); }
+      setLamp(N.agvLamp, LAMP.amber); } else { N.agv.position.copy(V3(...h)); if (N.agvHas){ N.agvHas = ''; dispose(N.agvCrate); N.agvCrate = new THREE.Group(); N.agv.add(N.agvCrate); } setLamp(N.agvLamp, LAMP.green, j >= 1); }
     if (n.tape > 0){ for (const [p, x, y] of N.posts) rodTo(p, [x, y, 0], [x, y, .5 + 8*n.tape], .5); for (const tp of N.tapes) tp.position.y = 8*n.tape; N.sign.visible = N.signDecal.visible = n.tape > .9; setAlpha(N.tape, n.tape); }
     if (N.k !== k){ N.k = k; for (const c of N.cases) setAlpha(c, 1 - .78*k); for (const i of N.insides){ i.visible = k > 0; if (k > 0) setAlpha(i, k); } }
   }
@@ -363,7 +367,7 @@ function perfTick(now){ if (perf.lastT){ const dt = now - perf.lastT;
   perf.lastT = now; }
 let restLast = 0;
 function render(moving, now){
-  const r = zwrap.getBoundingClientRect(); vp = { w: Math.max(1, r.width), h: Math.max(1, r.height) };
+  const r = zwrap.getBoundingClientRect(); vp = window.__forceVp || { w: Math.max(1, r.width), h: Math.max(1, r.height) };   // __forceVp: a capture from a hidden tab names its own size
   const dpr = DPR(), s = moving ? perf.scale : 1, w = Math.max(2, Math.round(vp.w*dpr*s)), h = Math.max(2, Math.round(vp.h*dpr*s)), k = w + 'x' + h;
   if (moving) perfTick(now); else perf.lastT = 0;
   if (k !== sizeKey){ sizeKey = k; renderer.setPixelRatio(1); renderer.setSize(w, h, false); if (!moving && bloomOK){ composer.setSize(w, h); bloom.setSize(w/2, h/2); } }
@@ -375,7 +379,7 @@ function render(moving, now){
   window.__scale = s; window.__bloom = bloomOK; window.__Y = Y;
 }
 // for the browser checks and the README frames: one full frame drawn now, returned as an image
-window.__shot = q => { render(false, performance.now()); return canvas.toDataURL('image/jpeg', q || .88); };
+window.__shot = (q, w, h) => { window.__forceVp = w ? { w, h } : null; sizeKey = ''; render(false, performance.now()); window.__forceVp = null; sizeKey = ''; return canvas.toDataURL('image/jpeg', q || .88); };
 
 /* ---------- what the view needs to know about this scene ---------- */
 function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.id), n = a.type === 'node' && st.nodes.find(n => n.name === a.node);

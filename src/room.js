@@ -243,6 +243,7 @@ function observe(){
   // Nodes: cordon / uncordon, joining and registering
   for (const [name, n] of Object.entries(now.nodes)){ const o = prev.nodes[name]; if (!o) continue;
     if (o.cordoned !== n.cordoned) chain(`node:${name}`, () => apiCall(who, `Node ${name} unschedulable=${n.cordoned}`, AMBER, ['sched'], { method: 'PATCH', verb: n.cordoned ? 'kubectl cordon' : 'kubectl uncordon', event: 'Node' }).then(() => lit('f-cordon', 900)));
+    if (o.joined === 0 && n.joined > 0) chain(`node:${name}`, async () => { R.node = name; lit('k0', 500); logLine(`kubelet ${name}: kubeadm join, registering with the API server (not registered yet)`); await sleep(300); });
     if (!o.ready && n.ready) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); }); }
   // the control plane coming up
   if (!prev.cp.etcd && now.cp.etcd) chain('cp:etcd', async () => { R.members.forEach(m => { m.up = true; m.log = []; m.commit = 0; m.role = 'follower'; }); R.term = 0; await election(-1); });
