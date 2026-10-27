@@ -1,35 +1,41 @@
 # Longshore
 
-[![The Longshore yard: a Kubernetes cluster drawn as a container terminal](docs/longshore.png)](https://smerwin.github.io/longshore/figure/longshore3d.html)
+[![The shop floor: a Kubernetes cluster drawn as a job shop](docs/shopfloor.png)](https://smerwin.github.io/longshore/figure/shopfloor.html)
 
-An illustrated, interactive guide to Kubernetes drawn as a shipping-container terminal: pods are 20-foot containers,
-nodes are concrete docks with a kubelet booth, the scheduler is a gantry crane, the control plane is the harbour tower,
-a Service is the kiosk and the Ingress is the gate. Every button is a real operation played out one true step at a time:
-bootstrap, apply, scale, roll out, delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU
-scheduling, gang scheduling (a Volcano-style PodGroup that lands by parachute), drain, send a request.
+An interactive guide to Kubernetes drawn as a job shop, the floor Kubernetes borrowed its words from: pods are machines
+running a program, nodes are fenced work cells with their own controller cabinet (the kubelet), tool rack (the image
+cache) and AGV (the pull), the scheduler is the dispatcher in the planning office, a binding is a job card blown through a
+pneumatic tube to the cell (the watch stream), a Service is the sorting station on the conveyor and the Ingress is the
+receiving dock. Every button is a real operation played out one true step at a time: bootstrap, apply, scale, roll out,
+delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU scheduling, gang scheduling (a
+Volcano-style PodGroup that starts in sync), drain, send a request. Scheduling is instant; what takes time is each cell
+pulling its image, one at a time per cell and in parallel across cells, slow from the crib and fast from its own rack.
 
-[![Scaling web to 5: the crane fetches containers from the registry shelf and places them on the docks](docs/scale.gif)](https://smerwin.github.io/longshore/figure/longshore3d.html?press=Scale>5@900)
+[![Scaling web to 8: job cards through the tube, the cells' AGVs fetching images, machines coming up](docs/scale.gif)](https://smerwin.github.io/longshore/figure/shopfloor.html?press=Scale>8@900)
 
 **Live:** the guide at <https://smerwin.github.io/longshore/> and the figure at
-<https://smerwin.github.io/longshore/figure/longshore3d.html> (GitHub Pages, built from `main`). A README can only
-show pictures of it; click either image to open the real thing. To run it locally, serve the folder with any static
-web server (`python3 -m http.server`) and open `index.html`.
+<https://smerwin.github.io/longshore/figure/shopfloor.html> (GitHub Pages, built from `main`; on a phone add `?yard=1`
+for the full-screen yard mode). A README can only show pictures of it; click either image to open the real thing. To run
+it locally, serve the folder with any static web server (`python3 -m http.server`) and open `index.html`.
 
 - `index.html` — the guide: sixteen chapters, each with prose, the kubectl commands and the figure preset to that scene.
-- `figure/longshore3d.html` — the figure: the yard in three.js with real depth, drawn in the hand-inked
-  [Colorfigures](https://april-zhu.com/colorfigures) look (flat tone bands, an ink pass, a flat blue shadow, paper grain).
-  It moves like a map (see [Moving around](#moving-around-the-yard)): tap anything to fly to it and act on it, names
-  appear as you get closer, See-through, Labels, Follow, and **Control room**: a schematic that animates what the
-  control plane does for every operation (the API server pipeline, etcd's Raft group with a leader and term, the
-  controllers' informer / queue / reconcile loops, the scheduler cycle, the kubelet sync loop). On a phone it opens in
-  **yard mode**: the whole screen, nothing scrolls, a toolbar at the thumb. It loads three r186 from `figure/vendor/`
-  (no build, works offline).
-- `figure/longshore.html` — the same yard on the original Colorfigures SVG engine (the old engine), kept as a fallback.
-- `src/` — the source: `sim.js` is the cluster model both figures share (state, controllers, scheduler, crane, pods,
-  traffic, bootstrap, snapshots, button handlers); `yard3d.js` draws it in three.js (scene, camera, gestures, labels),
-  `chrome.js` is the page around it (toolbar, sheets, cards, chapter sheet) and `room.js` is the control room
-  (`longshore3d.html` is their page); `longshore.html` + `core.js` are the SVG figure. `./build.sh` inlines the scripts
-  into both `figure/` files.
+- `figure/shopfloor.html` — the figure: the job shop in three.js with real materials and light (an environment map,
+  ACES tone mapping, soft shadows, emissive andon lamps with a bloom pass, a vignette; bloom and resolution step down on
+  a device that cannot keep up). It moves like a map (see [Moving around](#moving-around-the-yard)): tap anything to fly
+  to it and act on it, names appear as you get closer, See-through, Labels, Follow, and **Control room**: a schematic that
+  animates what the control plane does for every operation (the API server pipeline, etcd's Raft group with a leader and
+  term, the controllers' informer / queue / reconcile loops, the scheduler cycle, the kubelet sync loop). On a phone it
+  opens in **yard mode**: the whole screen, nothing scrolls, a toolbar at the thumb. It loads three r186 and a few of its
+  addons from `figure/vendor/` through an import map (no build, works offline).
+- `figure/longshore3d.html` — the earlier draft: the same cluster as a container terminal (pods are containers, the
+  scheduler is a crane) in the hand-inked [Colorfigures](https://april-zhu.com/colorfigures) look; `figure/longshore.html`
+  is that yard on the original SVG engine. Both are linked from the footer.
+- `src/` — the source: `sim.js` is the cluster model every figure shares (state, controllers, scheduler, the shop's job
+  cards and per-node pull queues, the yard's crane, pods, traffic, bootstrap, snapshots, button handlers); `shop3d.js`
+  draws the shop floor and `view3d.js` is the camera, gestures, follow, labels and clock it shares with nothing else yet
+  (`yard3d.js`, the yard, carries its own older copy); `chrome.js` is the page around a figure (toolbar, sheets, cards,
+  chapter sheet) and `room.js` is the control room; `shopfloor.html` and `longshore3d.html` are the pages;
+  `longshore.html` + `core.js` are the SVG figure. `./build.sh` inlines the scripts into the `figure/` files.
 - `tools/longshore.py` — point the figure at a real cluster (read-only; it only runs `kubectl get`).
 - `demo/cluster.json` — a sample snapshot in the yard's format.
 
@@ -39,7 +45,7 @@ One snapshot, no server:
 
 ```bash
 kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json > cluster.json
-# open figure/longshore3d.html, then Cluster ▸ "open a kubectl JSON file"
+# open figure/shopfloor.html, then Cluster ▸ "open a kubectl JSON file"
 ```
 
 Live, refreshed every few seconds (opens http://localhost:8788):
@@ -49,8 +55,9 @@ python3 tools/longshore.py serve --every 5
 python3 tools/longshore.py serve -n shop --context prod --port 9000
 ```
 
-In live mode the yard only watches: the operation buttons show the kubectl command instead of acting. New pods arrive by
-crane, deleted pods fade, a cordon puts the striped tape up, probe changes switch the lamps. System pods (kube-system,
+In live mode the figure only watches: the operation buttons show the kubectl command instead of acting. New pods arrive
+as job cards and come up from the cell's rack or the crib, deleted pods power down, a cordon puts the tape up, probe
+changes switch the andons. System pods (kube-system,
 DaemonSets) are hidden until `Cluster ▸ show system pods`.
 
 ## Moving around the yard
@@ -62,12 +69,13 @@ zooms anywhere, and in yard mode a mouse wheel zooms and a trackpad's two finger
 zoom and reset, `f` is the front view. **Overview** frames the whole yard again; the compass in the corner shows where
 the gate (G), the tower (T) and the registry (R) are and turns with the camera (tap it for the front view).
 
-Tap a container, a slab or its booth, the tower, the kiosk, the gate, the registry or a row on the Deployments board:
+Tap a machine, a cell or its cabinet, the office, the sorting station, the dock, the crib or a line on the order board:
 the camera flies to frame it and a card opens with its name, state and the actions that make sense there (a pod: delete,
-crash, fail its probe, its containers, restarts, node and volume; a node: drain or uncordon, capacity and GPUs; the kiosk:
-its endpoints and a request to send; a board row: that app's pods, scale and roll out). **Follow** keeps the camera on
-whatever the operation is doing: the crane's load, a landing gang, the request bead, a crashing pod; any gesture
-releases it. The camera is remembered for the tab, so the guide's figures do not snap back to the front view.
+crash, fail its probe, its containers, restarts, node and volume; a node: drain or uncordon, capacity, GPUs, what is on
+its rack and what it is pulling; the station: its endpoints and a request to send; a board line: that app's pods, scale
+and roll out). **Follow** keeps the camera on whatever the operation is doing: the job card in the tube, the AGV on its
+run, the part on the conveyor, a crashing machine; any gesture releases it. The camera is remembered for the tab, so the
+guide's figures do not snap back to the front view.
 
 Text is a function of zoom, drawn as screen-sized labels over the geometry: at the overview only the node names and the
 board's counts; from about two times closer every container's app and version and its GPU band; from about four times
@@ -82,17 +90,17 @@ with that chapter's parameters, and on a phone the figures open that way instead
 
 ## Figure URL parameters
 
-Both figures take the same parameters. `?xr=1` see-through, `?labels=1` the callout chips, `?text=0` no name labels,
+All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the callout chips, `?text=0` no name labels,
 `?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
 `?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` starting state,
 `?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the crane and tower
-colour. The three.js figure also takes `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
+colour. The three.js figures also take `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
 `?chapter=scale` to load that guide chapter's prose into the chapter sheet and play its camera move (frame the thing it
 is about, or follow the operation it presses).
 
 ## The control room
 
-Under the yard, `Control room` draws the control plane as boxes and plays every yard operation through them as messages:
+`Control room` draws the control plane as boxes and plays every yard operation through them as messages:
 `kubectl` into the API server pipeline (authentication, authorization, mutating admission, validating admission, schema
 validation, the write), etcd as a three-member Raft group (the leader proposes and appends, replicates, a quorum
 acknowledges, commit, apply; the watch streams fan out from the applied log; the term is shown), the controllers as loops
