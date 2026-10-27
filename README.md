@@ -13,8 +13,8 @@ that stamps a badge for every component and every cell (mutual TLS, kubelet CSRs
 gates on the spurs into a job's machines, an inspector at the counter (Pod Security Admission), a forged job card refused
 at authentication, Secrets in a locked drawer, signed crates, the logbook as the audit log. Then the networking: the floor's
 belts as a small Clos fabric with a diverter (the top-of-rack switch) per row and a two-belt spine (static routes, or BGP announced from every cabinet
-with ECMP), kube-proxy's iptables or the CNI's eBPF on the cabinet's switch plate, the directory booth (CoreDNS) every part
-stops at first, a service mesh (escort sidecars, sealed sleeves, the mesh's own CA, a weighted canary) and a managed
+with ECMP), kube-proxy's iptables or the CNI's eBPF on the cabinet's switch plate, the directory board at the dock (the kube-dns Service, kept current by the CoreDNS pods) every part
+glances at on the way in, a service mesh (escort sidecars, sealed sleeves, the mesh's own CA, a weighted canary) and a managed
 control plane behind the provider's fence with a konnectivity relay on every cabinet. Scheduling is instant; what takes time is each cell
 pulling its image, one at a time per cell and in parallel across cells, slow from the crib and fast from its own rack.
 
@@ -117,7 +117,7 @@ All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the c
 db-from-api NetworkPolicy in force) starting state, `?press=Break>forge@800` / `Break>apply a privileged@800` /
 `Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks, `?fabric=bgp` the BGP fabric, `?svc=ebpf` eBPF Service
 addressing, `?mesh=1` the mesh installed, `?canary=10` a 10% canary (installs the mesh), `?managed=1` the managed control plane,
-`?press=Break>stop CoreDNS@800` the directory closed,
+`?press=Break>stop CoreDNS@800` the directory board blank,
 `?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the trim colour (the office,
 the crib and the dock; the crane and tower in the yard). The three.js figures also take `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
 `?chapter=scale` to load that guide chapter's prose into the chapter sheet and play its camera move (frame the thing it

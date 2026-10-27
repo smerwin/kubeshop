@@ -243,7 +243,7 @@ const DEMO = {
     { name:'api', app:'api', replicas:2, version:'v1', containers:[{ name:'api', image:'yard/api:1.4' }, { name:'log-shipper', image:'fluent-bit:3' }], secret:'api-keys', dependsOn:'db' },
     { name:'db', app:'db', kind:'StatefulSet', replicas:1, version:'v1', containers:[{ name:'postgres', image:'postgres:16' }], pvc:'data-db-0' },
     { name:'coredns', namespace:'kube-system', app:'coredns', replicas:2, version:'1.12', containers:[{ name:'coredns', image:'coredns/coredns:1.12.0' }], system:true } ],
-  services: [ { name:'web', selector:{ app:'web' }, ports:[80] }, { name:'api', selector:{ app:'api' }, ports:[8080] }, { name:'db', selector:{ app:'db' }, ports:[5432] }, { name:'kube-dns', namespace:'kube-system', selector:{ app:'coredns' }, ports:[53], clusterIP:'10.96.0.10' } ],
+  services: [ { name:'web', selector:{ app:'web' }, ports:[80] }, { name:'api', selector:{ app:'api' }, ports:[8080] }, { name:'db', selector:{ app:'db' }, ports:[5432], clusterIP:'None' }, { name:'kube-dns', namespace:'kube-system', selector:{ app:'coredns' }, ports:[53], clusterIP:'10.96.0.10' } ],
   ingresses: [ { host:'shop.example.com', service:'web', port:80 } ] };
 
 /* ---------- names ---------- */
@@ -307,7 +307,7 @@ const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], serv
   sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] },
   // networking: the fabric (static routes, or BGP from every cabinet to its row's diverter with two spine belts), Service addressing,
   // the directory (CoreDNS), the mesh (sidecars, the mesh's own CA, a weighted canary) and a managed control plane behind the fence
-  net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], flick:{}, dns:{ n:0, flash:0 }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
+  net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], flick:{}, dns:{ n:0, flash:0, hl:null, hlT:0, key:'' }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
 // on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
 const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
@@ -490,7 +490,7 @@ function request(){
   const M = st.net.mesh, split = M.on && M.canary > 0 && svc.name === 'web' && eps.some(p => p.ver === 'v2') && eps.some(p => p.ver !== 'v2');
   let p; if (split){ const v2 = eps.filter(p => p.ver === 'v2'), v1 = eps.filter(p => p.ver !== 'v2'); p = (++M.n % Math.round(100/M.canary) === 0) ? v2[M.n % v2.length] : v1[st.rr++ % v1.length]; } else p = eps[st.rr++ % eps.length];
   const pc = makeParcel(p, svc); if (split) pc.canary = p.ver === 'v2'; st.parcels.push(pc);
-  say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> ${pc.dnsPod ? 'directory: ' + svc.name + '.default.svc.cluster.local -> ClusterIP (answered by ' + pc.dnsPod.name + ')' : 'directory: no CoreDNS machine is up'} -> Service ${svc.name} -> ${p.name}${split ? (pc.canary ? ' (the canary: the sidecars\' 90/10 split, a VirtualService / HTTPRoute, not a Service feature)' : ' (v1, by the sidecars\' weighted split)') : ''}`);
+  say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> ${pc.dnsPod ? 'directory board: ' + svc.name + '.default.svc.cluster.local -> ClusterIP (the line CoreDNS ' + pc.dnsPod.name + ' keeps current)' : 'directory board: NO ANSWER, the part waits at the dock (lookup timeout ' + DNS_TIMEOUT + ' s)'} -> Service ${svc.name} -> ${p.name}${split ? (pc.canary ? ' (the canary: the sidecars\' 90/10 split, a VirtualService / HTTPRoute, not a Service feature)' : ' (v1, by the sidecars\' weighted split)') : ''}`);
 }
 // the spine has two lanes when the fabric runs BGP: consecutive parts take turns (equal-cost multipath); a canary part rides the second lane so the split shows
 const SPINE2 = () => LANE - 6.5;
@@ -540,7 +540,13 @@ function parcelTick(pc, dt){
   const spd = 95, kioskD = pc.kioskD != null ? pc.kioskD : pc.link ? -1 : pc.segs[1].s0 + pc.segs[1].l, dirD = pc.dirD == null ? -1 : pc.dirD;
   if (pc.dir === 1){
     // the directory: a lookup first (the name to a ClusterIP); with CoreDNS down the part waits out the timeout and comes back with no address
-    if (dirD >= 0 && pc.t < dirD + .01 && pc.t + spd*dt >= dirD){ pc.t = dirD; if (!pc.dhold && pc.dnsPod){ st.net.hops.push({ pod: pc.dnsPod, t: 0, dur: .3 }); st.net.dns.flash = .3; } pc.dhold += dt; if (pc.dns === 'fail'){ if (pc.dhold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out, kube-dns has no Ready endpoints (no CoreDNS machine is up); connections already open keep working, new ones cannot find an address`); } return true; } if (pc.dhold < .3) return true; }
+    // the directory board at the dock: a glance at it first (the name to a ClusterIP); with no CoreDNS machine up the part stalls there,
+    // behind any part already waiting, until one is Ready again or resolv.conf's timeout runs out and it comes back with no address
+    if (dirD >= 0 && !pc.looked){ const stopAt = dirD - 4.4*(pc.qi || 0);
+      if (pc.t + spd*dt >= stopAt){ pc.t = stopAt; pc.dhold += dt; if (pc.qi) return true;
+        if (!pc.dnsPod) pc.dnsPod = dnsPick();
+        if (pc.dnsPod){ if (!pc.asked){ pc.asked = true; pc.dns = 'ok'; pc.dhold = 0; lookup(pc); } if (pc.dhold < .3) return true; pc.looked = true; }
+        else { pc.dns = 'fail'; if (pc.dhold > DNS_TIMEOUT){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out after ${DNS_TIMEOUT} s (resolv.conf timeout:5), kube-dns has no Ready endpoints; connections already open keep working, new ones cannot find an address`); } return true; } } }
     if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
     for (const dv of pc.divs || []) if (pc.t < dv.d && pc.t + spd*dt >= dv.d) flick(dv.row, dv.lane);   // the diverter sends it down the spur
     // a NetworkPolicy gate: the part stops at the machine's gate, is dropped there (the CNI drops the packet; the caller times out) and comes back red
@@ -571,6 +577,7 @@ function tick(dt){
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
   if (secTick(dt)) busy = true; if (netTick(dt)) busy = true;
+  { let q = 0; for (const pc of st.parcels) if (pc.dir === 1 && pc.dirD >= 0 && !pc.looked){ pc.qi = q; if (pc.dhold > 0) q++; } }   // parts waiting at the board queue up behind each other
   st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
   const boomUp = st.parcels.some(pc => Math.abs(pc.t - 20) < 30 || pc.t < 50) ? 1 : 0;
   if (st.boom !== boomUp){ st.boom = Math.max(0, Math.min(1, st.boom + (boomUp ? dt/.35 : -dt/.5))); busy = true; }
@@ -781,7 +788,8 @@ setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st
    The fabric is the floor's conveyor network drawn as a small Clos: a diverter per row of cells (the top-of-rack switch, where
    the row's spur leaves the spine) and the spine itself, two belts of equal cost (equal-cost multipath). With static routes (Kubernetes The Hard Way) each host knows
    the other cells' ranges by hand; with BGP every cabinet announces its own PodCIDR to its diverter and withdraws it when the
-   cell is drained. The directory is CoreDNS: two pods behind the kube-dns ClusterIP that every pod's resolv.conf points at.
+   cell is drained. The directory is a board at the dock (the kube-dns Service) kept current by two CoreDNS pods in the cells;
+   every pod's resolv.conf points at the board's ClusterIP, and a lookup is data plane: a UDP part to that address through kube-proxy.
    The mesh adds a sidecar escort to each meshed machine, its own CA and a weighted split the Service never had. */
 const MESHED = new Set(['web', 'api']);
 function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: cordoned, its BGP speaker withdraws 10.200.${st.nodes.indexOf(n)}.0/24: the pulse runs up the spur, the line greys on the diverter's strip and the arm no longer sends that way` : `${n.name}: its BGP speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 again; its line is back on the diverter's strip`); run(); }
@@ -791,15 +799,24 @@ function setFabric(f, quiet){ if (st.net.fabric === f) return quiet ? 0 : say('f
   run(); }
 function setSvcMode(m, quiet){ if (st.net.svc === m) return quiet ? 0 : say('svcmode', 'Already set'); st.net.svc = m;
   if (!quiet) say('svcmode', m === 'ebpf' ? 'Service addressing: eBPF. The CNI (Cilium) replaces kube-proxy: a Service address is rewritten at the socket or the packet by programs loaded into the kernel, no iptables chains; DigitalOcean Kubernetes ships this way' : 'Service addressing: kube-proxy in iptables mode writes a chain per Service that rewrites the ClusterIP to one Ready endpoint'); run(); }
-// CoreDNS is pods in cells: the booth is only the kube-dns Service, and a lookup is answered by one Ready CoreDNS machine, round robin
+// CoreDNS is pods in cells: the board at the dock is only the kube-dns Service; one Ready CoreDNS machine answers each lookup, round robin
 const isDnsPod = p => p.app === 'coredns' || p.app === 'kube-dns';
 const dnsPods = () => st.pods.filter(p => isDnsPod(p) && isReady(p) && p.pos);
 function dnsPick(){ const ps = dnsPods(); if (!ps.length) return null; return ps[st.net.dns.n++ % ps.length]; }
 const dnsUp = () => dnsPods().length > 0;
 const dnsIP = () => { const s = st.services.find(s => s.name === 'kube-dns'); return (s && s.clusterIP) || '10.96.0.10'; };
+const DNS_TIMEOUT = 5;                                   // resolv.conf's timeout: how long a part waits at the board before it gives up
+// what the directory board says: a Service's name to its ClusterIP (and where that goes), a headless Service to its pods' own addresses
+const svcIP = s => s.clusterIP === 'None' ? null : s.clusterIP || (s.name === 'web' ? '10.96.0.12' : `10.96.0.${20 + s.name.length}`);
+const podIP = p => `10.200.${Math.max(0, st.nodes.findIndex(n => n.name === p.node))}.${10 + (p.id % 200)}`;
+function boardLines(){ const main = svcMain(); return st.services.filter(s => s.name !== 'kube-dns').slice(0, 6).map(s => { const ip = svcIP(s), ns = s.namespace || 'default';
+  if (!ip){ const ps = endpointsOf(s); return { svc: s.name, text: `${s.name}.${ns}.svc -> ${ps.length ? ps.slice(0, 2).map(podIP).join(', ') + (ps.length > 2 ? ', …' : '') : 'no Ready pod'} (headless)` }; }
+  return { svc: s.name, text: `${s.name}.${ns}.svc -> ${ip} -> ${s === main ? 'station' : 'kube-proxy'}` }; }); }
+// a part consults the board: the matching line lights and one Ready CoreDNS machine sends the board an update tick (it keeps the board current)
+function lookup(pc){ st.net.hops.push({ pod: pc.dnsPod, t: 0, dur: .35 }); st.net.dns.hl = pc.svc.name; st.net.dns.hlT = .5; st.net.dns.flash = .3; }
 function stopDns(){ if (st.mode === 'live') return liveNote('kubectl -n kube-system delete pod -l k8s-app=kube-dns'); const ps = st.pods.filter(p => isDnsPod(p) && p.phase !== 'terminating' && p.phase !== 'crash'); if (!ps.length) return say('dnsdown', 'No CoreDNS machine is up to stop');
   for (const p of ps){ p.phase = 'crash'; p.phaseT = .4; p.fire = 1; p.ready = false; p.doomed = true; p.down = true; st.sec.queue.push([st.t + .7, () => terminate(p)]); }   // on the simulation clock, like everything else
-  say('dnsstop', `kubectl -n kube-system delete pod -l k8s-app=kube-dns: both CoreDNS machines go down, kube-dns has no endpoints and the directory window goes dark; new lookups fail, open connections do not notice. The kube-system Deployment is already raising replacement cards`); run(); }
+  say('dnsstop', `kubectl -n kube-system delete pod -l k8s-app=kube-dns: both CoreDNS machines go down, kube-dns has no endpoints and the directory board goes blank (NO ANSWER); new parts stall at the dock while parts already on the floor finish, open connections do not notice. The kube-system Deployment is already raising replacement cards`); run(); }
 function applyMesh(quiet){ if (st.mode === 'live') return liveNote('istioctl install / linkerd install, then label the namespace for injection'); const M = st.net.mesh; if (M.on) return quiet ? 0 : say('mesh', 'The mesh is already installed'); M.on = true;
   if (!quiet) say('mesh', 'kubectl label ns default istio-injection=enabled, then a rollout restart: every web and api machine gets an escort cartridge (the sidecar proxy); the mesh desk in the annex issues each one a certificate from the mesh\'s own CA, and parts between them travel in a sealed sleeve (mutual TLS the cluster CA knows nothing about)'); run(); }
 function applyCanary(pct, quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f virtualservice-web.yaml   # weight 90 / 10'); if (!st.net.mesh.on) applyMesh(true); const M = st.net.mesh, d = depOf('web'); if (!d) return;
@@ -814,7 +831,10 @@ function netTick(dt){ let busy = false; const N = st.net;
   for (const a of N.ann){ a.t += dt/a.dur; busy = true; } N.ann = N.ann.filter(a => a.t < 1.25);
   for (const k of Object.keys(N.flick)){ N.flick[k].t -= dt; if (N.flick[k].t <= 0) delete N.flick[k]; else busy = true; }
   for (const h of N.hops){ h.t += dt/h.dur; busy = true; } N.hops = N.hops.filter(h => h.t < 1); if (N.dns.flash > 0){ N.dns.flash -= dt; busy = true; }
-  const up = dnsUp(); if (up && N.dns.wasDown){ N.dns.wasDown = false; say('dnsback', 'A replacement CoreDNS machine is Ready: kube-dns has an endpoint again and the directory window lights up'); } if (!up && !N.dns.wasDown && st.pods.some(isDnsPod)) N.dns.wasDown = true;
+  if (N.dns.hlT > 0){ N.dns.hlT -= dt; busy = true; if (N.dns.hlT <= 0) N.dns.hl = null; }
+  // a Service (or a headless Service's pods) changed: one CoreDNS machine updates the board
+  if (isShop()){ const bk = boardLines().map(l => l.text).join('|'); if (bk !== N.dns.key){ const first = !N.dns.key, dp = dnsPick(); N.dns.key = bk; if (dp && !first){ N.hops.push({ pod: dp, t: 0, dur: .35 }); N.dns.flash = .3; } } }
+  const up = dnsUp(); if (up && N.dns.wasDown){ N.dns.wasDown = false; say('dnsback', 'A replacement CoreDNS machine is Ready: kube-dns has an endpoint again, the directory board lights up and the parts waiting at the dock look up their names'); } if (!up && !N.dns.wasDown && st.pods.some(isDnsPod)) N.dns.wasDown = true;
   return busy; }
 
 </script>
@@ -1101,7 +1121,7 @@ function observe(){
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
   if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => {
-      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `kube-dns ${dnsIP()}: ${pc.svc.name}.default.svc.cluster.local -> timeout: the Service has no Ready endpoints (no CoreDNS pod up); the client cannot resolve the name` : `kube-dns ${dnsIP()} -> ${pc.dnsPod.name} on ${pc.dnsPod.node}: ${pc.svc.name}.default.svc.cluster.local -> A ${pc.svc.name === 'web' ? '10.96.0.12' : '10.96.0.' + (20 + pc.svc.name.length)} (the ClusterIP; resolv.conf's search list and ndots:5 expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
+      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `kube-dns ${dnsIP()}: ${pc.svc.name}.default.svc.cluster.local -> no answer: the Service has no Ready endpoints (no CoreDNS pod up); the client waits (resolv.conf timeout 5 s), the part stalls at the dock` : `kube-dns ${dnsIP()} (UDP through kube-proxy, data plane) -> ${pc.dnsPod.name} on ${pc.dnsPod.node}: ${pc.svc.name}.default.svc.cluster.local -> A ${svcIP(pc.svc) || 'the pod addresses (headless)'} (resolv.conf's search list and ndots:5 expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
       R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
   prev = now;
 }
@@ -1204,7 +1224,7 @@ const BUTTONS = [
     { label:'delete the db pod', onClick: () => deletePod('db') },
     { label:'crash a container', onClick: () => crashPod() },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
-    ...(SHOP() ? [ { label:'stop CoreDNS', disabled: !dnsUp(), why:'no CoreDNS machine is up', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
+    ...(SHOP() ? [ { label:'stop CoreDNS', sub:'the board goes blank; new parts stall at the dock', disabled: !dnsUp(), why:'no CoreDNS machine is up', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
     { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
     { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
@@ -1350,8 +1370,8 @@ const EXPLAIN = {
   'DIVERTER': 'The row\'s top-of-rack switch: a switch arm on the spine belt that sends a part down the row\'s spur. Its strip lists the PodCIDRs it knows; with BGP every cabinet in the row announces its range here and the diverters trade routes over the spine.',
   'SPINE': 'The main belt of the fabric: two belts of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
   'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR, withdrawing it when the node leaves.',
-  'DIRECTORY': 'The kube-dns Service window: where a part asks for a name. The answer comes from a CoreDNS pod in one of the cells (the hop), not from the booth; every pod\'s resolv.conf points at this ClusterIP.',
-  'COREDNS': 'A CoreDNS pod: the coredns Deployment in kube-system, two replicas in two cells, scheduled and pulled like any other pod. They are the directory\'s backends; the booth is only their Service.',
+  'DIRECTORY': 'The directory board at the dock: the kube-dns Service. Every part glances at it on the way in and the matching line lights; the CoreDNS pods in the cells keep it current. The lookup is data plane: UDP to the ClusterIP through kube-proxy, on the belts like any part.',
+  'COREDNS': 'A CoreDNS pod: the coredns Deployment in kube-system, two replicas in two cells, scheduled and pulled like any other pod. They keep the directory board at the dock current (the update tick); the board is only their Service.',
   'ESCORT': 'The sidecar proxy (Envoy for Istio, the Linkerd proxy) injected beside the containers: it takes the machine\'s parts in and out, encrypts them to other escorts, retries, times out and reports.',
   'MESH DESK': 'The mesh control plane (istiod, or Linkerd\'s): it issues each escort a certificate from the mesh\'s own CA, which is not the cluster CA, and pushes routing rules such as a weighted split.',
   'RELAY': 'The konnectivity agent: a managed control plane cannot reach into your network, so each node runs a relay that opens a tunnel to the provider\'s counter; logs and exec come back through it.',
@@ -1384,7 +1404,7 @@ function cardFor(a){
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
       (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) +
-      (SHOP() ? row('Name', `${esc(svc.name)}.default.svc.cluster.local -> this ClusterIP, from the directory (CoreDNS)`) : '') + (SHOP() && st.net.mesh.on && st.net.mesh.canary && svc.name === 'web' ? row('Mesh split', `${100 - st.net.mesh.canary} / ${st.net.mesh.canary} v1 / v2 by the sidecars (VirtualService / HTTPRoute), not by this Service`) : '') + '</table>',
+      (SHOP() ? row('Name', `${esc(svc.name)}.default.svc.cluster.local -> this ClusterIP, on the directory board at the dock (kept current by CoreDNS)`) : '') + (SHOP() && st.net.mesh.on && st.net.mesh.canary && svc.name === 'web' ? row('Mesh split', `${100 - st.net.mesh.canary} / ${st.net.mesh.canary} v1 / v2 by the sidecars (VirtualService / HTTPRoute), not by this Service`) : '') + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
     return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}${row('Answered', `${st.reqs.ok} of ${st.reqs.sent}`)}${row('Errors', st.reqs.err ? `${st.reqs.err}: ${st.reqs.reset} connection reset, ${st.reqs.err - st.reqs.reset} with no endpoint (503)` : 'none')}</table>`,
@@ -1403,8 +1423,8 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
-  if (a.type === 'dns'){ const all = st.pods.filter(p => isDnsPod(p) && p.phase !== 'terminating'), ready = all.filter(isReady), ip = dnsIP();
-    return { kick: 'Service · kube-system', title: `The directory window: kube-dns ${esc(ip)}`, body: `<table>${row('Service', `kube-dns · ClusterIP ${esc(ip)} · 53/UDP+TCP · selector k8s-app=kube-dns`)}${row('Endpoints', ready.length ? ready.map(p => LAMP(LAMPC.green) + esc(p.name) + ' <span style="color:var(--muted)">on ' + esc(p.node) + '</span>').join('<br>') : '<span style="color:#b3261e">none Ready: lookups fail</span>')}${all.length > ready.length ? row('Not Ready', all.filter(p => !ready.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name) + ' · ' + esc(phaseText(p))).join('<br>')) : ''}${row('Runs as', 'the coredns Deployment in kube-system: two pods in two cells, scheduled like any other (Cluster ▸ show system pods)')}${row('resolv.conf', `nameserver ${esc(ip)} · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5`)}${row('Answers', 'web -> web.default.svc.cluster.local -> the ClusterIP; a headless Service -> the pod addresses themselves')}</table>`,
+  if (a.type === 'dns'){ const all = st.pods.filter(p => isDnsPod(p) && p.phase !== 'terminating'), ready = all.filter(isReady), ip = dnsIP(), lines = boardLines(), waiting = st.parcels.filter(pc => pc.dns === 'fail' && pc.dir === 1).length;
+    return { kick: 'Service · kube-system', title: `The directory board: kube-dns ${esc(ip)}`, body: `<table>${row('Service', `kube-dns · ClusterIP ${esc(ip)} · 53/UDP+TCP · selector k8s-app=kube-dns`)}${row('Board', ready.length ? lines.map(l => esc(l.text)).join('<br>') || '—' : '<span style="color:#b3261e">NO ANSWER</span>' + (waiting ? ` · ${waiting} part${waiting === 1 ? '' : 's'} waiting at the dock` : ''))}${row('Endpoints', ready.length ? ready.map(p => LAMP(LAMPC.green) + esc(p.name) + ' <span style="color:var(--muted)">on ' + esc(p.node) + '</span>').join('<br>') : '<span style="color:#b3261e">none Ready: lookups wait, then fail</span>')}${all.length > ready.length ? row('Not Ready', all.filter(p => !ready.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name) + ' · ' + esc(phaseText(p))).join('<br>')) : ''}${row('Kept current by', 'the coredns Deployment in kube-system: two pods in two cells, scheduled like any other (Cluster ▸ show system pods); one of them sends the board an update tick when a Service changes or the board is consulted')}${row('resolv.conf', `nameserver ${esc(ip)} · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5`)}${row('The lookup', 'data plane: a UDP packet to the ClusterIP through kube-proxy, so it rides the belts like any part; a headless Service lists its pods\' own addresses')}</table>`,
       acts: [ { label:'stop CoreDNS', title:'delete both pods; the Deployment replaces them', onClick: () => stopDns() }, { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; run(); } }, { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'diverter'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
     return { kick: 'Fabric', title: `Diverter ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${n.cut ? '<span style="color:#b3261e">peer down (uplink cut)</span>' : bgp ? (n.cordoned ? '<span style="color:var(--muted)">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes, the strip is painted on')}${row('Uplinks', bgp ? 'two spine belts, equal cost: parts take turns (ECMP)' : 'one belt')}${row('Arm', 'swings across the belt to send a part down this row\'s spur; a part for another row rides past')}</table>`,
@@ -1844,7 +1864,7 @@ const TRUSS_Z = 50, TUBE_Z = 46, TUBE_X = 40;          // the trusses and the tu
 const OFF = { x0: 2, x1: 36, y0: 2, y1: 40, z0: 24, z1: 42 };   // the planning office on its mezzanine
 const ox = () => st.net.managed ? -42 : 0;                        // in managed mode the office stands in the provider's building past the floor's back edge
 const OFFV = () => ({ ...OFF, x0: OFF.x0 + ox(), x1: OFF.x1 + ox() });
-const DIR = () => ({ x0: W - 16, x1: W - 6, y0: 26, y1: 34 });     // the directory booth (CoreDNS) across the lane from the station, between the dock and the station
+const DNSBOARD = () => ({ x0: W - 33.2, x1: W - 32.4, y0: 23, y1: 37, z0: 3, z1: 10.2 });   // the directory board (the kube-dns Service) on the wall beside the dock, across the belt from the parts coming in
 const CRIB = () => ({ x0: 4, x1: 30, y0: REG_Y0 - 4, y1: REG_Y0 + REG_MAX*REG_GAP, h: 22 });
 const DOCK = () => ({ x0: W - 36, x1: W - 6, y0: 14, y1: 24 });
 const STATION = () => ({ x0: W - 44, x1: W - 30, y0: 36, y1: 54 });
@@ -1900,7 +1920,7 @@ function rebuildStatic(){
     F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); txt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.5, 1.3, WHITE); txt(g, 'the office is theirs, the cells are yours · konnectivity tunnel to every cabinet', w/2, 3.2, .85, '#c9d2ea', 700); }, 24)));
     S.add(F); }
   Y.divs = []; for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const out = mkDiverter(r, Dv); Y.divs.push(out); S.add(out.g); }
-  Y.dir = mkDirectory(); S.add(Y.dir.g);
+  Y.dnsBoard = mkDnsBoard(); S.add(Y.dnsBoard.g);
   Y.crib = mkCrib(); S.add(Y.crib.g);
   Y.station = mkStation(); S.add(Y.station.g);
   Y.dock = mkDock(); S.add(Y.dock.g);
@@ -1981,15 +2001,18 @@ function mkDiverter(r, Dv){ const g = new THREE.Group(), out = { g, key: '', r, 
   // the route strip: a plate standing beside the belt, facing the way the camera looks by default
   const h = stripH(Dv); g.add(box(x1 + .8, y - 4.5, 0, x1 + 1.3, y + 4.5, h + 1.4, M(DARKM, { r: .5 }), { r: .1 })); out.stripDecal = decal([x1 + 1.32, y, .9 + h/2], [1, 0, 0], [0, -1, 0], 9, h, routeTex(r, Dv)); g.add(out.stripDecal);
   out.lamp = lamp(x1 + 1.05, y + 4.5, h + 1.7, LAMP.green, .45); g.add(out.lamp); g.add(ao(x, y, 22, 14)); return out; }
-/* the directory: CoreDNS, two small machines in a booth with the phone book; every machine's resolv.conf points here */
-function mkDirectory(){ const d = DIR(), g = new THREE.Group(), out = { g, lamps: [] }, m = m0();
-  g.add(box(d.x0, d.y0, 0, d.x1, d.y1, 1, M(CONCRETE, { r: .85 }), { r: .2 })); out.body = box(d.x0 + .5, d.y0 + .5, 1, d.x1 - .5, d.y1 - .5, 7, own('#f1e6c8', { r: .55 }), { r: .4 }); out.body.userData.act = { type: 'dns' }; pickables.push(out.body); g.add(out.body);
-  g.add(box(d.x0 - .4, d.y0 - .4, 7, d.x1 + .4, d.y1 + .4, 8, M(m.l, { r: .5 }), { r: .3 })); g.add(box(d.x1 - 1.2, d.y0 + 1.5, 8, d.x1 + .1, d.y1 - 1.5, 12.2, M(DARKM, { r: .5 }), { r: .3 }));
-  const ip = dnsIP(); out.ip = ip; g.add(decal([d.x1 + .12, (d.y0 + d.y1)/2, 10.1], [1, 0, 0], [0, -1, 0], 6.6, 3.6, tex(`dirsign|${ip}`, 6.6, 3.6, (g2, w, h) => { txt(g2, 'DIRECTORY', w/2, .9, .95, WHITE); txt(g2, 'kube-dns · the Service', w/2, 2, .62, LAMP.amber); txt(g2, ip, w/2, 2.9, .6, '#c9c4b8', 700); }, 32)));
-  // the window: a lit opening on the lane side (dark when kube-dns has no endpoints), with a shelf; a lookup flashes it
-  out.win = box(d.x0 - .02, d.y0 + 2, 2.2, d.x0 + .3, d.y1 - 2, 5.6, own('#ffe3a0', { e: 1.2, r: .4 }), { r: .15, shadow: false }); g.add(out.win); g.add(box(d.x0 - 1.2, d.y0 + 1.6, 1.9, d.x0 + .3, d.y1 - 1.6, 2.3, M(DARKM, { r: .5 }), { r: .1 }));
-  g.add(box(d.x0 + 2, d.y1 - 3.5, 1, d.x0 + 6, d.y1 - 1, 2.2, M('#8e6236', { r: .7 }), { r: .15 })); g.add(decal([d.x0 + 4, d.y1 - .98, 1.6], [0, 1, 0], [1, 0, 0], 3.6, 1, tex('book', 3.6, 1, (g2, w, h) => txt(g2, 'cluster.local', w/2, h/2, .5, WHITE, 800), 48)));
-  out.lamp = lamp(d.x1 + .4, d.y1 - 1, 12.6, LAMP.green, .5); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 20, 16)); return out; }
+/* the directory board at the dock: the kube-dns Service as a wall board of names and where they go; every part glances at it on the way in and
+   the CoreDNS machines in the cells keep it current (an update tick from one of them); with no CoreDNS machine Ready it reads NO ANSWER */
+function dnsBoardTex(){ const up = dnsUp(), lines = boardLines(), hl = st.net.dns.hl, ip = dnsIP();
+  return tex(`dnsboard|${up}|${hl || ''}|${ip}|${lines.map(l => l.text).join(';')}`, 14, 7.2, (g, w, h) => { rect(g, 0, 0, w, h, up ? '#1d2a26' : '#2a2320'); rect(g, 0, 0, w, 1, '#ffe3a0'); txt(g, `DIRECTORY · kube-dns ${ip}`, w/2, .5, .52, '#1d1f22');
+    if (!up){ txt(g, 'NO ANSWER', w/2, 3.4, 1.3, '#ff5a4e'); txt(g, 'kube-dns has no Ready endpoints', w/2, 4.9, .55, '#c9c4b8', 700); return; }
+    lines.forEach((l, i) => { const y = 1.75 + i*.92; if (l.svc === hl) rect(g, .2, y - .42, w - .4, .84, '#ffe3a0'); txt(g, l.text, .5, y, .48, l.svc === hl ? '#1d1f22' : '#ffe3a0', 700, 'left'); }); }, 40); }
+function mkDnsBoard(){ const d = DNSBOARD(), g = new THREE.Group(), out = { g }, m = m0();
+  for (const y of [d.y0 + .6, d.y1 - .6]) g.add(cyl(d.x1 - .4, y, 0, d.z1 + .6, .45, M(DARKM, { r: .45 }), { n: 10 }));
+  out.panel = box(d.x0, d.y0, d.z0, d.x1, d.y1, d.z1, M('#3a3d42', { r: .5, m: .3 }), { r: .15 }); out.panel.userData.act = { type: 'dns' }; pickables.push(out.panel); g.add(out.panel);
+  g.add(box(d.x0 - .3, d.y0 - .3, d.z1, d.x1 + 1.3, d.y1 + .3, d.z1 + .5, M(m.l, { r: .5 }), { r: .15 }));   // a hood over it
+  out.decal = decal([d.x1 + .02, (d.y0 + d.y1)/2, (d.z0 + d.z1)/2], [1, 0, 0], [0, -1, 0], 14, 7.2, dnsBoardTex()); g.add(out.decal);
+  out.lamp = lamp(d.x1 + .5, d.y1 + .2, d.z1 + 1, LAMP.green, .45); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 8, 18)); return out; }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5);
   return deps.map(d => { const live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length;
     return { col: palOf(d.app).l, text: `${d.name.slice(0, 7)}  x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, bad: rd < d.replicas }; }); }
@@ -2224,12 +2247,12 @@ function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
   for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cordoned ? 1 : 0) + (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
     const f = st.net.flick[Dv.r]; for (const a of Dv.arms){ const on = f && f.lane === a.lane, u = on ? 1 - f.t/.55 : 0; a.g.rotation.y = 1.1*Math.sin(Math.PI*u); setLamp(a.lamp, on ? LAMP.amber : LAMP.green); } }   // the arm swings out across the belt and back
-  const Dd = Y.dir; if (Dd){ const up = dnsUp(), fl = st.net.dns.flash > 0; setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); Dd.win.material.emissiveIntensity = up ? (fl ? 3.2 : 1.2) : 0; Dd.win.material.color.set(up ? '#ffe3a0' : '#3a3d42'); }
-  // the lookup's hop: a dashed line and a dot from the window to the CoreDNS machine that answers, and back (only while those machines are drawn)
+  const Bd = Y.dnsBoard; if (Bd){ const up = dnsUp(), fl = st.net.dns.flash > 0, t = dnsBoardTex(); if (Bd.decal.material.map !== t){ Bd.decal.material.map = t; Bd.decal.material.needsUpdate = true; } setLamp(Bd.lamp, up ? (fl ? LAMP.amber : LAMP.green) : LAMP.red); Bd.decal.material.emissive.set(fl ? '#5a4a18' : '#000000'); }
+  // the update tick: a dashed line and a dot from the CoreDNS machine to the board (only while those machines are drawn)
   Y.hops = Y.hops || []; while (Y.hops.length < st.net.hops.length){ const g = new THREE.Group(); const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]), new THREE.LineDashedMaterial({ color: '#ffe3a0', dashSize: 2, gapSize: 1.4 })); g.add(line); const dot = lamp(0, 0, 0, LAMP.amber, .5); g.add(dot); scene.add(g); Y.hops.push({ g, line, dot }); }
   while (Y.hops.length > st.net.hops.length){ const H = Y.hops.pop(); dispose(H.g); }
-  st.net.hops.forEach((h, i) => { const H = Y.hops[i], p = h.pod, dd = DIR(); if (!p.pos || (p.sys && !st.showSys)){ H.g.visible = false; return; } H.g.visible = true; const a = V3(dd.x0, (dd.y0 + dd.y1)/2, 4), b = V3(p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 1.5);
-    H.line.geometry.setFromPoints([a, b]); H.line.computeLineDistances(); const u = h.t < .5 ? h.t*2 : 2 - h.t*2; H.dot.position.lerpVectors(a, b, ease(Math.min(1, u))); });
+  st.net.hops.forEach((h, i) => { const H = Y.hops[i], p = h.pod, dd = DNSBOARD(); if (!p.pos || (p.sys && !st.showSys)){ H.g.visible = false; return; } H.g.visible = true; const a = V3(dd.x1 + .4, (dd.y0 + dd.y1)/2, (dd.z0 + dd.z1)/2), b = V3(p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 1.5);
+    H.line.geometry.setFromPoints([b, a]); H.line.computeLineDistances(); H.dot.position.lerpVectors(b, a, ease(Math.min(1, h.t))); });
   const O = Y.office; if (O && O.annex) O.annex.visible = st.net.mesh.on; }
 function syncStatics(){
   const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
@@ -2288,7 +2311,7 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
   if (p && p.pos) return [[p.pos[0] - 1, p.pos[1] - 1, p.pos[2]], [p.pos[0] + MW + 1, p.pos[1] + ML + 1, p.pos[2] + MH + 5]];
   if (n){ const c = cellBox(n); return [[c.x0 - 12, c.y0, 0], [c.x1, c.y1, 18]]; }
   if (a.type === 'tower') return [[OFF.x0 + ox(), OFF.y0, 0], [OFF.x1 + 2 + ox(), OFF.y1, OFF.z1 + 4]];
-  if (a.type === 'dns'){ const d = DIR(); return [[d.x0, d.y0, 0], [d.x1 + 1, d.y1, 13]]; }
+  if (a.type === 'dns'){ const d = DNSBOARD(); return [[d.x0 - 2, d.y0 - 1, 0], [d.x1 + 6, d.y1 + 1, d.z1 + 2]]; }
   if (a.type === 'diverter'){ const Dv = DIVERTER(a.row || 0); return Dv ? [[SPINE2() - 5, Dv.y - 6, 0], [Dv.x + 7, Dv.y + 6, 8]] : null; }
   if (a.type === 'board') return [[OFF.x0 + 6 + ox(), OFF.y1, OFF.z0 + 4], [OFF.x1 - 6 + ox(), OFF.y1 + 2, OFF.z1 - 3]];
   if (a.type === 'registry'){ const c = CRIB(); return [[c.x0, c.y0, 0], [c.x1, c.y1, c.h + 3]]; }
@@ -2332,7 +2355,7 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
-    { const Dv = DIVERTER(0), dd = DIR(); if (Dv) items.push({ at:[Dv.x + 2.6, Dv.y, 5], text:'DIVERTER', on: !!st.net.flick[0] || st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.net.dns.flash > 0 });
+    { const Dv = DIVERTER(0), dd = DNSBOARD(); if (Dv) items.push({ at:[Dv.x + 2.6, Dv.y, 5], text:'DIVERTER', on: !!st.net.flick[0] || st.net.ann.length > 0 }); items.push({ at:[dd.x1 + .5, (dd.y0 + dd.y1)/2, dd.z1 + .6], text:'DIRECTORY', on: st.net.dns.flash > 0 });
       if (st.showSys) for (const p of st.pods.filter(p => isDnsPod(p) && p.pos && !NOPOS.has(p.phase))) items.push({ at:[p.pos[0] + MW/2, p.pos[1] + 1, p.pos[2] + MH + 2], text:'COREDNS', on: st.net.hops.some(h => h.pod === p) });
       if (st.net.fabric === 'bgp'){ items.push({ at:[SPINE2(), 90, 2.5], text:'SPINE', on: st.parcels.length > 0 }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x1 - 1.5, cb.y0 + 6.3, cb.h + 5], text:'BGP SPEAKER', on: st.net.ann.some(a => a.node === n0.name) }); } }
       if (st.net.mesh.on){ const mp = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && MESHED.has(p.app)); if (mp) items.push({ at:[mp.pos[0] + 6.6, mp.pos[1] - 1.3, mp.pos[2] + 3.4], text:'ESCORT', on: st.parcels.some(pc => pc.sleeve) }); items.push({ at:[o.x1 + 13, o.y0 + 8, o.z0 + 11], text:'MESH DESK', on:false }); }

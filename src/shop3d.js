@@ -79,7 +79,7 @@ const TRUSS_Z = 50, TUBE_Z = 46, TUBE_X = 40;          // the trusses and the tu
 const OFF = { x0: 2, x1: 36, y0: 2, y1: 40, z0: 24, z1: 42 };   // the planning office on its mezzanine
 const ox = () => st.net.managed ? -42 : 0;                        // in managed mode the office stands in the provider's building past the floor's back edge
 const OFFV = () => ({ ...OFF, x0: OFF.x0 + ox(), x1: OFF.x1 + ox() });
-const DIR = () => ({ x0: W - 16, x1: W - 6, y0: 26, y1: 34 });     // the directory booth (CoreDNS) across the lane from the station, between the dock and the station
+const DNSBOARD = () => ({ x0: W - 33.2, x1: W - 32.4, y0: 23, y1: 37, z0: 3, z1: 10.2 });   // the directory board (the kube-dns Service) on the wall beside the dock, across the belt from the parts coming in
 const CRIB = () => ({ x0: 4, x1: 30, y0: REG_Y0 - 4, y1: REG_Y0 + REG_MAX*REG_GAP, h: 22 });
 const DOCK = () => ({ x0: W - 36, x1: W - 6, y0: 14, y1: 24 });
 const STATION = () => ({ x0: W - 44, x1: W - 30, y0: 36, y1: 54 });
@@ -135,7 +135,7 @@ function rebuildStatic(){
     F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); txt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.5, 1.3, WHITE); txt(g, 'the office is theirs, the cells are yours · konnectivity tunnel to every cabinet', w/2, 3.2, .85, '#c9d2ea', 700); }, 24)));
     S.add(F); }
   Y.divs = []; for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const out = mkDiverter(r, Dv); Y.divs.push(out); S.add(out.g); }
-  Y.dir = mkDirectory(); S.add(Y.dir.g);
+  Y.dnsBoard = mkDnsBoard(); S.add(Y.dnsBoard.g);
   Y.crib = mkCrib(); S.add(Y.crib.g);
   Y.station = mkStation(); S.add(Y.station.g);
   Y.dock = mkDock(); S.add(Y.dock.g);
@@ -216,15 +216,18 @@ function mkDiverter(r, Dv){ const g = new THREE.Group(), out = { g, key: '', r, 
   // the route strip: a plate standing beside the belt, facing the way the camera looks by default
   const h = stripH(Dv); g.add(box(x1 + .8, y - 4.5, 0, x1 + 1.3, y + 4.5, h + 1.4, M(DARKM, { r: .5 }), { r: .1 })); out.stripDecal = decal([x1 + 1.32, y, .9 + h/2], [1, 0, 0], [0, -1, 0], 9, h, routeTex(r, Dv)); g.add(out.stripDecal);
   out.lamp = lamp(x1 + 1.05, y + 4.5, h + 1.7, LAMP.green, .45); g.add(out.lamp); g.add(ao(x, y, 22, 14)); return out; }
-/* the directory: CoreDNS, two small machines in a booth with the phone book; every machine's resolv.conf points here */
-function mkDirectory(){ const d = DIR(), g = new THREE.Group(), out = { g, lamps: [] }, m = m0();
-  g.add(box(d.x0, d.y0, 0, d.x1, d.y1, 1, M(CONCRETE, { r: .85 }), { r: .2 })); out.body = box(d.x0 + .5, d.y0 + .5, 1, d.x1 - .5, d.y1 - .5, 7, own('#f1e6c8', { r: .55 }), { r: .4 }); out.body.userData.act = { type: 'dns' }; pickables.push(out.body); g.add(out.body);
-  g.add(box(d.x0 - .4, d.y0 - .4, 7, d.x1 + .4, d.y1 + .4, 8, M(m.l, { r: .5 }), { r: .3 })); g.add(box(d.x1 - 1.2, d.y0 + 1.5, 8, d.x1 + .1, d.y1 - 1.5, 12.2, M(DARKM, { r: .5 }), { r: .3 }));
-  const ip = dnsIP(); out.ip = ip; g.add(decal([d.x1 + .12, (d.y0 + d.y1)/2, 10.1], [1, 0, 0], [0, -1, 0], 6.6, 3.6, tex(`dirsign|${ip}`, 6.6, 3.6, (g2, w, h) => { txt(g2, 'DIRECTORY', w/2, .9, .95, WHITE); txt(g2, 'kube-dns · the Service', w/2, 2, .62, LAMP.amber); txt(g2, ip, w/2, 2.9, .6, '#c9c4b8', 700); }, 32)));
-  // the window: a lit opening on the lane side (dark when kube-dns has no endpoints), with a shelf; a lookup flashes it
-  out.win = box(d.x0 - .02, d.y0 + 2, 2.2, d.x0 + .3, d.y1 - 2, 5.6, own('#ffe3a0', { e: 1.2, r: .4 }), { r: .15, shadow: false }); g.add(out.win); g.add(box(d.x0 - 1.2, d.y0 + 1.6, 1.9, d.x0 + .3, d.y1 - 1.6, 2.3, M(DARKM, { r: .5 }), { r: .1 }));
-  g.add(box(d.x0 + 2, d.y1 - 3.5, 1, d.x0 + 6, d.y1 - 1, 2.2, M('#8e6236', { r: .7 }), { r: .15 })); g.add(decal([d.x0 + 4, d.y1 - .98, 1.6], [0, 1, 0], [1, 0, 0], 3.6, 1, tex('book', 3.6, 1, (g2, w, h) => txt(g2, 'cluster.local', w/2, h/2, .5, WHITE, 800), 48)));
-  out.lamp = lamp(d.x1 + .4, d.y1 - 1, 12.6, LAMP.green, .5); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 20, 16)); return out; }
+/* the directory board at the dock: the kube-dns Service as a wall board of names and where they go; every part glances at it on the way in and
+   the CoreDNS machines in the cells keep it current (an update tick from one of them); with no CoreDNS machine Ready it reads NO ANSWER */
+function dnsBoardTex(){ const up = dnsUp(), lines = boardLines(), hl = st.net.dns.hl, ip = dnsIP();
+  return tex(`dnsboard|${up}|${hl || ''}|${ip}|${lines.map(l => l.text).join(';')}`, 14, 7.2, (g, w, h) => { rect(g, 0, 0, w, h, up ? '#1d2a26' : '#2a2320'); rect(g, 0, 0, w, 1, '#ffe3a0'); txt(g, `DIRECTORY · kube-dns ${ip}`, w/2, .5, .52, '#1d1f22');
+    if (!up){ txt(g, 'NO ANSWER', w/2, 3.4, 1.3, '#ff5a4e'); txt(g, 'kube-dns has no Ready endpoints', w/2, 4.9, .55, '#c9c4b8', 700); return; }
+    lines.forEach((l, i) => { const y = 1.75 + i*.92; if (l.svc === hl) rect(g, .2, y - .42, w - .4, .84, '#ffe3a0'); txt(g, l.text, .5, y, .48, l.svc === hl ? '#1d1f22' : '#ffe3a0', 700, 'left'); }); }, 40); }
+function mkDnsBoard(){ const d = DNSBOARD(), g = new THREE.Group(), out = { g }, m = m0();
+  for (const y of [d.y0 + .6, d.y1 - .6]) g.add(cyl(d.x1 - .4, y, 0, d.z1 + .6, .45, M(DARKM, { r: .45 }), { n: 10 }));
+  out.panel = box(d.x0, d.y0, d.z0, d.x1, d.y1, d.z1, M('#3a3d42', { r: .5, m: .3 }), { r: .15 }); out.panel.userData.act = { type: 'dns' }; pickables.push(out.panel); g.add(out.panel);
+  g.add(box(d.x0 - .3, d.y0 - .3, d.z1, d.x1 + 1.3, d.y1 + .3, d.z1 + .5, M(m.l, { r: .5 }), { r: .15 }));   // a hood over it
+  out.decal = decal([d.x1 + .02, (d.y0 + d.y1)/2, (d.z0 + d.z1)/2], [1, 0, 0], [0, -1, 0], 14, 7.2, dnsBoardTex()); g.add(out.decal);
+  out.lamp = lamp(d.x1 + .5, d.y1 + .2, d.z1 + 1, LAMP.green, .45); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 8, 18)); return out; }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5);
   return deps.map(d => { const live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length;
     return { col: palOf(d.app).l, text: `${d.name.slice(0, 7)}  x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, bad: rd < d.replicas }; }); }
@@ -459,12 +462,12 @@ function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
   for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cordoned ? 1 : 0) + (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
     const f = st.net.flick[Dv.r]; for (const a of Dv.arms){ const on = f && f.lane === a.lane, u = on ? 1 - f.t/.55 : 0; a.g.rotation.y = 1.1*Math.sin(Math.PI*u); setLamp(a.lamp, on ? LAMP.amber : LAMP.green); } }   // the arm swings out across the belt and back
-  const Dd = Y.dir; if (Dd){ const up = dnsUp(), fl = st.net.dns.flash > 0; setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); Dd.win.material.emissiveIntensity = up ? (fl ? 3.2 : 1.2) : 0; Dd.win.material.color.set(up ? '#ffe3a0' : '#3a3d42'); }
-  // the lookup's hop: a dashed line and a dot from the window to the CoreDNS machine that answers, and back (only while those machines are drawn)
+  const Bd = Y.dnsBoard; if (Bd){ const up = dnsUp(), fl = st.net.dns.flash > 0, t = dnsBoardTex(); if (Bd.decal.material.map !== t){ Bd.decal.material.map = t; Bd.decal.material.needsUpdate = true; } setLamp(Bd.lamp, up ? (fl ? LAMP.amber : LAMP.green) : LAMP.red); Bd.decal.material.emissive.set(fl ? '#5a4a18' : '#000000'); }
+  // the update tick: a dashed line and a dot from the CoreDNS machine to the board (only while those machines are drawn)
   Y.hops = Y.hops || []; while (Y.hops.length < st.net.hops.length){ const g = new THREE.Group(); const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]), new THREE.LineDashedMaterial({ color: '#ffe3a0', dashSize: 2, gapSize: 1.4 })); g.add(line); const dot = lamp(0, 0, 0, LAMP.amber, .5); g.add(dot); scene.add(g); Y.hops.push({ g, line, dot }); }
   while (Y.hops.length > st.net.hops.length){ const H = Y.hops.pop(); dispose(H.g); }
-  st.net.hops.forEach((h, i) => { const H = Y.hops[i], p = h.pod, dd = DIR(); if (!p.pos || (p.sys && !st.showSys)){ H.g.visible = false; return; } H.g.visible = true; const a = V3(dd.x0, (dd.y0 + dd.y1)/2, 4), b = V3(p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 1.5);
-    H.line.geometry.setFromPoints([a, b]); H.line.computeLineDistances(); const u = h.t < .5 ? h.t*2 : 2 - h.t*2; H.dot.position.lerpVectors(a, b, ease(Math.min(1, u))); });
+  st.net.hops.forEach((h, i) => { const H = Y.hops[i], p = h.pod, dd = DNSBOARD(); if (!p.pos || (p.sys && !st.showSys)){ H.g.visible = false; return; } H.g.visible = true; const a = V3(dd.x1 + .4, (dd.y0 + dd.y1)/2, (dd.z0 + dd.z1)/2), b = V3(p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 1.5);
+    H.line.geometry.setFromPoints([b, a]); H.line.computeLineDistances(); H.dot.position.lerpVectors(b, a, ease(Math.min(1, h.t))); });
   const O = Y.office; if (O && O.annex) O.annex.visible = st.net.mesh.on; }
 function syncStatics(){
   const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
@@ -523,7 +526,7 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
   if (p && p.pos) return [[p.pos[0] - 1, p.pos[1] - 1, p.pos[2]], [p.pos[0] + MW + 1, p.pos[1] + ML + 1, p.pos[2] + MH + 5]];
   if (n){ const c = cellBox(n); return [[c.x0 - 12, c.y0, 0], [c.x1, c.y1, 18]]; }
   if (a.type === 'tower') return [[OFF.x0 + ox(), OFF.y0, 0], [OFF.x1 + 2 + ox(), OFF.y1, OFF.z1 + 4]];
-  if (a.type === 'dns'){ const d = DIR(); return [[d.x0, d.y0, 0], [d.x1 + 1, d.y1, 13]]; }
+  if (a.type === 'dns'){ const d = DNSBOARD(); return [[d.x0 - 2, d.y0 - 1, 0], [d.x1 + 6, d.y1 + 1, d.z1 + 2]]; }
   if (a.type === 'diverter'){ const Dv = DIVERTER(a.row || 0); return Dv ? [[SPINE2() - 5, Dv.y - 6, 0], [Dv.x + 7, Dv.y + 6, 8]] : null; }
   if (a.type === 'board') return [[OFF.x0 + 6 + ox(), OFF.y1, OFF.z0 + 4], [OFF.x1 - 6 + ox(), OFF.y1 + 2, OFF.z1 - 3]];
   if (a.type === 'registry'){ const c = CRIB(); return [[c.x0, c.y0, 0], [c.x1, c.y1, c.h + 3]]; }
@@ -567,7 +570,7 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
-    { const Dv = DIVERTER(0), dd = DIR(); if (Dv) items.push({ at:[Dv.x + 2.6, Dv.y, 5], text:'DIVERTER', on: !!st.net.flick[0] || st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.net.dns.flash > 0 });
+    { const Dv = DIVERTER(0), dd = DNSBOARD(); if (Dv) items.push({ at:[Dv.x + 2.6, Dv.y, 5], text:'DIVERTER', on: !!st.net.flick[0] || st.net.ann.length > 0 }); items.push({ at:[dd.x1 + .5, (dd.y0 + dd.y1)/2, dd.z1 + .6], text:'DIRECTORY', on: st.net.dns.flash > 0 });
       if (st.showSys) for (const p of st.pods.filter(p => isDnsPod(p) && p.pos && !NOPOS.has(p.phase))) items.push({ at:[p.pos[0] + MW/2, p.pos[1] + 1, p.pos[2] + MH + 2], text:'COREDNS', on: st.net.hops.some(h => h.pod === p) });
       if (st.net.fabric === 'bgp'){ items.push({ at:[SPINE2(), 90, 2.5], text:'SPINE', on: st.parcels.length > 0 }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x1 - 1.5, cb.y0 + 6.3, cb.h + 5], text:'BGP SPEAKER', on: st.net.ann.some(a => a.node === n0.name) }); } }
       if (st.net.mesh.on){ const mp = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && MESHED.has(p.app)); if (mp) items.push({ at:[mp.pos[0] + 6.6, mp.pos[1] - 1.3, mp.pos[2] + 3.4], text:'ESCORT', on: st.parcels.some(pc => pc.sleeve) }); items.push({ at:[o.x1 + 13, o.y0 + 8, o.z0 + 11], text:'MESH DESK', on:false }); }
