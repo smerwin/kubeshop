@@ -292,7 +292,8 @@ const VOC = () => isShop() ? {
   bj: n => `kubeadm join: ${n} is bootstrapping its kubelet and container runtime`, br: n => `${n} registered with the API server and is Ready (kube-proxy and the CNI are on it)`,
   bapp: 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods', live: 'This is a real cluster and the yard only watches it' };
 const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has never pulled, one from its rack, powering the machine up
-const ROT = 48;                                    // a kubelet certificate's lifetime here (simulated seconds); it rotates at 80% of it, as the real one does
+const ROT = 600;                                   // a kubelet certificate's lifetime here (simulated seconds, ten minutes; kubeadm's is a year); it rotates at 80% of it, as the real one does
+let rotToasted = false;                            // the rotation toast once per session; later rotations only flash the badge
 const GRACE = 2, GRACE_MAX = 5;                    // terminationGracePeriodSeconds, scaled down: a machine drains (finishes the parts already sent to it, takes no new ones) before it powers down; past GRACE_MAX it is killed
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
@@ -707,7 +708,7 @@ function startDemo(){
   for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; n.cache.add(p.app + ':' + p.ver); st.pods.push(p); } }
   markBands(); refreshRegistry(); layout(st); st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; st.crane.z = HZT; if (ui) reframe();
   Object.assign(st.sec, { ca: 1, badges: 3, netpol: null, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); st.reqs = { sent:0, ok:0, err:0, reset:0 };
-  st.nodes.forEach((n, i) => { n.cert = { issued: st.t - 7 - i*9, exp: st.t - 7 - i*9 + ROT, ok: true, flash: 0 }; n.csr = false; n.rotated = 0; }); st.sec.badges = 3 + st.nodes.length;
+  st.nodes.forEach((n, i) => { n.cert = { issued: st.t - 7 - i*60, exp: st.t - 7 - i*60 + ROT, ok: true, flash: 0 }; n.csr = false; n.rotated = 0; }); st.sec.badges = 3 + st.nodes.length;
 }
 function stopLive(){ if (st.live.timer) clearInterval(st.live.timer); st.live.timer = 0; st.live.url = null; st.live.status = ''; }
 async function pollOnce(first){
@@ -760,7 +761,8 @@ function podInfo(p){ const d = depOf(p.app); say('info-' + p.id, `${p.name} · $
    kubeadm makes the cluster CA before anything else; every control-plane component and every kubelet holds a certificate it
    signed, and all of them talk mutual TLS. A kubelet gets its first certificate through a CSR (approved for the bootstrap
    token's group, signed by the controller manager's signer) and rotates it at about 80% of its lifetime the same way. */
-function issueCert(n){ n.cert = { issued: st.t, exp: st.t + ROT, ok: true, flash: .9 }; n.csr = false; n.certDown = null; st.sec.badges++; }
+// a badge's lifetime is staggered by cell, so no two rotate together
+function issueCert(n){ const k = Math.max(0, st.nodes.indexOf(n)); n.cert = { issued: st.t, exp: st.t + ROT - 45*k, ok: true, flash: .9 }; n.csr = false; n.certDown = null; st.sec.badges++; }
 function secTick(dt){ let busy = false; const S = st.sec;
   if (S.stamp > 0){ S.stamp -= dt; busy = true; }
   if (S.refuseT > 0){ S.refuseT -= dt; busy = true; }
@@ -775,7 +777,7 @@ function secTick(dt){ let busy = false; const S = st.sec;
     // a cell with its uplink cut cannot reach the CA: no rotation; if the badge's expiry passes meanwhile it goes red, and the cell needs the CA again once reconnected
     if (n.cut){ if (c.ok && st.t > c.exp){ c.ok = false; n.certCut = true; busy = true; say('certcut', `${n.name}'s kubelet certificate expired while its uplink was cut: it could not send the CSR to rotate it (the badge goes red); once reconnected the cell needs the CA again before it can report`, 4200); } continue; }
     if (c.ok && st.t > c.exp - ROT*.2){ c.issued = st.t; c.exp = st.t + ROT; c.flash = .9; n.rotated = (n.rotated || 0) + 1; st.sec.badges++; busy = true;
-      if (!(S.rotSaid > st.t - 120)){ S.rotSaid = st.t; say('rot', `${n.name}: the kubelet rotated its client certificate before it expired (a new CSR, approved and signed by the CA); the badge flashes as it is renewed. Every cell does this on its own schedule`); } }   // the toast once in a while; the flash every time
+      if (!rotToasted){ rotToasted = true; say('rot', `${n.name}: the kubelet rotated its client certificate before it expired (a new CSR, approved and signed by the CA; the badge flashes). kubeadm issues kubelet certificates for a year and the kubelet renews them at 70-90% of their lifetime; here a badge lasts ${ROT/60} simulated minutes and rotates at 80%. Later rotations only flash the badge; the cell's card shows the expiry`, 5200); } }   // the toast once per session; the flash every time
     if (!c.ok){ n.certDown = (n.certDown || 0) + dt; busy = true;
       if (n.certDown > .6 && n.ready){ n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.phase = 'unready'; p.phaseT = 0; p.ready = false; p.nodeDown = true; }
         say('certdown', `${n.name}'s kubelet certificate has expired: the counter refuses its status updates (401), the node-lifecycle controller marks it NotReady, its machines stop being endpoints and the dispatcher sends it nothing`); }
@@ -1450,7 +1452,7 @@ function cardFor(a){
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
       (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to diverter ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
-      row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
+      row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80% (${ROT/60} simulated minutes here, a year with kubeadm)` + (n.rotated ? `; rotated ${n.rotated} time${n.rotated === 1 ? '' : 's'}, last ${Math.max(0, st.t - n.cert.issued).toFixed(0)} s ago` : '; not rotated yet') : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } }, ...(SHOP() && n.joined >= 1 ? [ n.cut ? { label:'restore the uplink', onClick: () => restoreUplink(n.name) } : { label:'cut the uplink', title:'sever the belt and the tube into this cell', onClick: () => cutUplink(n.name) } ] : []) ] }; }
   if (a.type === 'tower'){ const R = window.ControlRoom ? ControlRoom.R : null, cp = st.cp;
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
