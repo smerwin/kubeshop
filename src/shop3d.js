@@ -371,6 +371,8 @@ function render(moving, now){
   else renderer.render(scene, camera);
   window.__scale = s; window.__bloom = bloomOK; window.__Y = Y;
 }
+// for the browser checks and the README frames: one full frame drawn now, returned as an image
+window.__shot = q => { render(false, performance.now()); return canvas.toDataURL('image/jpeg', q || .88); };
 
 /* ---------- what the view needs to know about this scene ---------- */
 function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.id), n = a.type === 'node' && st.nodes.find(n => n.name === a.node);
