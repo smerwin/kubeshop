@@ -217,10 +217,10 @@ function observe(){
   // Pods: created, bound, started, ready, crashed, unready, terminating
   const created = {}, bound = [], dropped = [], started = [], ready = [], crashed = [], deleted = [], unready = [], reready = [], gone = {};
   for (const p of st.pods){ const o = prev.pods[p.id], n = now.pods[p.id]; if (p.sys && !st.showSys) continue;
-    if (!o){ if (p.phase === 'pending' || p.phase === 'creating' || p.phase === 'running') (created[p.app] = created[p.app] || []).push(p); continue; }
+    if (!o){ if (['pending', 'creating', 'running', 'bound', 'queued', 'pulling'].includes(p.phase)) (created[p.app] = created[p.app] || []).push(p); continue; }
     if (o.phase === n.phase) continue;
-    if (n.phase === 'scheduled') bound.push(p); else if (n.phase === 'dropping') dropped.push(p); else if (n.phase === 'creating') started.push(p);
-    else if (n.phase === 'running' && (o.phase === 'creating')) ready.push(p); else if (n.phase === 'running' && (o.phase === 'unready' || o.phase === 'crash')) reready.push(p);
+    if (n.phase === 'scheduled' || n.phase === 'bound') bound.push(p); else if (n.phase === 'dropping') dropped.push(p); else if (n.phase === 'creating' && o.phase !== 'pulling' && o.phase !== 'staged' || n.phase === 'pulling') started.push(p);
+    else if (n.phase === 'running' && (o.phase === 'creating')) ready.push(p); else if (n.phase === 'creating' || n.phase === 'queued' || n.phase === 'staged') continue; else if (n.phase === 'running' && (o.phase === 'unready' || o.phase === 'crash')) reready.push(p);
     else if (n.phase === 'crash' && n.doomed) deleted.push(p); else if (n.phase === 'crash') crashed.push(p); else if (n.phase === 'unready') unready.push(p);
     else if (n.phase === 'terminating' && !o.doomed) (gone[p.app] = gone[p.app] || []).push(p); }
   for (const [app, ps] of Object.entries(created)){ const c = col(ps[0]), key = `dep:${depOfName(app)}`;

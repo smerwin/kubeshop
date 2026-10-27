@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en" class="nolabels"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Shop floor</title>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
+<style>
+  :root{--paper:#f2efe7;--ink:#231e16;--muted:#857d6e;--rule:#ddd6c8;--accent:#f4b829;--cream:#fff4d6;--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);--sal:env(safe-area-inset-left,0px);--sar:env(safe-area-inset-right,0px)}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background-color:var(--paper);
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .42  0 0 0 0 .39  0 0 0 0 .33  .16 0 0 0 0'/></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>");
+    overflow-x:hidden;color:var(--ink);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;display:flex;flex-direction:column;align-items:center;padding:24px 16px 32px;-webkit-tap-highlight-color:transparent}
+  header.pagehead{width:100%;max-width:760px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+  header h1{font-size:13px;font-weight:600;margin:0;letter-spacing:.02em} header span{color:var(--muted)}
+  .stage{position:relative;width:100%;max-width:760px}
+  .zwrap{position:relative;width:100%;aspect-ratio:4/3;margin:4px 0 8px;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:grab;overflow:visible}
+  .zwrap.drag{cursor:grabbing} .zwrap.pick{cursor:pointer}
+  #gl{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:inherit;border-radius:12px}
+  html.yard #gl{border-radius:0}
+  /* a soft vignette over the hall, no shader cost */
+  #vig{position:absolute;inset:0;pointer-events:none;border-radius:12px;background:radial-gradient(ellipse at 50% 45%,rgba(0,0,0,0) 55%,rgba(20,18,16,.28) 100%)}
+  html.yard #vig{border-radius:0}
+  #ov{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none}
+  #ov path{fill:none;stroke:var(--ink);stroke-width:1} #ov circle{fill:var(--ink)}
+  /* overlay labels: screen-sized text placed by projection; levels of detail come and go with the zoom */
+  #lbls{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+  .lb{position:absolute;left:0;top:0;margin:0;transform:translate(-1000px,-1000px);pointer-events:auto;cursor:pointer;opacity:0;transition:opacity .22s ease;will-change:transform;
+    font:800 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.03em;color:var(--ink);background:var(--cream);border:1.3px solid var(--ink);border-radius:999px;padding:4px 8px;white-space:nowrap;text-align:center;box-shadow:1.5px 1.5px 0 rgba(35,30,22,.25)}
+  .lb.in{opacity:1} .lb.out{opacity:0!important;pointer-events:none}
+  .lb{translate:-50% -50%}
+  .lb.pod{background:var(--c,var(--cream))} .lb.pod b{font-weight:800;background:#f2c230;border-radius:4px;padding:0 3px;margin-left:4px}
+  .lb small{display:block;font-size:9px;font-weight:700;letter-spacing:0;margin-top:3px;opacity:.85}
+  .lb.node{background:#fff;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px}
+  .lb.board{text-align:left;border-radius:8px;line-height:1.35;font-size:10.5px} .lb.board i{display:inline-block;width:9px;height:9px;border:1px solid var(--ink);border-radius:2px;vertical-align:-1px;margin-right:4px}
+  .lb.callout{font-size:10px;letter-spacing:.06em;padding:5px 9px} .lb.callout.on{background:var(--accent)} .lb.callout.sel{background:var(--ink);color:var(--cream)}
+  html.nolabels .lb{display:none}
+  html.notext .lb:not(.callout){display:none}
+  .actions{position:absolute;top:4px;left:0;display:flex;flex-direction:column;align-items:flex-start;gap:8px;z-index:2;max-width:220px}
+  .strip{position:absolute;top:44px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:10px;z-index:2;text-align:right}
+  .strip .ttl{display:none}
+  .stats{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+  .stat .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-size:34px;font-weight:800;line-height:1.05;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .stat.small .v{font-size:20px}
+  .stat .v.bump{animation:bump .35s ease-out}
+  @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
+  .vset{position:absolute;top:4px;right:0;z-index:2}.vrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .vrow .yardonly{display:none}
+  .stepwrap{position:relative;display:flex;align-items:center;gap:8px}
+  .act{font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);border-radius:999px;padding:5px 14px;cursor:pointer;white-space:nowrap}
+  .act:hover{background:color-mix(in srgb,var(--paper) 92%,var(--ink))}
+  .act[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+  .act .car{margin-left:6px;font-size:10px} .act .short{display:none}
+  .act:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .chips{display:none;flex-wrap:wrap;gap:6px;background:var(--paper);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 var(--ink);
+    padding:8px;width:max-content;max-width:min(300px,62vw);position:absolute;left:calc(100% + 10px);top:-4px;z-index:3}
+  .stepwrap.open .chips{display:flex}
+  .chip{white-space:nowrap;font:inherit;font-size:11.5px;font-weight:700;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);border-radius:8px;padding:4px 8px;cursor:pointer;box-shadow:2px 2px 0 var(--ink)}
+  .chip:hover{background:var(--accent,#f4b829);transform:translate(-1px,-1px)}
+  .chip.current{background:var(--ink);color:var(--paper)} .chip.current:hover{background:var(--ink);transform:none}
+  .chip.off{opacity:.45} .chip.off:hover{transform:none;background:var(--paper)}
+  .toast{position:absolute;left:50%;top:6%;z-index:4;transform:translate(-50%,8px);opacity:0;pointer-events:none;display:flex;align-items:center;gap:8px;
+    width:max-content;max-width:min(86%,440px);font:600 12.5px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:#fff1bf;
+    border:1px solid rgba(35,30,22,.28);border-radius:8px;box-shadow:0 8px 22px rgba(35,30,22,.16);padding:7px 13px 7px 9px;transition:opacity .18s ease,transform .18s ease}
+  .toast::before{content:"!";flex:none;width:17px;height:17px;border-radius:50%;background:var(--ink);color:#fff1bf;font:800 11px/17px ui-monospace,Menlo,monospace;text-align:center}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .zchip{position:absolute;right:2px;bottom:6px;display:flex;align-items:center;gap:2px;font:600 11px ui-monospace,Menlo,monospace;
+    background:rgba(242,239,231,.88);border:1px solid rgba(35,30,22,.25);border-radius:999px;padding:2px;z-index:3;user-select:none}
+  .zchip button{all:unset;cursor:pointer;min-width:22px;height:22px;line-height:22px;text-align:center;border-radius:999px;color:var(--ink)}
+  .zchip button:hover{background:rgba(35,30,22,.08)}.zchip .zp{min-width:44px}
+  /* the compass: where the gate and the tower are, turning with the camera; tap for the front view */
+  .compass{position:absolute;left:4px;bottom:6px;width:58px;height:58px;z-index:3;cursor:pointer;opacity:.92}
+  .compass svg{width:100%;height:100%;overflow:visible} .compass circle.r{fill:rgba(242,239,231,.85);stroke:var(--ink);stroke-width:1.2}
+  .compass text{font:800 8px ui-monospace,Menlo,monospace;fill:var(--ink);text-anchor:middle;dominant-baseline:central;letter-spacing:.04em}
+  .compass .m{transition:transform .08s linear} .compass .n{fill:var(--accent);stroke:var(--ink);stroke-width:1}
+  .compass.snap circle.r{animation:snap .3s ease-out} @keyframes snap{0%{stroke-width:3;fill:var(--accent)}100%{stroke-width:1.2}}
+  /* the card: what was tapped, its state, the actions that make sense there */
+  .card{position:absolute;left:4px;bottom:6px;z-index:5;width:min(320px,calc(100% - 8px));background:var(--paper);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 var(--ink);padding:10px 12px 12px;
+    transform:translateY(12px);opacity:0;pointer-events:none;transition:transform .28s cubic-bezier(.16,1,.3,1),opacity .2s ease}
+  .card.open{transform:none;opacity:1;pointer-events:auto}
+  .card .x{position:absolute;right:6px;top:6px;all:unset;cursor:pointer;width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;font-size:15px;color:var(--muted)} .card .x:hover{background:rgba(35,30,22,.08);color:var(--ink)}
+  .card .kick{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 24px 2px 0}
+  .card h3{margin:0 24px 6px 0;font-size:14px;line-height:1.25;word-break:break-all} .card h3 .sw{display:inline-block;width:11px;height:11px;border:1.3px solid var(--ink);border-radius:3px;vertical-align:-1px;margin-right:6px}
+  .card .body{font-size:12px;line-height:1.45;max-height:34vh;overflow:auto}
+  .card .body table{border-collapse:collapse;width:100%} .card .body td{padding:2px 6px 2px 0;vertical-align:top} .card .body td:first-child{color:var(--muted);white-space:nowrap;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;padding-top:4px}
+  .card .body p{margin:0 0 6px} .card .body .lamp{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid var(--ink);vertical-align:-1px;margin-right:5px}
+  .card .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .card .acts button{font:700 11.5px ui-monospace,Menlo,monospace;color:var(--ink);background:var(--cream);border:1.5px solid var(--ink);border-radius:8px;padding:5px 9px;cursor:pointer;box-shadow:2px 2px 0 var(--ink)}
+  .card .acts button:hover{background:var(--accent)} .card .acts button.go{background:var(--accent)}
+  .card .rows button{all:unset;display:flex;align-items:center;gap:8px;width:100%;padding:5px 4px;border-radius:6px;cursor:pointer;font-variant-numeric:tabular-nums} .card .rows button:hover{background:rgba(35,30,22,.07)}
+  .card .rows i{width:12px;height:12px;border:1.3px solid var(--ink);border-radius:3px;flex:none} .card .rows .bad{color:#b3261e} .card .rows .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis} .card .rows .ver{flex:none;color:var(--muted)}
+  .controls{width:100%;max-width:760px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px 28px;border-top:1px solid var(--rule);padding-top:16px}
+  .ctl{display:flex;flex-direction:column;gap:6px}
+  .ctl label{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button{font:inherit;color:var(--ink);background:transparent;border:1.5px solid var(--ink);border-radius:999px;padding:5px 14px;cursor:pointer}
+  button:hover{background:#0000000d}
+  button[aria-pressed=true]:not(.sw){background:var(--ink);color:var(--paper)}
+  .sw{width:26px;height:26px;padding:0;border-radius:50%} .sw[aria-pressed=true]{outline:2px solid var(--ink);outline-offset:2px}
+  .made-with{width:100%;max-width:760px;margin-top:18px;text-align:right;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .made-with a{color:var(--muted);text-decoration:none} .made-with a:hover{color:var(--ink)}
+  /* the control room: a second panel under the yard */
+  #room{display:none;width:100%;max-width:760px;margin:0 0 14px}
+  html.room #room{display:block}
+  #room svg{width:100%;height:auto;display:block;overflow:visible}
+  @media (max-width:760px){#room .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}#room svg{min-width:720px}}
+  #room .cap{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 0 4px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  #room .cap b{color:var(--ink);letter-spacing:.06em}
+  #room .log{font:600 11.5px/1.35 ui-monospace,Menlo,monospace;min-height:1.4em;margin:4px 0 0;color:var(--ink)}
+  /* sheets: action choices, the chapter's prose, the control room in yard mode; they slide up from the bottom */
+  .scrim{position:fixed;inset:0;z-index:20;background:rgba(35,30,22,.28);opacity:0;pointer-events:none;transition:opacity .22s ease} .scrim.open{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;left:50%;bottom:0;z-index:21;width:min(560px,100%);max-height:min(78dvh,78vh);transform:translate(-50%,105%);transition:transform .32s cubic-bezier(.16,1,.3,1);
+    background:var(--paper);border:2px solid var(--ink);border-bottom:0;border-radius:16px 16px 0 0;box-shadow:0 -6px 0 rgba(35,30,22,.08);padding:8px 14px calc(14px + var(--sab));display:flex;flex-direction:column;overscroll-behavior:contain}
+  .sheet.open{transform:translate(-50%,0)}
+  .sheet .grab{width:38px;height:4px;border-radius:2px;background:rgba(35,30,22,.35);margin:0 auto 8px;flex:none}
+  .sheet h3{margin:0 0 8px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);flex:none}
+  .sheet .items{display:flex;flex-direction:column;gap:6px;overflow:auto;-webkit-overflow-scrolling:touch}
+  .sheet .items button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:46px;padding:8px 12px;border:1.5px solid var(--ink);border-radius:10px;background:var(--cream);font:700 13.5px ui-monospace,Menlo,monospace;box-shadow:2px 2px 0 var(--ink)}
+  .sheet .items button:active{transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink)}
+  .sheet .items button.current{background:var(--ink);color:var(--paper)} .sheet .items button.off{opacity:.45}
+  .sheet .items button small{font-weight:600;color:var(--muted);font-size:11px} .sheet .items button.current small{color:var(--paper);opacity:.8}
+  .sheet .prose{overflow:auto;-webkit-overflow-scrolling:touch;font:15px/1.5 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;padding-right:2px}
+  .sheet .prose .num{font:700 11px ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  .sheet .prose h2{font:700 19px/1.2 ui-monospace,Menlo,monospace;margin:0 0 10px;letter-spacing:-.01em}
+  .sheet .prose h3{font:700 11px ui-monospace,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;margin:16px 0 6px;color:var(--muted)}
+  .sheet .prose p{margin:0 0 10px} .sheet .prose .yard{background:var(--cream);border:1.5px solid var(--ink);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:14px}
+  .sheet .prose .yard b{font:700 11px ui-monospace,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;display:block;color:var(--muted);margin-bottom:2px}
+  .sheet .prose pre{background:#2b2622;color:#f3ecd8;border-radius:10px;padding:10px 12px;font-size:11.5px;line-height:1.5;overflow:auto;margin:8px 0 12px;border:1.5px solid var(--ink)} .sheet .prose pre .c{color:#a8a08f}
+  .sheet .prose kbd{font:700 11px ui-monospace,Menlo,monospace;border:1.5px solid var(--ink);border-radius:999px;padding:1px 7px;background:var(--paper)} .sheet .prose code{font-size:12.5px}
+  .sheet .prose .try{font-size:13px;color:var(--muted)} .sheet .prose table{display:none}
+  .sheet .prose .more{display:inline-block;margin-top:4px;font:700 12px ui-monospace,Menlo,monospace;color:var(--ink)}
+  .sheet .x{position:absolute;right:8px;top:8px;all:unset;cursor:pointer;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;font-size:17px;color:var(--muted)} .sheet .x:hover{background:rgba(35,30,22,.08);color:var(--ink)}
+  @media (max-width:560px){body{padding:14px 12px 24px}body > header{display:none}
+    .actions{position:static;max-width:none;margin:6px 0 4px;flex-direction:row;flex-wrap:wrap;gap:6px}.act{font-size:12px;padding:4px 11px}
+    .strip{position:static;flex-direction:row;justify-content:flex-end;gap:18px;margin-bottom:4px}.stats{flex-direction:row;gap:18px}.stat .v{font-size:20px}
+    .vset{position:static;margin:8px 0 2px}.chips{left:0;top:calc(100% + 8px)}
+    .zwrap{aspect-ratio:1/1.1}}
+  /* ---------- yard mode: the canvas is the whole viewport and the page never scrolls ---------- */
+  html.yard,html.yard body{height:100%;overflow:hidden;overscroll-behavior:none}
+  html.yard body{padding:0;display:block;position:fixed;inset:0;width:100%}
+  html.yard header.pagehead,html.yard .controls,html.yard .made-with,html.yard .zchip{display:none}
+  html.yard .stage{position:static;max-width:none}
+  html.yard .zwrap{position:fixed;inset:0;width:auto;height:auto;aspect-ratio:auto;margin:0;touch-action:none;overflow:hidden}
+  html.yard .strip{position:fixed;left:0;right:0;top:0;z-index:12;flex-direction:row;align-items:center;justify-content:space-between;gap:10px;padding:calc(6px + var(--sat)) calc(12px + var(--sar)) 6px calc(12px + var(--sal));
+    background:rgba(242,239,231,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-bottom:1.5px solid var(--ink);text-align:left;pointer-events:auto}
+  html.yard .strip .ttl{display:flex;align-items:center;gap:8px;font-weight:800;letter-spacing:.04em;white-space:nowrap} html.yard .strip .ttl button{font-size:11px;padding:3px 9px;background:var(--cream)}
+  html.yard .stats{flex-direction:row;gap:12px;align-items:baseline;flex-wrap:nowrap;overflow:hidden}
+  html.yard .stat{display:flex;align-items:baseline;gap:5px;white-space:nowrap} html.yard .stat .k{font-size:9.5px;letter-spacing:.08em} html.yard .stat .v,html.yard .stat.small .v{font-size:15px}
+  html.yard .actions{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:12;max-width:none;flex-direction:row;flex-wrap:nowrap;gap:6px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;
+    padding:8px calc(12px + var(--sar)) calc(8px + var(--sab)) calc(12px + var(--sal));background:rgba(242,239,231,.9);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-top:1.5px solid var(--ink)}
+  html.yard .actions::-webkit-scrollbar{display:none}
+  html.yard .stepwrap{flex:none} html.yard .act{min-height:40px;padding:6px 14px;font-size:13px;font-weight:700;background:var(--cream)} html.yard .act .short{display:inline} html.yard .act .long,html.yard .act .car{display:none}
+  html.yard .chips{display:none!important}
+  html.yard .vset{position:fixed;right:calc(8px + var(--sar));top:calc(52px + var(--sat));z-index:11} html.yard .vrow{flex-direction:column;align-items:flex-end;gap:5px;flex-wrap:nowrap}
+  html.yard .vrow .act{font-size:11px;padding:5px 10px;min-height:30px;background:rgba(242,239,231,.92)} html.yard .vrow .act[aria-pressed=true]{background:var(--ink)} html.yard .vrow .yardonly{display:inline-block} html.yard .vrow .pageonly{display:none}
+  html.yard .compass{left:calc(8px + var(--sal));bottom:calc(74px + var(--sab));width:64px;height:64px}
+  html.yard .toast{top:calc(50px + var(--sat));left:calc(10px + var(--sal));transform:translate(0,8px);max-width:min(calc(100% - 150px),440px)} html.yard .toast.show{transform:none}
+  html.yard .card{left:50%;bottom:calc(66px + var(--sab));width:min(520px,calc(100% - 16px));transform:translate(-50%,16px);max-height:48dvh;display:flex;flex-direction:column} html.yard .card.open{transform:translate(-50%,0)}
+  html.yard .card .body{max-height:none;overflow:auto;flex:1 1 auto} html.yard .card .acts button{min-height:36px}
+  html.yard #room{display:block;position:fixed;left:50%;bottom:0;z-index:21;width:min(760px,100%);max-width:none;max-height:min(76dvh,76vh);margin:0;transform:translate(-50%,105%);transition:transform .32s cubic-bezier(.16,1,.3,1);
+    background:var(--paper);border:2px solid var(--ink);border-bottom:0;border-radius:16px 16px 0 0;padding:8px 12px calc(12px + var(--sab));overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  html.yard.room #room{transform:translate(-50%,0)}
+  html.yard #room::before{content:"";display:block;width:38px;height:4px;border-radius:2px;background:rgba(35,30,22,.35);margin:0 auto 8px}
+  html.yard #room .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch} html.yard #room svg{min-width:720px}
+</style></head><body>
+<header class="pagehead"><h1>Fig. K8 — Shop floor</h1><span>drag to turn · pinch or ctrl+wheel to zoom · tap a thing to fly to it</span></header>
+<div class="stage">
+  <div class="actions" id="btns"></div>
+  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button><button class="act yardonly" id="folb" aria-pressed="false">Follow</button><button class="act yardonly" id="ovb">Overview</button><button class="act" id="yardb" aria-pressed="false">Yard mode</button></div></div>
+  <div class="strip" id="strip"><div class="ttl">Shop floor<button id="chapb" hidden>Chapter</button></div><div class="stats" id="stats"></div></div>
+  <div class="zwrap" id="zwrap"><canvas id="gl"></canvas><div id="vig"></div><svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg><div id="lbls"></div>
+    <div class="zchip"><button class="zm" aria-label="Zoom out">−</button><button class="zp" aria-label="Reset zoom">100%</button><button class="zi" aria-label="Zoom in">+</button></div>
+    <div class="compass" id="compass" title="Front view"><svg viewBox="-32 -32 64 64"><circle class="r" r="26"/><g class="m" id="cN"><path class="n" d="M0 -25L4 -17L-4 -17z"/></g><g class="m" id="cG"><text y="-1">G</text></g><g class="m" id="cT"><text y="-1">T</text></g><g class="m" id="cR"><text y="-1">R</text></g></svg></div>
+    <div class="card" id="card"><button class="x" aria-label="Close">×</button><div class="kick"></div><h3></h3><div class="body"></div><div class="acts"></div></div>
+    <div class="toast" id="toast" role="status"></div></div>
+</div>
+<div id="room"></div>
+<div class="controls">
+  <div class="ctl"><label>Colour</label><div class="row" id="pals"></div></div>
+  <div class="ctl"><label>View</label><div class="row"><button id="vreset">Front view</button><button id="vspin" aria-pressed="false">Turntable</button></div></div>
+</div>
+<footer class="made-with"><a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> · <a href="longshore3d.html">the yard (earlier draft)</a> · <a href="longshore.html">the inked yard</a></footer>
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet"><div class="grab"></div><h3></h3><div class="items"></div></div>
+<div class="sheet" id="chap"><div class="grab"></div><button class="x" aria-label="Close">×</button><div class="prose"></div></div>
+<script>
+/* the palette helpers the simulation expects from the Colorfigures engine */
+const PALS = {
+  mustard: { l:'#f4b829', m:'#d49c1f', d:'#4e4a18' },
+  tomato:  { l:'#ef6a4c', m:'#cf5038', d:'#4a2219' },
+  mint:    { l:'#93d3b0', m:'#71b693', d:'#1f4034' },
+  cobalt:  { l:'#76a0e2', m:'#5a82c6', d:'#1c2948' },
+  blush:   { l:'#f3a6bb', m:'#d8869c', d:'#4b2430' } };
+const METAL = { l:'#eef0f0', m:'#c6ccce', d:'#8f989b' }, CERAMIC = { l:'#fbfaf3', m:'#e3e0d2', d:'#bdb8a6' }, DARK = { l:'#55504a', m:'#3d3935', d:'#272421' };
+const WOOD = { l:'#d9a86c', m:'#bf8a4f', d:'#8e6236' }, CLEAR = { l:'#e4f2f4', m:'#c4dfe4', d:'#97b9c0' }, INK = '#231e16', SHADOW = '#41538f';
+const mix = (a, b, t) => '#' + [1,3,5].map(i => Math.round(parseInt(a.substr(i,2),16)*(1-t) + parseInt(b.substr(i,2),16)*t).toString(16).padStart(2,'0')).join('');
+const matOf = hex => ({ l:hex, m:mix(hex,'#000000',.16), d:mix(hex,'#000000',.42) });
+const ease = t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+addEventListener('error', e => { document.documentElement.dataset.errors = (document.documentElement.dataset.errors || '') + ' ' + e.message + ';'; });
+// yard mode before anything lays out: asked for, or a narrow top-level window (an embedded figure stays a page so the guide scrolls)
+(() => { const q = new URLSearchParams(location.search); if (q.get('yard') === '1' || (q.get('yard') !== '0' && window.self === window.top && innerWidth < 900)) document.documentElement.classList.add('yard'); })();
+</script>
+<script src="sim.js"></script>
+<script src="room.js"></script>
+<script src="chrome.js"></script>
+<script src="view3d.js"></script>
+<script type="module" src="shop3d.js"></script>
+</body></html>

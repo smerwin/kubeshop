@@ -43,31 +43,46 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const lerp3 = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
 const dist3 = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
 
-/* ---------- layout: where every node, rail and lane is ---------- */
-const slotPos = (n, sl) => [n.x0 + 6 + sl.r*(PW + 4), n.y0 + 6 + sl.c*(PL + 6), SLH + sl.t*PH];
+/* ---------- layout: where every node, rail and lane is ----------
+   Two models share this file. The yard (the first draft): pods are containers in 3x2 slots stacked in tiers, and a crane
+   carries each one from the registry. The shop (figure/shopfloor.html): pods are machines in a cell's bays, a flat grid of
+   4 across and 3 deep that grows by rows, bound by a job card and pulled by the cell's own AGV. */
+const isShop = () => st.model === 'shop';
+const BAYX = 14, BAYY = 12, SHOP_COLS = 4, SHOP_ROWS = 3, SHOP_MAXROWS = 8;   // a cell's bays: BAYY apart across (y), BAYX apart deep (x)
+const slotPos = (n, sl) => isShop() ? [n.x0 + 6 + sl.r*BAYX, n.y0 + 7 + sl.c*BAYY, SLH] : [n.x0 + 6 + sl.r*(PW + 4), n.y0 + 6 + sl.c*(PL + 6), SLH + sl.t*PH];
 const slotKey = sl => `${sl.c},${sl.r},${sl.t}`;
-function freeSlot(n){ for (let t = 0; t < 9; t++) for (let r = ROWS - 1; r >= 0; r--) for (let c = 0; c < COLS; c++){ const sl = { c, r, t }; if (!n.used.has(slotKey(sl))) return sl; } return null; }
+function freeSlot(n){
+  if (isShop()){ for (let r = 0; r < SHOP_MAXROWS; r++) for (let c = 0; c < SHOP_COLS; c++){ const sl = { c, r, t:0 }; if (!n.used.has(slotKey(sl))) return sl; } return null; }
+  for (let t = 0; t < 9; t++) for (let r = ROWS - 1; r >= 0; r--) for (let c = 0; c < COLS; c++){ const sl = { c, r, t }; if (!n.used.has(slotKey(sl))) return sl; } return null; }
+const cellRows = n => { let r = SHOP_ROWS; for (const k of n.used) r = Math.max(r, +k.split(',')[1] + 1); return r; };
+const cellDepth = n => isShop() ? 8 + cellRows(n)*BAYX : SLD;          // a cell grows deeper (along x) when it holds more than 12 machines
 function layout(st){
   const ns = st.nodes, rows = Math.max(1, Math.ceil(ns.length / 3)), cols = Math.min(3, Math.max(1, ns.length));
-  ns.forEach((n, i) => { n.x0 = SX0 + Math.floor(i/3)*(SLD + ROWGAP); n.y0 = SY0 + (i % 3)*(SLW + NGAP); n.row = Math.floor(i/3); });
-  W = SX0 + rows*(SLD + ROWGAP) - ROWGAP + 50; D = Math.max(284, SY0 + cols*(SLW + NGAP) - NGAP + 14);
-  XR0 = SX0 - 6; XR1 = SX0 + rows*(SLD + ROWGAP) - ROWGAP + 6; LANE = W - 21;
+  const depth = []; for (let r = 0; r < rows; r++) depth.push(Math.max(SLD, ...ns.slice(r*3, r*3 + 3).map(cellDepth)));
+  let x = SX0; ns.forEach((n, i) => { const r = Math.floor(i/3); if (i % 3 === 0 && r > 0) x += depth[r - 1] + ROWGAP; n.x0 = x; n.y0 = SY0 + (i % 3)*(SLW + NGAP); n.row = r; n.depth = cellDepth(n); });
+  const xEnd = x + depth[rows - 1];
+  W = xEnd + 50; D = Math.max(284, SY0 + cols*(SLW + NGAP) - NGAP + 14);
+  XR0 = SX0 - 6; XR1 = xEnd + 6; LANE = W - 21;
   let maxT = 2; for (const p of st.pods) if (p.slot) maxT = Math.max(maxT, p.slot.t);
-  HZT = SLH + (maxT + 1)*PH + 3; BZ = HZT + 22; HTOP = BZ + 12;
-  for (const p of st.pods) if (p.slot && p.node && st.crane.carry !== p && p.phase !== 'scheduled'){ const n = ns.find(n => n.name === p.node); if (n) p.pos = slotPos(n, p.slot); }
+  HZT = SLH + (maxT + 1)*PH + 3; BZ = HZT + 22; HTOP = isShop() ? 62 : BZ + 12;
+  for (const p of st.pods) if (p.slot && p.node && st.crane.carry !== p && !NOPOS.has(p.phase)){ const n = ns.find(n => n.name === p.node); if (n) p.pos = slotPos(n, p.slot); }
 }
+const NOPOS = new Set(['scheduled', 'bound']);   // bound but not yet on the floor: the crane has it, or the job card is in the tube
+const OFFICE = [20, 22, 14];                      // where the job cards leave the planning office (shop)
+const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has never pulled, one from its rack, powering the machine up
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
 const nodeCenterY = n => n.y0 + SLW/2;
 
 /* ---------- state ---------- */
 let ui;
-const st = { t:0, mode:'demo', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
-  crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
+const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
+  crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
   live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null };
 const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || (p.phase !== 'terminating')));
 const isReady = p => p.phase === 'running' && p.ready;
 const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
+const imageOf = p => (p.containers[0] || {}).image || p.app;
 const depOf = app => st.deploys.find(d => d.app === app);
 function say(key, text, ms = 2300){ if (!ui) return; const now = performance.now(); if (st.said[key] && now - st.said[key] < 2600) return; st.said[key] = now; ui.flash(text, ms); }
 
@@ -80,7 +95,7 @@ function makePod(dep, ver){
 }
 function placePod(p, n, sl){ p.node = n.name; p.slot = sl; n.used.add(slotKey(sl)); p.pos = slotPos(n, sl); }
 function removePod(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); if (st.crane.carry === p) st.crane.carry = null;
-  st.crane.queue = st.crane.queue.filter(j => j.pod !== p); st.pods = st.pods.filter(q => q !== p); }
+  st.crane.queue = st.crane.queue.filter(j => j.pod !== p); st.caps = st.caps.filter(c => c.pod !== p); st.pods = st.pods.filter(q => q !== p); }
 // the newest version of an app (when there is more than one) wears the pale band
 function markBands(){ for (const app of new Set(st.pods.map(p => p.app))){ const vs = [...new Set(podsOf(app, false).map(p => p.ver))];
   if (vs.length < 2){ for (const p of podsOf(app, false)) p.band = false; continue; } vs.sort(); const top = vs[vs.length - 1]; for (const p of podsOf(app, false)) p.band = p.ver === top; } }
@@ -117,7 +132,8 @@ function checkDependencies(){
 }
 const gpuUsed = n => st.pods.filter(p => p.node === n.name && p.phase !== 'terminating').reduce((a, p) => a + (p.gpu || 0), 0);
 const gpuFree = n => (n.gpus || 0) - gpuUsed(n);
-const slotsFree = n => ROWS*COLS*9 - n.used.size;
+const slotsFree = n => (isShop() ? SHOP_COLS*SHOP_MAXROWS : ROWS*COLS*9) - n.used.size;
+const cellCap = () => isShop() ? SHOP_COLS*SHOP_ROWS : ROWS*COLS*3;
 /* scheduler: every Pending pod gets a node with a free slot (fewest pods first), then the crane delivers it */
 function schedule(){
   scheduleGangs();
@@ -126,7 +142,9 @@ function schedule(){
     if (st.mode === 'live') cands = cands.filter(n => n.name === p.wantNode);
     if (!cands.length){ if (st.mode === 'demo') say(p.gpu ? 'nogpu' : 'nosched', p.gpu ? `Pending: ${p.name} requests nvidia.com/gpu: ${p.gpu} and no node has a free GPU` : 'Pending: no schedulable node has room (uncordon one)'); continue; }
     cands.sort((a, b) => countOn(a) - countOn(b) || a.name.localeCompare(b.name));
-    const n = cands[0], sl = freeSlot(n); placePod(p, n, sl); p.pos = null; p.phase = 'scheduled';
+    const n = cands[0], sl = freeSlot(n); placePod(p, n, sl); p.pos = null;
+    if (isShop()){ p.phase = 'bound'; p.phaseT = 0; st.caps.push(mkCap(p, n)); say('bind', `Scheduler bound ${p.name} to ${n.name}: spec.nodeName written, the job card is on its way to the cell`); continue; }
+    p.phase = 'scheduled';
     st.crane.queue.push({ pod: p, from: regPos(st, p.app), to: slotPos(n, sl) });
     say('bind', `Scheduler bound ${p.name} to ${n.name}`);
   }
@@ -142,6 +160,8 @@ function scheduleGangs(){
     const plan = [];
     for (const p of members){ room.sort((a, b) => a.count - b.count || a.n.name.localeCompare(b.n.name)); const r = room.find(r => r.slots > 0 && r.gpus >= (p.gpu || 0)); if (!r) break; r.slots--; r.gpus -= p.gpu || 0; r.count++; plan.push([p, r.n]); }
     if (plan.length < members.length){ say('gang-' + app, `PodGroup ${app}: ${members.length} Pods stay Pending; the gang needs ${need} slots free at the same time`); continue; }
+    if (isShop()){ for (const [p, n] of plan){ const sl = freeSlot(n); placePod(p, n, sl); p.pos = null; p.phase = 'dropping'; p.phaseT = 0; st.caps.push(mkCap(p, n)); }
+      say('gangok-' + app, `Volcano admitted PodGroup ${app}: all ${members.length} Pods bound at once; every cell pulls, and they start together`); continue; }
     for (const [p, n] of plan){ const sl = freeSlot(n); placePod(p, n, sl); const to = slotPos(n, sl); p.phase = 'dropping'; p.phaseT = 0; p.drop = { t: 0, from: [to[0], to[1], HTOP + 42], to }; p.pos = p.drop.from.slice(); }
     const c = st.crane; if (!c.job && !c.queue.length){ c.job = { pod: null, i: 0, steps: [{ y: D - 14, z: HZT, dur: Math.max(.4, Math.abs(c.y - (D - 14))/SPD.travel) }] }; }
     say('gangok-' + app, `Volcano admitted PodGroup ${app}: all ${members.length} Pods bound at once and landing together`);
@@ -175,14 +195,36 @@ function craneTick(dt){
   return true;
 }
 
+/* ---------- the shop: job cards through the tube, the cell's AGV fetching the image, machines powering up ----------
+   Binding is instant (the scheduler only writes spec.nodeName). What takes time is the kubelet's side: it pulls images one at
+   a time per node (serialised by default), from the registry when the node has never seen the image and from its own cache
+   when it has, and only then starts the containers. Nodes pull in parallel. A gang's members each pull, then start together. */
+const cellDoor = n => [n.x0 - 4, n.y0 + SLW - 6, 12];    // the cell's job board on the controller cabinet, where the tube ends
+function mkCap(p, n){ const to = cellDoor(n), L = Math.abs(OFFICE[0] - to[0]) + Math.abs(OFFICE[1] - to[1]) + 70; return { pod: p, node: n.name, t: 0, dur: Math.max(.7, L/170) }; }
+function shopTick(dt){ let busy = false;
+  for (const c of st.caps){ c.t += dt/c.dur; busy = true;
+    if (c.t >= 1){ c.done = true; const p = c.pod, n = st.nodes.find(n => n.name === c.node); if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
+  st.caps = st.caps.filter(c => !c.done);
+  for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
+    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); if (p){ const key = p.app + ':' + p.ver, warm = n.cache.has(key);
+      n.pull = { pod: p, t: 0, dur: warm ? PULL.warm : PULL.cold, warm }; p.phase = 'pulling'; p.phaseT = 0;
+      say(warm ? 'pullw' : 'pullc', warm ? `${n.name} already has ${imageOf(p)} in its image cache: no pull, the container starts at once` : `kubelet on ${n.name} is pulling ${imageOf(p)} from the registry (one pull at a time per node)`); } }
+    if (n.pull){ n.pull.t += dt; busy = true;
+      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0; } } } }
+  const groups = {}; for (const p of st.pods) if (p.gang && ['dropping', 'queued', 'pulling', 'staged'].includes(p.phase)) (groups[p.gang] = groups[p.gang] || []).push(p);
+  for (const ps of Object.values(groups)) if (ps.every(p => p.phase === 'staged')){ for (const p of ps){ p.phase = 'creating'; p.phaseT = 0; } st.strobe = 1.2; say('gangstart', `PodGroup ${ps[0].gang}: every cell has its image, all ${ps.length} machines start in sync`); }
+  if (st.strobe > 0){ st.strobe = Math.max(0, st.strobe - dt); busy = true; }
+  return busy; }
+
 /* ---------- pods: phase timers ---------- */
 function podTick(p, dt){
   if (p.phaseT < -1e8) return false;                      // a state read from a real cluster: it changes when the cluster does
   p.phaseT += dt;
   switch (p.phase){
-    case 'dropping': { const d = p.drop; d.t += dt; const k = ease(Math.min(1, d.t / 2)); p.pos = lerp3(d.from, d.to, k);
+    case 'bound': case 'queued': case 'pulling': case 'staged': return true;
+    case 'dropping': { const d = p.drop; if (!d) return true; d.t += dt; const k = ease(Math.min(1, d.t / 2)); p.pos = lerp3(d.from, d.to, k);
       if (d.t >= 2){ p.pos = d.to; p.drop = null; p.phase = 'creating'; p.phaseT = 0; } return true; }
-    case 'creating': if (p.phaseT > 1.1){ p.phaseT = 0;
+    case 'creating': if (p.phaseT > (isShop() ? PULL.start : 1.1)){ p.phaseT = 0;
         if (st.mode === 'demo' && !depHealthy(p.app)){ p.phase = 'unready'; p.waitingOn = depOf(p.app).dependsOn; say('dep-' + p.app, `${p.name} started but its readiness probe fails: Service ${p.waitingOn} has no Ready endpoints`); }
         else { p.phase = 'running'; p.ready = true; say('ready', `Readiness probe passed: ${p.name} is Ready${p.job ? '' : ' and a Service endpoint'}`); } } return true;
     case 'running': if (p.job && p.phaseT > 9){ p.phase = 'done'; p.phaseT = 0; p.ready = false; say('done-' + p.app, `${p.app} Pods completed (Succeeded): a Job's Pods are not replaced`); } return !!p.job;
@@ -229,7 +271,8 @@ function tick(dt){
   if (st.boot && bootTick(dt)) busy = true;
   // cp.hold: etcd has no leader, so the API server cannot write; controllers and the scheduler wait (the crane finishes
   // a bind it already has, the kubelets carry on, nothing new is created or bound)
-  if (st.cp.ctrl){ if (!st.cp.hold){ if (st.mode === 'demo'){ reconcile(); checkDependencies(); } schedule(); } if (craneTick(dt) || st.crane.queue.length) busy = true; }
+  if (st.cp.ctrl){ if (!st.cp.hold){ if (st.mode === 'demo'){ reconcile(); checkDependencies(); } schedule(); } if (!isShop() && (craneTick(dt) || st.crane.queue.length)) busy = true; }
+  if (isShop() && shopTick(dt)) busy = true;
   for (const n of st.nodes) if (n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
@@ -245,8 +288,8 @@ function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { con
 /* ---------- bootstrapping: an empty yard comes up in the real order ---------- */
 function bootstrap(){
   if (st.mode === 'live') return liveNote('kubeadm init (control plane), then kubeadm join on each node');
-  startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; st.said = {};
-  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; }
+  startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
+  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
   const ev = [
     [.2, () => say('b0', 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up')],
@@ -296,7 +339,7 @@ function applySnapshot(data, instant){
   data = normalize(data);
   const nodeNames = (data.nodes || []).map(n => n.name), sameNodes = nodeNames.length === st.nodes.length && nodeNames.every((n, i) => st.nodes[i].name === n);
   if (!sameNodes){ const old = new Map(st.nodes.map(n => [n.name, n]));
-    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1 }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
+    st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
     for (const p of st.pods){ if (!st.nodes.find(n => n.name === p.node)){ p.node = null; p.slot = null; p.pos = null; p.phase = 'pending'; } }
     for (const n of st.nodes){ n.used = new Set(); for (const p of st.pods) if (p.node === n.name && p.slot) n.used.add(slotKey(p.slot)); }
     layout(st); }
@@ -313,7 +356,7 @@ function applySnapshot(data, instant){
       const want = d.phase === 'Running' ? (d.ready ? 'running' : 'unready') : d.phase === 'Pending' ? 'pending' : d.phase === 'Failed' || d.phase === 'CrashLoopBackOff' ? 'crash' : d.phase === 'Succeeded' ? 'terminating' : 'running';
       if (p.node && p.node !== d.node){ removeFromNode(p); }
       if (!p.node && d.node){ const n = st.nodes.find(n => n.name === d.node); const sl = n && freeSlot(n);
-        if (n && sl && (instant || p.sys && !st.showSys)){ placePod(p, n, sl); p.phase = want === 'pending' ? 'creating' : want; p.ready = want === 'running'; }
+        if (n && sl && (instant || p.sys && !st.showSys)){ placePod(p, n, sl); p.phase = want === 'pending' ? 'creating' : want; p.ready = want === 'running'; if (n.cache) n.cache.add(p.app + ':' + p.ver); }
         else if (n && sl){ p.phase = 'pending'; }
         else { p.phase = 'pending'; } }
       else if (p.node && p.phase !== 'scheduled' && p.phase !== 'creating' && want !== 'pending'){
@@ -329,12 +372,12 @@ function applySnapshot(data, instant){
 }
 function removeFromNode(p){ const n = st.nodes.find(n => n.name === p.node); if (n && p.slot) n.used.delete(slotKey(p.slot)); p.node = null; p.slot = null; p.pos = null; }
 function startDemo(){
-  st.mode = 'demo'; stopLive(); st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; st.nodes = [];
+  st.mode = 'demo'; stopLive(); st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.nodes = [];
   applySnapshot(JSON.parse(JSON.stringify(DEMO)), true);
-  for (const n of st.nodes){ n.used = new Set(); n.tape = 0; n.cordoned = false; }
-  // the demo starts deployed: pods spread over the nodes, all Running
+  for (const n of st.nodes){ n.used = new Set(); n.tape = 0; n.cordoned = false; n.cache = new Set(); n.pull = null; }
+  // the demo starts deployed: pods spread over the nodes, all Running (so every node has those images cached)
   const order = ['web', 'api', 'db']; let i = 0;
-  for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; st.pods.push(p); } }
+  for (const app of order){ const dep = depOf(app); if (!dep) continue; for (let r = 0; r < dep.replicas; r++){ const p = makePod(dep); const n = st.nodes[i++ % st.nodes.length]; placePod(p, n, freeSlot(n)); p.phase = 'running'; p.ready = true; n.cache.add(p.app + ':' + p.ver); st.pods.push(p); } }
   markBands(); refreshRegistry(); layout(st); st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; st.crane.z = HZT; if (ui) reframe();
 }
 function stopLive(){ if (st.live.timer) clearInterval(st.live.timer); st.live.timer = 0; st.live.url = null; st.live.status = ''; }
@@ -344,14 +387,14 @@ async function pollOnce(first){
   catch (e){ st.live.status = 'error'; say('liveerr', `Could not read ${st.live.url}: ${e.message}`, 3200); ui.render(); }
 }
 function watchUrl(url, every){
-  stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = [];
-  for (const n of st.nodes) n.used = new Set();
+  stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = [];
+  for (const n of st.nodes){ n.used = new Set(); n.pull = null; }
   st.live.url = url; st.live.poll = every; pollOnce(true); if (every > 0) st.live.timer = setInterval(() => pollOnce(false), every*1000);
 }
 function loadFile(){
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
   inp.onchange = () => { const fl = inp.files[0]; if (!fl) return; fl.text().then(txt => { let data; try { data = JSON.parse(txt); } catch (e){ return say('badjson', 'That file is not JSON', 2600); }
-    stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.parcels = []; for (const n of st.nodes) n.used = new Set();
+    stopLive(); st.mode = 'live'; st.pods = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; for (const n of st.nodes){ n.used = new Set(); n.pull = null; }
     applySnapshot(data, true); st.live.status = 'file'; say('file', `Loaded ${fl.name}: ${st.pods.length} pods on ${st.nodes.length} nodes`); ui.render(); }); };
   inp.click();
 }
