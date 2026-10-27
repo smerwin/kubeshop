@@ -1552,7 +1552,7 @@ function rebuildStatic(){
     for (const n of st.nodes){ const c = cellBox(n); hatch(g, c.x0 - 1.4, c.y0 - 1.4, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y1, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y0, 1.4, c.y1 - c.y0); hatch(g, c.x1, c.y0, 1.4, c.y1 - c.y0); }
     line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.rotation.z = Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
   // trusses with lamps across the hall, and the pneumatic tube network along them
   for (let y = 30; y < D; y += 60){ S.add(box(-10, y - 1.5, TRUSS_Z, W + 10, y + 1.5, TRUSS_Z + 3, M(STEEL, { r: .4, m: .6 }), { r: 0 }));
     for (let x = 20; x < W; x += 50){ S.add(box(x - 4, y - 1.2, TRUSS_Z - 2.2, x + 4, y + 1.2, TRUSS_Z, M(DARKM, { r: .5 }), { r: .3 })); S.add(box(x - 3.4, y - .8, TRUSS_Z - 2.3, x + 3.4, y + .8, TRUSS_Z - 2.1, M('#fff4dc', { e: 1.8, r: .4 }), { r: 0, shadow: false })); } }
@@ -1655,7 +1655,7 @@ function bayLines(n){ const rows = cellRows(n), pos = [], dash = 1.2, gap = .9, 
 function mkNode(n){
   const g = new THREE.Group(), out = { g, cases: [], insides: [], key: '', crates: new THREE.Group(), crateKey: '' }, c = cellBox(n), cb = cabinet(n), rk = rackOf(n), m = m0();
   out.rise = new THREE.Group(); g.add(out.rise);
-  const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.rotation.z = Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, 1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => { g.translate(w, 0); g.scale(-1, 1); txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'); }, 12)));   // a decal lying flat reads mirrored from above unless flipped
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
