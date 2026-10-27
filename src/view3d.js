@@ -96,12 +96,9 @@ const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT)
   if ([...steps.values()].some(tag => !(tag === 'sim' && SPEED === 0))) drive(); };
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
-// a toast stays up for its simulated span: longer when the clock runs slow (up to 8 s), shorter when fast (never under 1.2 s); slowed down, the last few stay readable
-const toastLog = [];
+// a toast stays up for its simulated span: longer when the clock runs slow (up to 8 s), shorter when fast (never under 1.2 s)
 ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.size && !driving) lastT = performance.now(); steps.set(step, tag || 'ui'); drive(); },
-  flash: (text, ms = 1600) => { const t = document.getElementById('toast'), line = text[0].toUpperCase() + text.slice(1), hold = Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)));
-    toastLog.push(line); while (toastLog.length > 3) toastLog.shift(); const slow = SPEED > 0 && SPEED < 1, lines = slow ? toastLog : toastLog.slice(-1);
-    t.innerHTML = '<div class="lines">' + lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join('') + '</div>'; t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
+  flash: (text, ms = 1600) => Chrome.toast(text[0].toUpperCase() + text.slice(1), Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)))) };
 // the clock: pause holds every 'sim' step (the floor and the room freeze, the camera still flies); step advances one simulated slice
 function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
 function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }

@@ -46,11 +46,14 @@
   .clock button{font:700 10px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:999px;border:1.3px solid var(--ink);background:var(--paper);color:var(--ink);cursor:pointer}
   .clock button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
   html.yard .clock{display:none}
-  .toast .was{opacity:.55;font-weight:600} .toast .now{font-weight:700}
-  /* recent events: columns on a wide page, a short stack of rows on a phone and in full screen, each row clamped to two lines */
-  .toast .lines{display:flex;flex-wrap:wrap;gap:4px 14px;min-width:0} .toast .lines div{flex:1 1 150px;max-width:230px;overflow-wrap:anywhere}
-  html.yard .toast{top:auto;bottom:calc(76px + var(--sab) + var(--cardh,0px));left:calc(82px + var(--sal));right:calc(10px + var(--sar));width:auto;max-width:none;transform:none;align-items:flex-start}
-  html.yard .toast .lines,.toast.stack .lines{flex-direction:column;flex-wrap:nowrap;gap:3px} html.yard .toast .lines div,.toast.stack .lines div{flex:none;max-width:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* toasts: a stack of cards receding in space, the newest in front; older ones sit a step up, smaller and dimmer (transforms and opacity only) */
+  .toast{position:absolute;left:50%;top:6%;z-index:4;transform:translateX(-50%);display:grid;width:max-content;max-width:min(86%,440px);pointer-events:none}
+  .tc{grid-area:1/1;align-self:end;justify-self:stretch;max-width:100%;box-sizing:border-box;pointer-events:auto;cursor:pointer;display:flex;align-items:center;gap:8px;
+    font:600 12.5px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:#fff1bf;border:1px solid rgba(35,30,22,.28);border-radius:8px;box-shadow:0 8px 22px rgba(35,30,22,.16);
+    padding:7px 13px 7px 9px;transform-origin:50% 100%;will-change:transform,opacity;transition:transform .36s cubic-bezier(.16,1,.3,1),opacity .22s ease,filter .36s ease}
+  .tc::before{content:"!";flex:none;width:17px;height:17px;border-radius:50%;background:var(--ink);color:#fff1bf;font:800 11px/17px ui-monospace,Menlo,monospace;text-align:center}
+  .tc span{min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+  html.yard .toast{top:auto;bottom:calc(76px + var(--sab) + var(--cardh,0px));left:calc(82px + var(--sal));right:calc(10px + var(--sar));width:auto;max-width:none;transform:none}
   @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
   .vset{position:absolute;top:4px;right:0;z-index:2}.vrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
   .vrow .yardonly{display:none}
@@ -67,11 +70,6 @@
   .chip:hover{background:var(--accent,#f4b829);transform:translate(-1px,-1px)}
   .chip.current{background:var(--ink);color:var(--paper)} .chip.current:hover{background:var(--ink);transform:none}
   .chip.off{opacity:.45} .chip.off:hover{transform:none;background:var(--paper)}
-  .toast{position:absolute;left:50%;top:6%;z-index:4;transform:translate(-50%,8px);opacity:0;pointer-events:none;display:flex;align-items:center;gap:8px;
-    width:max-content;max-width:min(86%,440px);font:600 12.5px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:#fff1bf;
-    border:1px solid rgba(35,30,22,.28);border-radius:8px;box-shadow:0 8px 22px rgba(35,30,22,.16);padding:7px 13px 7px 9px;transition:opacity .18s ease,transform .18s ease}
-  .toast::before{content:"!";flex:none;width:17px;height:17px;border-radius:50%;background:var(--ink);color:#fff1bf;font:800 11px/17px ui-monospace,Menlo,monospace;text-align:center}
-  .toast.show{opacity:1;transform:translate(-50%,0)}
   .zchip{position:absolute;right:2px;bottom:6px;display:flex;align-items:center;gap:2px;font:600 11px ui-monospace,Menlo,monospace;
     background:rgba(242,239,231,.88);border:1px solid rgba(35,30,22,.25);border-radius:999px;padding:2px;z-index:3;user-select:none}
   .zchip button{all:unset;cursor:pointer;min-width:22px;height:22px;line-height:22px;text-align:center;border-radius:999px;color:var(--ink)}
@@ -142,7 +140,7 @@
     .actions{position:static;max-width:none;margin:6px 0 4px;flex-direction:row;flex-wrap:wrap;gap:6px}.act{font-size:12px;padding:4px 11px}
     .strip{position:static;flex-direction:row;flex-wrap:wrap;justify-content:flex-end;gap:12px 18px;margin-bottom:4px}.stats{flex-direction:row;gap:18px}.stat .v{font-size:20px}.clock{max-width:none;margin-top:0}
     .vset{position:static;margin:8px 0 2px}.chips{left:0;top:calc(100% + 8px)}
-    .zwrap{aspect-ratio:1/1.1}.toast{max-width:92%}.toast .lines{flex-direction:column;flex-wrap:nowrap;gap:3px}.toast .lines div{flex:none;max-width:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
+    .zwrap{aspect-ratio:1/1.1}.toast{max-width:92%}}
   /* ---------- yard mode: the canvas is the whole viewport and the page never scrolls ---------- */
   html.yard,html.yard body{height:100%;overflow:hidden;overscroll-behavior:none}
   html.yard body{padding:0;display:block;position:fixed;inset:0;width:100%}
@@ -1228,10 +1226,34 @@ function wireSwitches(){
 function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
+  const tst = $('#toast'); if (tst) tst.addEventListener('click', e => { e.stopPropagation(); fanToasts(); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });
 }
+/* ---------- toasts: a stack of cards receding in space, newest in front; tapping the stack fans them out for a moment ---------- */
+const TOAST = { max: 4, step: 8, scale: .96, gap: 6, fanMs: 2600 };
+const toasts = [];   // front first, each { el, h, timer, hold }
+let fanT = 0;
+function layoutToasts(){
+  const fan = fanT > 0, up = isYard(), h0 = toasts.length ? toasts[0].h : 0; let y = 0;
+  toasts.forEach((c, i) => {
+    let tf, op = 1, fl = 'none';
+    if (fan){ if (i) y += up ? -(toasts[i - 1].h + TOAST.gap) : c.h + TOAST.gap; tf = `translateY(${y}px)`; }
+    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + Math.max(0, h0 - s*c.h))}px) scale(${s})`; op = 1 - .22*i; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i})` : 'none'; }
+    c.el.style.transform = tf; c.el.style.opacity = op; c.el.style.filter = fl; c.el.style.zIndex = 20 - i; });
+}
+function dropToast(c, dy){ const i = toasts.indexOf(c); if (i < 0) return; toasts.splice(i, 1); clearTimeout(c.timer); const el = c.el;
+  el.style.pointerEvents = 'none'; el.style.opacity = 0; el.style.transform = `translateY(${dy}px) scale(${i ? .94 : 1})`; el.style.filter = 'none'; setTimeout(() => el.remove(), 320); }
+function expireToast(c){ if (fanT > 0){ c.timer = setTimeout(() => expireToast(c), Math.max(200, fanT - performance.now() + 200)); return; } dropToast(c, 10); layoutToasts(); }
+function toast(line, hold = 1600){
+  const t = $('#toast'); if (!t) return; const el = document.createElement('div'); el.className = 'tc'; el.innerHTML = `<span>${esc(line)}</span>`;
+  el.style.transform = 'translateY(14px) scale(1.04)'; el.style.opacity = 0; t.appendChild(el);
+  const c = { el, h: el.offsetHeight, hold };   // one measure, on arrival: the stack is laid out from these heights, never per frame
+  toasts.unshift(c); while (toasts.length > TOAST.max) dropToast(toasts[toasts.length - 1], -TOAST.step*TOAST.max);
+  c.timer = setTimeout(() => expireToast(c), hold); layoutToasts(); }
+function fanToasts(){ const t = $('#toast'); clearTimeout(t._fan); if (fanT > 0){ fanT = 0; t.classList.remove('fan'); layoutToasts(); return; }
+  fanT = performance.now() + TOAST.fanMs; t.classList.add('fan'); layoutToasts(); t._fan = setTimeout(() => { fanT = 0; t.classList.remove('fan'); layoutToasts(); }, TOAST.fanMs); }
 function tick(){ drawStats(); if (cardAct) renderCard(); }
-return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
+return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, toast, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
 })();
 
 </script>
@@ -1334,12 +1356,9 @@ const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT)
   if ([...steps.values()].some(tag => !(tag === 'sim' && SPEED === 0))) drive(); };
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
-// a toast stays up for its simulated span: longer when the clock runs slow (up to 8 s), shorter when fast (never under 1.2 s); slowed down, the last few stay readable
-const toastLog = [];
+// a toast stays up for its simulated span: longer when the clock runs slow (up to 8 s), shorter when fast (never under 1.2 s)
 ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.size && !driving) lastT = performance.now(); steps.set(step, tag || 'ui'); drive(); },
-  flash: (text, ms = 1600) => { const t = document.getElementById('toast'), line = text[0].toUpperCase() + text.slice(1), hold = Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)));
-    toastLog.push(line); while (toastLog.length > 3) toastLog.shift(); const slow = SPEED > 0 && SPEED < 1, lines = slow ? toastLog : toastLog.slice(-1);
-    t.innerHTML = '<div class="lines">' + lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join('') + '</div>'; t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
+  flash: (text, ms = 1600) => Chrome.toast(text[0].toUpperCase() + text.slice(1), Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)))) };
 // the clock: pause holds every 'sim' step (the floor and the room freeze, the camera still flies); step advances one simulated slice
 function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
 function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }

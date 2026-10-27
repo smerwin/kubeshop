@@ -681,7 +681,7 @@ const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT)
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
 ui = { st, render: invalidate, invalidate, animate: step => { if (!steps.size && !driving) lastT = performance.now(); steps.add(step); drive(); },
-  flash: (text, ms = 1600) => { const t = document.getElementById('toast'); t.textContent = text[0].toUpperCase() + text.slice(1); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), ms); } };
+  flash: (text, ms = 1600) => Chrome.toast(text[0].toUpperCase() + text.slice(1), ms) };
 window.ui = ui; window.__st = st;
 // for the browser checks: where a world point lands on the canvas (CSS px), the camera, and a zoom toward a point
 window.__proj = p => toScreen(p); window.__cam = cam; window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };

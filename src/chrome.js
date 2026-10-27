@@ -272,8 +272,32 @@ function wireSwitches(){
 function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
+  const tst = $('#toast'); if (tst) tst.addEventListener('click', e => { e.stopPropagation(); fanToasts(); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });
 }
+/* ---------- toasts: a stack of cards receding in space, newest in front; tapping the stack fans them out for a moment ---------- */
+const TOAST = { max: 4, step: 8, scale: .96, gap: 6, fanMs: 2600 };
+const toasts = [];   // front first, each { el, h, timer, hold }
+let fanT = 0;
+function layoutToasts(){
+  const fan = fanT > 0, up = isYard(), h0 = toasts.length ? toasts[0].h : 0; let y = 0;
+  toasts.forEach((c, i) => {
+    let tf, op = 1, fl = 'none';
+    if (fan){ if (i) y += up ? -(toasts[i - 1].h + TOAST.gap) : c.h + TOAST.gap; tf = `translateY(${y}px)`; }
+    else { const s = Math.pow(TOAST.scale, i); tf = `translateY(${-(TOAST.step*i + Math.max(0, h0 - s*c.h))}px) scale(${s})`; op = 1 - .22*i; fl = i ? `blur(${(.35*i).toFixed(2)}px) saturate(${1 - .12*i})` : 'none'; }
+    c.el.style.transform = tf; c.el.style.opacity = op; c.el.style.filter = fl; c.el.style.zIndex = 20 - i; });
+}
+function dropToast(c, dy){ const i = toasts.indexOf(c); if (i < 0) return; toasts.splice(i, 1); clearTimeout(c.timer); const el = c.el;
+  el.style.pointerEvents = 'none'; el.style.opacity = 0; el.style.transform = `translateY(${dy}px) scale(${i ? .94 : 1})`; el.style.filter = 'none'; setTimeout(() => el.remove(), 320); }
+function expireToast(c){ if (fanT > 0){ c.timer = setTimeout(() => expireToast(c), Math.max(200, fanT - performance.now() + 200)); return; } dropToast(c, 10); layoutToasts(); }
+function toast(line, hold = 1600){
+  const t = $('#toast'); if (!t) return; const el = document.createElement('div'); el.className = 'tc'; el.innerHTML = `<span>${esc(line)}</span>`;
+  el.style.transform = 'translateY(14px) scale(1.04)'; el.style.opacity = 0; t.appendChild(el);
+  const c = { el, h: el.offsetHeight, hold };   // one measure, on arrival: the stack is laid out from these heights, never per frame
+  toasts.unshift(c); while (toasts.length > TOAST.max) dropToast(toasts[toasts.length - 1], -TOAST.step*TOAST.max);
+  c.timer = setTimeout(() => expireToast(c), hold); layoutToasts(); }
+function fanToasts(){ const t = $('#toast'); clearTimeout(t._fan); if (fanT > 0){ fanT = 0; t.classList.remove('fan'); layoutToasts(); return; }
+  fanT = performance.now() + TOAST.fanMs; t.classList.add('fan'); layoutToasts(); t._fan = setTimeout(() => { fanT = 0; t.classList.remove('fan'); layoutToasts(); }, TOAST.fanMs); }
 function tick(){ drawStats(); if (cardAct) renderCard(); }
-return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
+return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, toast, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
 })();

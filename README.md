@@ -84,6 +84,10 @@ The **Clock** (next to the counts on a page, a pill among the switches in full s
 room's messages, how long a toast stays up), while the camera and the page stay in real time. `[` and `]` change the
 speed, `space` pauses; `?speed=` sets the start and the choice is remembered for the tab.
 
+Events arrive as **toasts**: a stack of cards, the newest in front and up to three older ones receding behind it, each
+one a step higher, smaller and dimmer. A card stays for its simulated span (so longer at 0.1x), and when the front one
+expires the next comes forward. Tap the stack to fan the cards out for a moment and read the older ones.
+
 Text is a function of zoom, drawn as screen-sized labels over the geometry: at the overview only the node names and the
 board's counts; from about two times closer every container's app and version and its GPU band; from about four times
 the pod name plates and the board's full rows. They fade between levels and never overlap. With **Labels** on, the
