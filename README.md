@@ -1,6 +1,6 @@
 # Longshore
 
-[![The Longshore yard: a Kubernetes cluster drawn as a container terminal](docs/longshore.png)](figure/longshore3d.html)
+[![The Longshore yard: a Kubernetes cluster drawn as a container terminal](docs/longshore.png)](https://smerwin.github.io/longshore/figure/longshore3d.html)
 
 An illustrated, interactive guide to Kubernetes drawn as a shipping-container terminal: pods are 20-foot containers,
 nodes are concrete docks with a kubelet booth, the scheduler is a gantry crane, the control plane is the harbour tower,
@@ -8,12 +8,12 @@ a Service is the kiosk and the Ingress is the gate. Every button is a real opera
 bootstrap, apply, scale, roll out, delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU
 scheduling, gang scheduling (a Volcano-style PodGroup that lands by parachute), drain, send a request.
 
-![Scaling web to 5: the crane fetches containers from the registry shelf and places them on the docks](docs/scale.gif)
+[![Scaling web to 5: the crane fetches containers from the registry shelf and places them on the docks](docs/scale.gif)](https://smerwin.github.io/longshore/figure/longshore3d.html?press=Scale>5@900)
 
-The figure itself is a web page, so a README can only show pictures of it. To run it, open `index.html` (the guide) or
-`figure/longshore3d.html` from a local web server, or push the repository to GitHub and turn on GitHub Pages for the
-default branch: the guide then lives at `https://<you>.github.io/longshore/` and the figure at
-`https://<you>.github.io/longshore/figure/longshore3d.html`, which is what these two images should link to.
+**Live:** the guide at <https://smerwin.github.io/longshore/> and the figure at
+<https://smerwin.github.io/longshore/figure/longshore3d.html> (GitHub Pages, built from `main`). A README can only
+show pictures of it; click either image to open the real thing. To run it locally, serve the folder with any static
+web server (`python3 -m http.server`) and open `index.html`.
 
 - `index.html` — the guide: sixteen chapters, each with prose, the kubectl commands and the figure preset to that scene.
 - `figure/longshore3d.html` — the figure: the yard in three.js with real depth, drawn in the hand-inked
