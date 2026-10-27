@@ -285,9 +285,9 @@ async function stopLeader(){ if (R.down != null) return cfg.say('etcd-down', 'On
 
 /* ---------- mount ---------- */
 function mount(host, c){ cfg = c; el = host;
-  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every yard operation</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"></div>`;
+  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every operation ${st.model === 'shop' ? 'on the floor' : 'in the yard'}</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"></div>`;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.log');
-  R.lastT = performance.now(); render(); logLine('Idle. Press a yard button and watch the messages.');
+  R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
 window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R };
 })();

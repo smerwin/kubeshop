@@ -15,7 +15,7 @@ pulling its image, one at a time per cell and in parallel across cells, slow fro
 
 **Live:** the guide at <https://smerwin.github.io/longshore/> and the figure at
 <https://smerwin.github.io/longshore/figure/shopfloor.html> (GitHub Pages, built from `main`; on a phone add `?yard=1`
-for the full-screen yard mode). A README can only show pictures of it; click either image to open the real thing. To run
+for the full-screen mode). A README can only show pictures of it; click either image to open the real thing. To run
 it locally, serve the folder with any static web server (`python3 -m http.server`) and open `index.html`.
 
 - `index.html` — the guide: sixteen chapters, each with prose, the kubectl commands and the figure preset to that scene.
@@ -25,7 +25,7 @@ it locally, serve the folder with any static web server (`python3 -m http.server
   to it and act on it, names appear as you get closer, See-through, Labels, Follow, and **Control room**: a schematic that
   animates what the control plane does for every operation (the API server pipeline, etcd's Raft group with a leader and
   term, the controllers' informer / queue / reconcile loops, the scheduler cycle, the kubelet sync loop). On a phone it
-  opens in **yard mode**: the whole screen, nothing scrolls, a toolbar at the thumb. It loads three r186 and a few of its
+  opens in **full-screen mode**: the whole screen, nothing scrolls, a toolbar at the thumb. It loads three r186 and a few of its
   addons from `figure/vendor/` through an import map (no build, works offline).
 - `figure/longshore3d.html` — the earlier draft: the same cluster as a container terminal (pods are containers, the
   scheduler is a crane) in the hand-inked [Colorfigures](https://april-zhu.com/colorfigures) look; `figure/longshore.html`
@@ -60,14 +60,14 @@ as job cards and come up from the cell's rack or the crib, deleted pods power do
 changes switch the andons. System pods (kube-system,
 DaemonSets) are hidden until `Cluster ▸ show system pods`.
 
-## Moving around the yard
+## Moving around
 
 The camera is a point of interest, a yaw, a pitch and a zoom, and every move is a short flight to a new one. One finger
 (or the mouse) orbits; a flick keeps turning and snaps onto the nearest of the four corner views; two fingers pinch to
 zoom about the pinch and pan; double-tap zooms in there, a two-finger tap zooms out; ctrl/cmd+wheel (a trackpad pinch)
-zooms anywhere, and in yard mode a mouse wheel zooms and a trackpad's two fingers pan. Arrow keys orbit, `+` `-` `0`
-zoom and reset, `f` is the front view. **Overview** frames the whole yard again; the compass in the corner shows where
-the gate (G), the tower (T) and the registry (R) are and turns with the camera (tap it for the front view).
+zooms anywhere, and in full-screen mode a mouse wheel zooms and a trackpad's two fingers pan. Arrow keys orbit, `+` `-` `0`
+zoom and reset, `f` is the front view. **Overview** frames the whole floor again; the compass in the corner shows where
+the dock (D), the office (O) and the crib (C) are and turns with the camera (tap it for the front view).
 
 Tap a machine, a cell or its cabinet, the office, the sorting station, the dock, the crib or a line on the order board:
 the camera flies to frame it and a card opens with its name, state and the actions that make sense there (a pod: delete,
@@ -82,10 +82,10 @@ board's counts; from about two times closer every container's app and version an
 the pod name plates and the board's full rows. They fade between levels and never overlap. With **Labels** on, the
 see-through callouts (CONTAINER, POD NETWORK, ETCD, SCHEDULER, ...) are chips you can tap for a short explanation.
 
-**Yard mode** (`?yard=1`, or any top-level window narrower than about 900 px, or the `Yard mode` switch) gives the canvas
+**Full-screen mode** (`?yard=1`, or any top-level window narrower than about 900 px, or the `Full screen` switch) gives the canvas
 the whole viewport: the page never scrolls, a slim strip on top carries the counts, the actions sit in a thumb-height
 toolbar at the bottom and open as sheets, the switches sit in a corner, and the control room and the chapter's prose
-slide up as sheets over the yard. In the guide, every chapter's `Open in yard mode` button opens the figure full screen
+slide up as sheets over the floor. In the guide, every chapter's `Open full screen` button opens the figure full screen
 with that chapter's parameters, and on a phone the figures open that way instead of embedding.
 
 ## Figure URL parameters
@@ -93,8 +93,8 @@ with that chapter's parameters, and on a phone the figures open that way instead
 All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the callout chips, `?text=0` no name labels,
 `?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
 `?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` starting state,
-`?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the crane and tower
-colour. The three.js figures also take `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
+`?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the trim colour (the office,
+the crib and the dock; the crane and tower in the yard). The three.js figures also take `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
 `?chapter=scale` to load that guide chapter's prose into the chapter sheet and play its camera move (frame the thing it
 is about, or follow the operation it presses).
 

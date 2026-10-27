@@ -164,11 +164,11 @@
 <header class="pagehead"><h1>Fig. K8 — Shop floor</h1><span>drag to turn · pinch or ctrl+wheel to zoom · tap a thing to fly to it</span></header>
 <div class="stage">
   <div class="actions" id="btns"></div>
-  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button><button class="act yardonly" id="folb" aria-pressed="false">Follow</button><button class="act yardonly" id="ovb">Overview</button><button class="act" id="yardb" aria-pressed="false">Yard mode</button></div></div>
+  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button><button class="act yardonly" id="folb" aria-pressed="false">Follow</button><button class="act yardonly" id="ovb">Overview</button><button class="act" id="yardb" aria-pressed="false">Full screen</button></div></div>
   <div class="strip" id="strip"><div class="ttl">Shop floor<button id="chapb" hidden>Chapter</button></div><div class="stats" id="stats"></div></div>
   <div class="zwrap" id="zwrap"><canvas id="gl"></canvas><div id="vig"></div><svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg><div id="lbls"></div>
     <div class="zchip"><button class="zm" aria-label="Zoom out">−</button><button class="zp" aria-label="Reset zoom">100%</button><button class="zi" aria-label="Zoom in">+</button></div>
-    <div class="compass" id="compass" title="Front view"><svg viewBox="-32 -32 64 64"><circle class="r" r="26"/><g class="m" id="cN"><path class="n" d="M0 -25L4 -17L-4 -17z"/></g><g class="m" id="cG"><text y="-1">G</text></g><g class="m" id="cT"><text y="-1">T</text></g><g class="m" id="cR"><text y="-1">R</text></g></svg></div>
+    <div class="compass" id="compass" title="Front view"><svg viewBox="-32 -32 64 64"><circle class="r" r="26"/><g class="m" id="cN"><path class="n" d="M0 -25L4 -17L-4 -17z"/></g><g class="m" id="cG"><text y="-1">D</text></g><g class="m" id="cT"><text y="-1">O</text></g><g class="m" id="cR"><text y="-1">C</text></g></svg></div>
     <div class="card" id="card"><button class="x" aria-label="Close">×</button><div class="kick"></div><h3></h3><div class="body"></div><div class="acts"></div></div>
     <div class="toast" id="toast" role="status"></div></div>
 </div>
@@ -226,7 +226,7 @@ const palOf = app => { if (!APP_PALS[app]) APP_PALS[app] = EXTRA_PALS[Object.key
 
 /* ---------- the demo cluster (the same shape tools/longshore.py writes; a raw kubectl List loads too) ---------- */
 const DEMO = {
-  context: 'demo-yard',
+  context: 'demo',
   nodes: [ { name:'node-a' }, { name:'node-b' }, { name:'node-c', gpus:2 } ],
   deployments: [
     { name:'web', app:'web', replicas:3, version:'v1', containers:[{ name:'nginx', image:'nginx:1.27' }], configMap:'web-config', dependsOn:'api' },
@@ -269,7 +269,17 @@ function layout(st){
   for (const p of st.pods) if (p.slot && p.node && st.crane.carry !== p && !NOPOS.has(p.phase)){ const n = ns.find(n => n.name === p.node); if (n) p.pos = slotPos(n, p.slot); }
 }
 const NOPOS = new Set(['scheduled', 'bound']);   // bound but not yet on the floor: the crane has it, or the job card is in the tube
-const OFFICE = [20, 22, 14];                      // where the job cards leave the planning office (shop)
+const OFFICE = [20, 22, 26];                      // where the job cards leave the planning office: the counter on the mezzanine (shop)
+// the words each figure's toasts use for the same Kubernetes fact
+const VOC = () => isShop() ? {
+  b0: 'kubeadm init: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the ledger drawers light; the cluster has a memory',
+  b2: 'kube-apiserver is serving on :6443: the counter opens and the tube pressurises; kubectl works from here on', b3: "kube-controller-manager and kube-scheduler are running: the dispatcher's desk opens and job cards can be issued",
+  bj: n => `kubeadm join: ${n} powers on its controller cabinet (kubelet and container runtime)`, br: n => `${n} registered with the API server and is Ready: its cell is open for job cards`,
+  bapp: 'kubectl apply -f app/: orders web x3, api x2 and db x1 posted on the board; their ReplicaSets raise the job cards', live: 'This is a real cluster and the floor only watches it' } : {
+  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the cluster has a memory (every object will live in that cabinet)',
+  b2: 'kube-apiserver is serving on :6443: kubectl works from here on', b3: 'kube-controller-manager and kube-scheduler are running: the crane powers up',
+  bj: n => `kubeadm join: ${n} is bootstrapping its kubelet and container runtime`, br: n => `${n} registered with the API server and is Ready (kube-proxy and the CNI are on it)`,
+  bapp: 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods', live: 'This is a real cluster and the yard only watches it' };
 const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has never pulled, one from its rack, powering the machine up
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
@@ -280,7 +290,8 @@ let ui;
 const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
   crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
   live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null };
-const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || (p.phase !== 'terminating')));
+// on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
+const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
 const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
 const imageOf = p => (p.containers[0] || {}).image || p.app;
@@ -407,11 +418,14 @@ function shopTick(dt){ let busy = false;
     if (c.t >= 1){ c.done = true; const p = c.pod, n = st.nodes.find(n => n.name === c.node); if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
   st.caps = st.caps.filter(c => !c.done);
   for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
-    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); if (p){ const key = p.app + ':' + p.ver, warm = n.cache.has(key);
+    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); const key = p && p.app + ':' + p.ver, warm = p && n.cache.has(key);
+      if (p && !warm && st.lastCold != null && st.t - st.lastCold < .35){ busy = true; continue; }   // two AGVs never leave for the crib lane in the same moment
+      if (p){ if (!warm) st.lastCold = st.t;
       n.pull = { pod: p, t: 0, dur: warm ? PULL.warm : PULL.cold, warm }; p.phase = 'pulling'; p.phaseT = 0;
       say(warm ? 'pullw' : 'pullc', warm ? `${n.name} already has ${imageOf(p)} in its image cache: no pull, the container starts at once` : `kubelet on ${n.name} is pulling ${imageOf(p)} from the registry (one pull at a time per node)`); } }
     if (n.pull){ n.pull.t += dt; busy = true;
-      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0; } } } }
+      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0;
+        say(p.gang ? 'staged-' + p.gang : 'start', p.gang ? `${n.name}: crate loaded for ${p.name}; the gang waits for every member's crate` : `${n.name}: crate loaded, the runtime starts ${imageOf(p)} (the machine powers up)`); } } } }
   const groups = {}; for (const p of st.pods) if (p.gang && ['dropping', 'queued', 'pulling', 'staged'].includes(p.phase)) (groups[p.gang] = groups[p.gang] || []).push(p);
   for (const ps of Object.values(groups)) if (ps.every(p => p.phase === 'staged')){ for (const p of ps){ p.phase = 'creating'; p.phaseT = 0; } st.strobe = 1.2; say('gangstart', `PodGroup ${ps[0].gang}: every cell has its image, all ${ps.length} machines start in sync`); }
   if (st.strobe > 0){ st.strobe = Math.max(0, st.strobe - dt); busy = true; }
@@ -452,7 +466,10 @@ function request(){
 }
 function makeParcel(p, svc){
   const n = p && st.nodes.find(n => n.name === p.node), pts = [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
-  if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
+  if (p && n && isShop()){ const [px, py, pz] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yt = y1 + 8, yd = y1 - 5;
+    // the corridor between cells, the cell's conveyor-side opening, the cross-aisle after the machine's row, the machine
+    pts.push([LANE, yt, 2.2], [x1 + 4, yt, 2.2], [x1 + 4, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
+  else if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
   return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0 };
 }
@@ -492,15 +509,15 @@ function bootstrap(){
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
   for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
-  const ev = [
-    [.2, () => say('b0', 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up')],
-    [1.6, () => { st.cp.etcd = 1; say('b1', 'etcd is up: the cluster has a memory (every object will live in that cabinet)'); }],
-    [3.0, () => { st.cp.api = 1; say('b2', 'kube-apiserver is serving on :6443: kubectl works from here on'); }],
-    [4.4, () => { st.cp.ctrl = 1; say('b3', 'kube-controller-manager and kube-scheduler are running: the crane powers up'); }] ];
-  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, `kubeadm join: ${n.name} is bootstrapping its kubelet and container runtime`); }]);
-    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, `${n.name} registered with the API server and is Ready (kube-proxy and the CNI are on it)`); }]); });
+  const V = VOC(); const ev = [
+    [.2, () => say('b0', V.b0)],
+    [1.6, () => { st.cp.etcd = 1; say('b1', V.b1); }],
+    [3.0, () => { st.cp.api = 1; say('b2', V.b2); }],
+    [4.4, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
+  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, V.bj(n.name)); }]);
+    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, V.br(n.name)); }]); });
   const tEnd = 6.0 + st.nodes.length*1.7 + .8;
-  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods'); }]);
+  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
   ev.push([tEnd + .3, () => { st.boot = null; }]);
   st.boot = { t: 0, i: 0, ev }; run();
 }
@@ -599,7 +616,7 @@ function loadFile(){
     applySnapshot(data, true); st.live.status = 'file'; say('file', `Loaded ${fl.name}: ${st.pods.length} pods on ${st.nodes.length} nodes`); ui.render(); }); };
   inp.click();
 }
-const liveNote = cmd => say('ro-' + cmd, `This is a real cluster and the yard only watches it. Run: ${cmd}`, 3400);
+const liveNote = cmd => say('ro-' + cmd, `${VOC().live}. Run: ${cmd}`, 3400);
 
 /* ---------- buttons ---------- */
 function scaleTo(app, n){ if (st.mode === 'live') return liveNote(`kubectl scale deploy/${app} --replicas=${n}`); const d = depOf(app); if (!d) return; d.replicas = n; say('scale', `kubectl scale deploy/${app} --replicas=${n}`); run(); }
@@ -917,9 +934,9 @@ async function stopLeader(){ if (R.down != null) return cfg.say('etcd-down', 'On
 
 /* ---------- mount ---------- */
 function mount(host, c){ cfg = c; el = host;
-  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every yard operation</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"></div>`;
+  el.innerHTML = `<div class="cap"><b>CONTROL ROOM</b><span>what the control plane does for every operation ${st.model === 'shop' ? 'on the floor' : 'in the yard'}</span></div><div class="scroll"><svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace"></svg></div><div class="log"></div>`;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.log');
-  R.lastT = performance.now(); render(); logLine('Idle. Press a yard button and watch the messages.');
+  R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
 window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R };
 })();
@@ -969,7 +986,7 @@ const BUTTONS = [
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
   { label:'Send a request', short:'Request', onClick: () => { request(); run(); } },
   { label:'Cluster', choices: () => [
-    { label:'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
+    { label: SHOP() ? 'the demo floor' : 'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
     { label:'open a kubectl JSON file', onClick: () => loadFile() },
     { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
     { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ];
@@ -1032,8 +1049,8 @@ function cardFrac(){ if (!isYard()) return .2; const r = card.getBoundingClientR
 const LAMP = c => `<span class="lamp" style="background:${c}"></span>`;
 const SHOP = () => st.model === 'shop';
 // the two drafts name their parts differently; the Kubernetes objects behind them are the same
-const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: 'Sorting station', gate: 'Receiving dock', registry: 'Tool crib', crane: 'Dispatcher', board: 'Order board', runs: 'kubelet cabinet, runtime drive, kube-proxy switch', pullNote: 'The cell\'s AGV fetches images from the crib; what it has fetched before sits on its rack.' }
-  : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.' };
+const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: 'Sorting station', gate: 'Receiving dock', registry: 'Tool crib', crane: 'Dispatcher', board: 'Order board', runs: 'kubelet cabinet, runtime drive, kube-proxy switch', pullNote: 'The cell\'s AGV fetches images from the crib; what it has fetched before sits on its rack.', kick: 'On the floor', inflight: 'parts on the conveyor now', boot: 'empty the floor and bring it up in order' }
+  : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.', kick: 'In the yard', inflight: 'requests in the yard now', boot: 'empty the yard and bring it up in order' };
 const phaseText = p => p.phase === 'pending' ? 'Pending' : p.phase === 'scheduled' ? 'Bound, waiting for the crane' : p.phase === 'bound' ? 'Bound: the job card is in the tube to the cell' : p.phase === 'queued' ? 'Bound, waiting for the cell\'s image pull' : p.phase === 'pulling' ? 'ContainerCreating: the cell is pulling the image' : p.phase === 'staged' ? 'Image ready, waiting for the rest of the gang'
   : p.phase === 'creating' ? (SHOP() ? 'ContainerCreating: the machine is powering up' : 'ContainerCreating (pulling the image)') : p.phase === 'dropping' ? (SHOP() ? 'Bound as a gang, job cards in the tube' : 'Bound as a gang, landing')
   : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? 'Terminating' : p.phase === 'done' ? 'Succeeded' : p.phase;
@@ -1064,6 +1081,8 @@ const EXPLAIN = {
   'SERVICE': 'A stable name and virtual IP that forwards to whichever pods match its selector and are Ready.',
   'INGRESS': 'The HTTP front door: hostnames and paths routed to Services.',
   'GATE': 'The way traffic enters the yard from outside.',
+  'CELL': 'A Node: a fenced work cell with room for a number of machines, its own controller cabinet (the kubelet) and switch (kube-proxy).',
+  'OFFICE': 'The control plane: the counter (API server), the ledger (etcd), the dispatcher (scheduler) and the order board (the controllers).',
   'MACHINE': 'A Pod: a machine running a program. Everything inside it (its program cartridges, data port, pallet) is placed and moved as one thing.',
   'PROGRAM': 'A container: a program cartridge slotted into the machine. Sidecars are smaller cartridges in the same machine, sharing its data port and pallet.',
   'DATA PORT': 'The pod\'s one IP and port space, patched to the cell\'s kube-proxy switch.',
@@ -1104,14 +1123,14 @@ function cardFor(a){
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
       row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) + '</table>',
-      acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title:'empty the yard and bring it up in order', onClick: () => bootstrap() } ] }; }
+      acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title: T().boot, onClick: () => bootstrap() } ] }; }
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
       (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
-    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} in the yard now`)}</table>`,
+    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}</table>`,
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'registry'){ return { kick: 'Image registry', title: T().registry, body: `<table>${st.regApps.map(app => { const d = depOf(app); return row(esc(app), esc(d && d.containers && d.containers[0] ? d.containers[0].image : app) + (d ? ` · ${esc(d.version)}` : '')); }).join('') || row('Images', 'none')}</table><p style="color:var(--muted);margin-top:6px">${T().pullNote}</p>`,
       acts: [ { label:'apply…', onClick: () => press('Apply') } ] }; }
@@ -1127,7 +1146,7 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
-  if (a.type === 'explain') return { kick: 'In the yard', title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
+  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
   return null;
 }
 function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c){ hideCard(); return; }
@@ -1506,7 +1525,9 @@ function tubePath(n){ const d = cellDoor(n); return [[OFFICE[0], OFFICE[1], OFFI
 function along(pts, t){ const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i + 1]); segs.push([L, l, i]); L += l; } const d = t*L;
   for (const [s0, l, i] of segs) if (d <= s0 + l + 1e-6) return lerp3(pts[i], pts[i + 1], l ? (d - s0)/l : 0); return pts[pts.length - 1]; }
 // the AGV's run: cabinet to the crib's door (a cold pull) or just to the rack (a warm one), and back
-function agvPath(n, warm){ const h = agvHome(n), r = rackOf(n), c = CRIB(); return warm ? [h, [h[0], r.y1 + 2, 0]] : [h, [h[0], c.y0 - 8, 0], [c.x1 + 5, c.y0 - 8, 0]]; }
+// the AGV's lane runs in front of the cabinets (x0 - 14, between the office side and the cells); a back row reaches it by the corridor at the far end of the floor
+function agvPath(n, warm){ const h = agvHome(n), r = rackOf(n), c = CRIB(), lx = n.x0 - 14, door = [c.x1 + 5, c.y0 - 8, 0]; if (warm) return [h, [h[0], r.y1 + 2, 0]];
+  return n.row ? [h, [lx, h[1], 0], [lx, D - 6, 0], [SX0 - 14, D - 6, 0], [SX0 - 14, c.y0 - 8, 0], door] : [h, [lx, h[1], 0], [lx, c.y0 - 8, 0], door]; }
 
 /* ---------- scene ---------- */
 const scene = new THREE.Scene(); scene.background = new THREE.Color('#b8b4ac');
@@ -1525,7 +1546,9 @@ function rebuildStatic(){
     rect(g, 0, 0, w, h, CONCRETE); for (let i = 0; i < 1800; i++){ g.fillStyle = `rgba(${60 + Math.random()*40|0},${60 + Math.random()*40|0},${60 + Math.random()*35|0},${.05 + Math.random()*.08})`; g.fillRect(Math.random()*w, Math.random()*h, .6 + Math.random()*1.6, .6 + Math.random()*1.6); }
     hatch(g, 0, 0, 2.2, h); hatch(g, w - 2.2, 0, 2.2, h); hatch(g, 0, 0, w, 2.2); hatch(g, 0, h - 2.2, w, 2.2);
     rect(g, W - 30, 0, 18, D, '#8f8c85'); line(g, [[W - 30, 0], [W - 30, D]], WHITE, .9); line(g, [[W - 12, 0], [W - 12, D]], WHITE, .9);
-    for (const n of st.nodes) if (n.row === 0){ const y = n.y0 + SLW/2; line(g, [[W - 30, y], [n.x0 + n.depth + 2, y]], WHITE, .8, [3, 3]); }
+    for (const n of st.nodes){ const x1 = n.x0 + n.depth, y1 = n.y0 + SLW; line(g, [[W - 30, y1 + 8], [x1 + 4, y1 + 8], [x1 + 4, y1 - 5], [x1, y1 - 5]], WHITE, .8, [3, 3]);
+      const lx = n.x0 - 14; line(g, [[lx, n.y0 + 4], [lx, n.row ? D - 6 : REG_Y0 - 12]], '#e3c766', .8, [2, 3]); if (n.row) line(g, [[lx, D - 6], [SX0 - 14, D - 6]], '#e3c766', .8, [2, 3]); }
+    line(g, [[SX0 - 14, REG_Y0 - 12], [30, REG_Y0 - 12]], '#e3c766', .8, [2, 3]);
     for (const n of st.nodes){ const c = cellBox(n); hatch(g, c.x0 - 1.4, c.y0 - 1.4, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y1, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y0, 1.4, c.y1 - c.y0); hatch(g, c.x1, c.y0, 1.4, c.y1 - c.y0); }
     line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
@@ -1630,7 +1653,8 @@ function mkNode(n){
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, 1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => { g.translate(w, 0); g.scale(-1, 1); txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'); }, 12)));   // a decal lying flat reads mirrored from above unless flipped
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
-  const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];
+  const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1 - 9]], [[c.x1, c.y1 - 1], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];   // the gap at y1-9..y1-1 is the parts' way in
+  for (const y of [c.y1 - 9, c.y1 - 1]) out.rise.add(cyl(c.x1, y, 0, 9.6, .7, M(DARKM, { r: .4 }), { n: 10 }));
   for (const [a, b] of edges){ const L = Math.hypot(b[0] - a[0], b[1] - a[1]), nseg = Math.max(1, Math.round(L/16));
     for (let i = 0; i <= nseg; i++){ const t = i/nseg; out.rise.add(cyl(a[0] + (b[0] - a[0])*t, a[1] + (b[1] - a[1])*t, 0, 9, .5, postM, { n: 8 })); }
     const p = new THREE.Mesh(boxG(L, 7.5, .15), panelM); p.position.copy(V3((a[0] + b[0])/2, (a[1] + b[1])/2, 5)); p.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]); p.castShadow = false; out.rise.add(p);
@@ -1825,11 +1849,11 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = s
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
     items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   else { const ing = st.ingresses[0], gn = st.nodes.find(n => n.gpus && n.joined >= 1);
-    if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'NODE', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
+    if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'CELL', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
     if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }); if (p0.pvc) items.push({ at:[x + MW/2, y - .4, z + .3], text:'PALLET', on:false }); }
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
-    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'CONTROL', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
+    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
       { at:[s.x1, (s.y0 + s.y1)/2, 16], text:'STATION', on: st.parcels.length > 0 }, { at:[(d.x0 + d.x1)/2, d.y1, 24], text: ing ? 'DOCK' : 'DOCK', on: st.boom > .5 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   return items; }
 function pickAct(h){ const a = h.object.userData.act; if (a && a.type === 'board'){ const rows = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5), zTop = OFF.z1 - 3 - 1.9, i = Math.floor((zTop - h.point.y)/1.7); if (rows[i] && i >= 0) return { type:'app', app: rows[i].app }; } return a; }

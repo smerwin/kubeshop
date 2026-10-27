@@ -25,7 +25,7 @@ const palOf = app => { if (!APP_PALS[app]) APP_PALS[app] = EXTRA_PALS[Object.key
 
 /* ---------- the demo cluster (the same shape tools/longshore.py writes; a raw kubectl List loads too) ---------- */
 const DEMO = {
-  context: 'demo-yard',
+  context: 'demo',
   nodes: [ { name:'node-a' }, { name:'node-b' }, { name:'node-c', gpus:2 } ],
   deployments: [
     { name:'web', app:'web', replicas:3, version:'v1', containers:[{ name:'nginx', image:'nginx:1.27' }], configMap:'web-config', dependsOn:'api' },
@@ -68,7 +68,17 @@ function layout(st){
   for (const p of st.pods) if (p.slot && p.node && st.crane.carry !== p && !NOPOS.has(p.phase)){ const n = ns.find(n => n.name === p.node); if (n) p.pos = slotPos(n, p.slot); }
 }
 const NOPOS = new Set(['scheduled', 'bound']);   // bound but not yet on the floor: the crane has it, or the job card is in the tube
-const OFFICE = [20, 22, 14];                      // where the job cards leave the planning office (shop)
+const OFFICE = [20, 22, 26];                      // where the job cards leave the planning office: the counter on the mezzanine (shop)
+// the words each figure's toasts use for the same Kubernetes fact
+const VOC = () => isShop() ? {
+  b0: 'kubeadm init: an empty floor and a dark office. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the ledger drawers light; the cluster has a memory',
+  b2: 'kube-apiserver is serving on :6443: the counter opens and the tube pressurises; kubectl works from here on', b3: "kube-controller-manager and kube-scheduler are running: the dispatcher's desk opens and job cards can be issued",
+  bj: n => `kubeadm join: ${n} powers on its controller cabinet (kubelet and container runtime)`, br: n => `${n} registered with the API server and is Ready: its cell is open for job cards`,
+  bapp: 'kubectl apply -f app/: orders web x3, api x2 and db x1 posted on the board; their ReplicaSets raise the job cards', live: 'This is a real cluster and the floor only watches it' } : {
+  b0: 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up', b1: 'etcd is up: the cluster has a memory (every object will live in that cabinet)',
+  b2: 'kube-apiserver is serving on :6443: kubectl works from here on', b3: 'kube-controller-manager and kube-scheduler are running: the crane powers up',
+  bj: n => `kubeadm join: ${n} is bootstrapping its kubelet and container runtime`, br: n => `${n} registered with the API server and is Ready (kube-proxy and the CNI are on it)`,
+  bapp: 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods', live: 'This is a real cluster and the yard only watches it' };
 const PULL = { cold: 1.4, warm: .25, start: .5 };  // an image the cell has never pulled, one from its rack, powering the machine up
 const regIndex = (st, app) => { const i = st.regApps.indexOf(app); return i < 0 ? -1 : i; };
 const regPos = (st, app) => { const i = Math.max(0, regIndex(st, app)); return [9, REG_Y0 + 4 + i*REG_GAP, 2 + 2*PH]; };
@@ -79,7 +89,8 @@ let ui;
 const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], services:[], ingresses:[], regApps:[], seq:0,
   crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
   live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null };
-const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || (p.phase !== 'terminating')));
+// on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
+const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
 const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
 const imageOf = p => (p.containers[0] || {}).image || p.app;
@@ -206,11 +217,14 @@ function shopTick(dt){ let busy = false;
     if (c.t >= 1){ c.done = true; const p = c.pod, n = st.nodes.find(n => n.name === c.node); if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
   st.caps = st.caps.filter(c => !c.done);
   for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
-    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); if (p){ const key = p.app + ':' + p.ver, warm = n.cache.has(key);
+    if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); const key = p && p.app + ':' + p.ver, warm = p && n.cache.has(key);
+      if (p && !warm && st.lastCold != null && st.t - st.lastCold < .35){ busy = true; continue; }   // two AGVs never leave for the crib lane in the same moment
+      if (p){ if (!warm) st.lastCold = st.t;
       n.pull = { pod: p, t: 0, dur: warm ? PULL.warm : PULL.cold, warm }; p.phase = 'pulling'; p.phaseT = 0;
       say(warm ? 'pullw' : 'pullc', warm ? `${n.name} already has ${imageOf(p)} in its image cache: no pull, the container starts at once` : `kubelet on ${n.name} is pulling ${imageOf(p)} from the registry (one pull at a time per node)`); } }
     if (n.pull){ n.pull.t += dt; busy = true;
-      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0; } } } }
+      if (n.pull.t >= n.pull.dur){ const p = n.pull.pod; n.cache.add(p.app + ':' + p.ver); n.pull = null; if (p.phase === 'pulling'){ p.phase = p.gang ? 'staged' : 'creating'; p.phaseT = 0;
+        say(p.gang ? 'staged-' + p.gang : 'start', p.gang ? `${n.name}: crate loaded for ${p.name}; the gang waits for every member's crate` : `${n.name}: crate loaded, the runtime starts ${imageOf(p)} (the machine powers up)`); } } } }
   const groups = {}; for (const p of st.pods) if (p.gang && ['dropping', 'queued', 'pulling', 'staged'].includes(p.phase)) (groups[p.gang] = groups[p.gang] || []).push(p);
   for (const ps of Object.values(groups)) if (ps.every(p => p.phase === 'staged')){ for (const p of ps){ p.phase = 'creating'; p.phaseT = 0; } st.strobe = 1.2; say('gangstart', `PodGroup ${ps[0].gang}: every cell has its image, all ${ps.length} machines start in sync`); }
   if (st.strobe > 0){ st.strobe = Math.max(0, st.strobe - dt); busy = true; }
@@ -251,7 +265,10 @@ function request(){
 }
 function makeParcel(p, svc){
   const n = p && st.nodes.find(n => n.name === p.node), pts = [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
-  if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
+  if (p && n && isShop()){ const [px, py, pz] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yt = y1 + 8, yd = y1 - 5;
+    // the corridor between cells, the cell's conveyor-side opening, the cross-aisle after the machine's row, the machine
+    pts.push([LANE, yt, 2.2], [x1 + 4, yt, 2.2], [x1 + 4, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
+  else if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
   return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0 };
 }
@@ -291,15 +308,15 @@ function bootstrap(){
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
   for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
-  const ev = [
-    [.2, () => say('b0', 'kubeadm init: an empty yard. Nothing can be scheduled until the control plane is up')],
-    [1.6, () => { st.cp.etcd = 1; say('b1', 'etcd is up: the cluster has a memory (every object will live in that cabinet)'); }],
-    [3.0, () => { st.cp.api = 1; say('b2', 'kube-apiserver is serving on :6443: kubectl works from here on'); }],
-    [4.4, () => { st.cp.ctrl = 1; say('b3', 'kube-controller-manager and kube-scheduler are running: the crane powers up'); }] ];
-  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, `kubeadm join: ${n.name} is bootstrapping its kubelet and container runtime`); }]);
-    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, `${n.name} registered with the API server and is Ready (kube-proxy and the CNI are on it)`); }]); });
+  const V = VOC(); const ev = [
+    [.2, () => say('b0', V.b0)],
+    [1.6, () => { st.cp.etcd = 1; say('b1', V.b1); }],
+    [3.0, () => { st.cp.api = 1; say('b2', V.b2); }],
+    [4.4, () => { st.cp.ctrl = 1; say('b3', V.b3); }] ];
+  st.nodes.forEach((n, i) => { ev.push([6.0 + i*1.7, () => { n.joined = .001; say('bj' + i, V.bj(n.name)); }]);
+    ev.push([6.0 + i*1.7 + 1.1, () => { n.ready = true; say('br' + i, V.br(n.name)); }]); });
   const tEnd = 6.0 + st.nodes.length*1.7 + .8;
-  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', 'kubectl apply -f app/: Deployments web, api and db created; their ReplicaSets want 3, 2 and 1 Pods'); }]);
+  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
   ev.push([tEnd + .3, () => { st.boot = null; }]);
   st.boot = { t: 0, i: 0, ev }; run();
 }
@@ -398,7 +415,7 @@ function loadFile(){
     applySnapshot(data, true); st.live.status = 'file'; say('file', `Loaded ${fl.name}: ${st.pods.length} pods on ${st.nodes.length} nodes`); ui.render(); }); };
   inp.click();
 }
-const liveNote = cmd => say('ro-' + cmd, `This is a real cluster and the yard only watches it. Run: ${cmd}`, 3400);
+const liveNote = cmd => say('ro-' + cmd, `${VOC().live}. Run: ${cmd}`, 3400);
 
 /* ---------- buttons ---------- */
 function scaleTo(app, n){ if (st.mode === 'live') return liveNote(`kubectl scale deploy/${app} --replicas=${n}`); const d = depOf(app); if (!d) return; d.replicas = n; say('scale', `kubectl scale deploy/${app} --replicas=${n}`); run(); }

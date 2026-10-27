@@ -41,7 +41,7 @@ const BUTTONS = [
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
   { label:'Send a request', short:'Request', onClick: () => { request(); run(); } },
   { label:'Cluster', choices: () => [
-    { label:'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
+    { label: SHOP() ? 'the demo floor' : 'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
     { label:'open a kubectl JSON file', onClick: () => loadFile() },
     { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
     { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ];
@@ -104,8 +104,8 @@ function cardFrac(){ if (!isYard()) return .2; const r = card.getBoundingClientR
 const LAMP = c => `<span class="lamp" style="background:${c}"></span>`;
 const SHOP = () => st.model === 'shop';
 // the two drafts name their parts differently; the Kubernetes objects behind them are the same
-const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: 'Sorting station', gate: 'Receiving dock', registry: 'Tool crib', crane: 'Dispatcher', board: 'Order board', runs: 'kubelet cabinet, runtime drive, kube-proxy switch', pullNote: 'The cell\'s AGV fetches images from the crib; what it has fetched before sits on its rack.' }
-  : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.' };
+const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: 'Sorting station', gate: 'Receiving dock', registry: 'Tool crib', crane: 'Dispatcher', board: 'Order board', runs: 'kubelet cabinet, runtime drive, kube-proxy switch', pullNote: 'The cell\'s AGV fetches images from the crib; what it has fetched before sits on its rack.', kick: 'On the floor', inflight: 'parts on the conveyor now', boot: 'empty the floor and bring it up in order' }
+  : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.', kick: 'In the yard', inflight: 'requests in the yard now', boot: 'empty the yard and bring it up in order' };
 const phaseText = p => p.phase === 'pending' ? 'Pending' : p.phase === 'scheduled' ? 'Bound, waiting for the crane' : p.phase === 'bound' ? 'Bound: the job card is in the tube to the cell' : p.phase === 'queued' ? 'Bound, waiting for the cell\'s image pull' : p.phase === 'pulling' ? 'ContainerCreating: the cell is pulling the image' : p.phase === 'staged' ? 'Image ready, waiting for the rest of the gang'
   : p.phase === 'creating' ? (SHOP() ? 'ContainerCreating: the machine is powering up' : 'ContainerCreating (pulling the image)') : p.phase === 'dropping' ? (SHOP() ? 'Bound as a gang, job cards in the tube' : 'Bound as a gang, landing')
   : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? 'Terminating' : p.phase === 'done' ? 'Succeeded' : p.phase;
@@ -136,6 +136,8 @@ const EXPLAIN = {
   'SERVICE': 'A stable name and virtual IP that forwards to whichever pods match its selector and are Ready.',
   'INGRESS': 'The HTTP front door: hostnames and paths routed to Services.',
   'GATE': 'The way traffic enters the yard from outside.',
+  'CELL': 'A Node: a fenced work cell with room for a number of machines, its own controller cabinet (the kubelet) and switch (kube-proxy).',
+  'OFFICE': 'The control plane: the counter (API server), the ledger (etcd), the dispatcher (scheduler) and the order board (the controllers).',
   'MACHINE': 'A Pod: a machine running a program. Everything inside it (its program cartridges, data port, pallet) is placed and moved as one thing.',
   'PROGRAM': 'A container: a program cartridge slotted into the machine. Sidecars are smaller cartridges in the same machine, sharing its data port and pallet.',
   'DATA PORT': 'The pod\'s one IP and port space, patched to the cell\'s kube-proxy switch.',
@@ -176,14 +178,14 @@ function cardFor(a){
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
       row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) + '</table>',
-      acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title:'empty the yard and bring it up in order', onClick: () => bootstrap() } ] }; }
+      acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title: T().boot, onClick: () => bootstrap() } ] }; }
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
       (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
-    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} in the yard now`)}</table>`,
+    return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}</table>`,
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'registry'){ return { kick: 'Image registry', title: T().registry, body: `<table>${st.regApps.map(app => { const d = depOf(app); return row(esc(app), esc(d && d.containers && d.containers[0] ? d.containers[0].image : app) + (d ? ` · ${esc(d.version)}` : '')); }).join('') || row('Images', 'none')}</table><p style="color:var(--muted);margin-top:6px">${T().pullNote}</p>`,
       acts: [ { label:'apply…', onClick: () => press('Apply') } ] }; }
@@ -199,7 +201,7 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
-  if (a.type === 'explain') return { kick: 'In the yard', title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
+  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
   return null;
 }
 function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c){ hideCard(); return; }

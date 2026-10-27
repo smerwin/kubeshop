@@ -61,9 +61,9 @@
   <div>
     <div class="num">Fig. 0 · the whole thing</div>
     <h2>A cluster is a job shop</h2>
-    <p>Kubernetes borrowed its words from this floor: jobs, scheduling, workers, queues. So nothing has to stretch. It moves like a map: drag to turn it round, pinch or ctrl+wheel to zoom, double-tap to zoom in, two-finger tap to zoom out. Tap a machine, a cell, the office, the crib, the dock, the sorting station or a line on the order board and the camera flies to it and a card opens with its state and the actions that make sense there. <strong>Labels</strong> names the parts as you get closer; <strong>See-through</strong> opens the machines, the cabinets and the office; <strong>Follow</strong> keeps the camera on whatever the job card, the AGV or a part is doing; <strong>Control room</strong> opens the schematic of the control plane. On a phone, <em>Open in yard mode</em> gives the figure the whole screen with the chapter's text a tap away.</p>
+    <p>Kubernetes borrowed its words from this floor: jobs, scheduling, workers, queues. So nothing has to stretch. It moves like a map: drag to turn it round, pinch or ctrl+wheel to zoom, double-tap to zoom in, two-finger tap to zoom out. Tap a machine, a cell, the office, the crib, the dock, the sorting station or a line on the order board and the camera flies to it and a card opens with its state and the actions that make sense there. <strong>Labels</strong> names the parts as you get closer; <strong>See-through</strong> opens the machines, the cabinets and the office; <strong>Follow</strong> keeps the camera on whatever the job card, the AGV or a part is doing; <strong>Control room</strong> opens the schematic of the control plane. On a phone, <em>Open full screen</em> gives the figure the whole screen with the chapter's text a tap away.</p>
   </div>
-  <div class="figwrap" data-ch="yard" data-src="figure/shopfloor.html?chapter=yard"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=yard">Open in yard mode ↗</a><div class="poster"><b>Load the floor</b><span>interactive · real light · turns all the way round</span></div></div>
+  <div class="figwrap" data-ch="yard" data-src="figure/shopfloor.html?chapter=yard"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=yard">Open full screen ↗</a><div class="poster"><b>Load the floor</b><span>interactive · real light · turns all the way round</span></div></div>
   <div>
     <table class="key">
       <tr><th>On the floor</th><th>In Kubernetes</th><th>Why it fits</th></tr>
@@ -100,7 +100,7 @@ kubeadm join 10.0.0.1:6443 --token ... --discovery-token-ca-cert-hash ...
 kubectl get nodes --watch                      <span class="c"># NotReady -> Ready</span>
 kubectl apply -f app/</pre>
   </div>
-  <div class="figwrap" data-ch="boot" data-src="figure/shopfloor.html?chapter=boot&boot=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=boot&boot=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
+  <div class="figwrap" data-ch="boot" data-src="figure/shopfloor.html?chapter=boot&boot=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=boot&boot=1">Open full screen ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
 </section>
 
 <section class="ch" id="pods">
@@ -116,7 +116,7 @@ kubectl describe pod web-6b8fd-xk2p9
 kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
     <p class="try">Try: tap a machine for its name, cell, programs, restarts and pallet.</p>
   </div>
-  <div class="figwrap" data-ch="pods" data-src="figure/shopfloor.html?chapter=pods&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=pods&xr=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
+  <div class="figwrap" data-ch="pods" data-src="figure/shopfloor.html?chapter=pods&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=pods&xr=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
 </section>
 
 <section class="ch" id="nodes">
@@ -130,7 +130,7 @@ kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
 kubectl describe node node-a      <span class="c"># capacity, allocated, conditions, Images: (the cache)</span>
 kubectl top node                   <span class="c"># live usage (metrics-server)</span></pre>
   </div>
-  <div class="figwrap" data-ch="nodes" data-src="figure/shopfloor.html?chapter=nodes&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=nodes&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
+  <div class="figwrap" data-ch="nodes" data-src="figure/shopfloor.html?chapter=nodes&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=nodes&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
 </section>
 
 <section class="ch" id="control">
@@ -144,7 +144,7 @@ kubectl top node                   <span class="c"># live usage (metrics-server)
 kubectl get events --sort-by=.lastTimestamp
 kubectl get rs                      <span class="c"># the ReplicaSets a Deployment made</span></pre>
   </div>
-  <div class="figwrap" data-ch="control" data-src="figure/shopfloor.html?chapter=control&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=control&xr=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the office</span></div></div>
+  <div class="figwrap" data-ch="control" data-src="figure/shopfloor.html?chapter=control&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=control&xr=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the office</span></div></div>
 </section>
 
 <section class="ch" id="room">
@@ -163,7 +163,7 @@ ETCDCTL_API=3 etcdctl endpoint status --cluster -w table   <span class="c"># lea
 ETCDCTL_API=3 etcdctl member list</pre>
     <p class="try">Try: scale to 8, then stop the etcd leader while the ReplicaSet is still creating pods, and watch the writes queue at the API server until the new leader is elected.</p>
   </div>
-  <div class="figwrap tall" data-ch="room" data-src="figure/shopfloor.html?chapter=room&room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=room&room=1&press=Scale>5@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
+  <div class="figwrap tall" data-ch="room" data-src="figure/shopfloor.html?chapter=room&room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=room&room=1&press=Scale>5@900">Open full screen ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="apply">
@@ -189,7 +189,7 @@ kubectl apply -f cache.yaml
 kubectl rollout status deploy/cache
 kubectl delete -f cache.yaml        <span class="c"># and the pods go with it</span></pre>
   </div>
-  <div class="figwrap" data-ch="apply" data-src="figure/shopfloor.html?chapter=apply&press=Apply>cache@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=apply&press=Apply>cache@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
+  <div class="figwrap" data-ch="apply" data-src="figure/shopfloor.html?chapter=apply&press=Apply>cache@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=apply&press=Apply>cache@900">Open full screen ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
 </section>
 
 <section class="ch" id="scale">
@@ -205,7 +205,7 @@ kubectl describe node node-a | grep -A20 Images <span class="c"># what the node 
 kubectl autoscale deploy/web --min=3 --max=10 --cpu-percent=70</pre>
     <p class="try">Try: scale to 8, then <kbd>Drain</kbd> a cell and watch where the evicted cards land.</p>
   </div>
-  <div class="figwrap" data-ch="scale" data-src="figure/shopfloor.html?chapter=scale&press=Scale>8@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=scale&press=Scale>8@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
+  <div class="figwrap" data-ch="scale" data-src="figure/shopfloor.html?chapter=scale&press=Scale>8@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=scale&press=Scale>8@900">Open full screen ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="rollout">
@@ -220,7 +220,7 @@ kubectl rollout history deploy/web
 kubectl rollout undo deploy/web      <span class="c"># back to the previous ReplicaSet (already cached on every node)</span></pre>
     <p class="try">Try: <kbd>Roll out ▸ web back to v1</kbd> to watch the undo come up fast from every rack.</p>
   </div>
-  <div class="figwrap" data-ch="rollout" data-src="figure/shopfloor.html?chapter=rollout&press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=rollout&press=Roll out>web v2@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
+  <div class="figwrap" data-ch="rollout" data-src="figure/shopfloor.html?chapter=rollout&press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=rollout&press=Roll out>web v2@900">Open full screen ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="heal">
@@ -233,7 +233,7 @@ kubectl rollout undo deploy/web      <span class="c"># back to the previous Repl
 kubectl get pods -l app=web          <span class="c"># a new name appears</span>
 kubectl get events | grep -i replicaset</pre>
   </div>
-  <div class="figwrap" data-ch="heal" data-src="figure/shopfloor.html?chapter=heal&press=Break>delete@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=heal&press=Break>delete@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
+  <div class="figwrap" data-ch="heal" data-src="figure/shopfloor.html?chapter=heal&press=Break>delete@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=heal&press=Break>delete@900">Open full screen ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
 </section>
 
 <section class="ch" id="probes">
@@ -249,7 +249,7 @@ livenessProbe:  { httpGet: { path: /livez,   port: 8080 }, failureThreshold: 3 }
 kubectl get pods                      <span class="c"># READY 0/1 but STATUS Running: readiness</span>
 kubectl get pods                      <span class="c"># RESTARTS climbing: liveness or a crash</span></pre>
   </div>
-  <div class="figwrap" data-ch="probes" data-src="figure/shopfloor.html?chapter=probes&press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=probes&press=Break>crash@900,Break>delete the db@3400">Open in yard mode ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one program, then deletes the db pod</span></div></div>
+  <div class="figwrap" data-ch="probes" data-src="figure/shopfloor.html?chapter=probes&press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=probes&press=Break>crash@900,Break>delete the db@3400">Open full screen ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one program, then deletes the db pod</span></div></div>
 </section>
 
 <section class="ch" id="gpu">
@@ -265,7 +265,7 @@ kubectl describe node node-c | grep -A3 Allocatable
 kubectl get pods -l app=train            <span class="c"># 2 Running, 1 Pending</span>
 kubectl describe pod train-...           <span class="c"># 0/3 nodes are available: 3 Insufficient nvidia.com/gpu</span></pre>
   </div>
-  <div class="figwrap" data-ch="gpu" data-src="figure/shopfloor.html?chapter=gpu&train=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gpu&train=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
+  <div class="figwrap" data-ch="gpu" data-src="figure/shopfloor.html?chapter=gpu&train=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gpu&train=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="gang">
@@ -284,7 +284,7 @@ annotations: { scheduling.k8s.io/group-name: spark }
 
 kubectl get podgroup spark        <span class="c"># Pending -> Running once all 4 fit</span></pre>
   </div>
-  <div class="figwrap" data-ch="gang" data-src="figure/shopfloor.html?chapter=gang&spark=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gang&spark=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
+  <div class="figwrap" data-ch="gang" data-src="figure/shopfloor.html?chapter=gang&spark=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gang&spark=1">Open full screen ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
 </section>
 
 <section class="ch" id="drain">
@@ -298,7 +298,7 @@ kubectl drain node-a --ignore-daemonsets --delete-emptydir-data
 <span class="c"># ... reboot / replace the machine ...</span>
 kubectl uncordon node-a</pre>
   </div>
-  <div class="figwrap" data-ch="drain" data-src="figure/shopfloor.html?chapter=drain&press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=drain&press=Drain>drain node-a@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
+  <div class="figwrap" data-ch="drain" data-src="figure/shopfloor.html?chapter=drain&press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=drain&press=Drain>drain node-a@900">Open full screen ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
 </section>
 
 <section class="ch" id="traffic">
@@ -312,7 +312,7 @@ kubectl get endpointslices -l kubernetes.io/service-name=web
 kubectl get ingress                   <span class="c"># shop.example.com -> web:80</span>
 kubectl port-forward svc/web 8080:80  <span class="c"># try it from your laptop</span></pre>
   </div>
-  <div class="figwrap" data-ch="traffic" data-src="figure/shopfloor.html?chapter=traffic&press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=traffic&press=Send@900,Send@2400,Send@3900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
+  <div class="figwrap" data-ch="traffic" data-src="figure/shopfloor.html?chapter=traffic&press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=traffic&press=Send@900,Send@2400,Send@3900">Open full screen ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
 </section>
 
 <section class="ch" id="live">
@@ -330,7 +330,7 @@ python3 tools/longshore.py serve -n shop --context prod
 kubectl scale deploy/web --replicas=5          <span class="c"># and watch the cards go out</span></pre>
     <p>The helper only ever runs <code>kubectl get</code>. Each node gets a cell with twelve bays that grows a row at a time if it must; more than three nodes adds rows of cells behind. The app colour comes from the <code>app</code> or <code>app.kubernetes.io/name</code> label, or the ReplicaSet name.</p>
   </div>
-  <div class="figwrap" data-ch="live" data-src="figure/shopfloor.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=live&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
+  <div class="figwrap" data-ch="live" data-src="figure/shopfloor.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=live&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
 </section>
 
 <footer>
@@ -341,9 +341,9 @@ kubectl scale deploy/web --replicas=5          <span class="c"># and watch the c
   // each figure loads on demand (they are full pages); the first one when it scrolls near
   const wraps = [...document.querySelectorAll('.figwrap')], phone = matchMedia('(max-width:860px)').matches;
   const load = w => { if (w.classList.contains('loaded')) return; const fr = document.createElement('iframe'); fr.src = w.dataset.src; fr.title = 'Longshore figure'; fr.loading = 'lazy'; w.appendChild(fr); w.classList.add('loaded'); };
-  // on a phone the figure gets the whole screen (yard mode) instead of a frame in the page; the chapter's text rides along
+  // on a phone the figure gets the whole screen instead of a frame in the page; the chapter's text rides along
   wraps.forEach(w => { const poster = w.querySelector('.poster'), open = w.querySelector('.open');
-    if (phone){ poster.querySelector('b').textContent = 'Open in yard mode'; poster.querySelector('span').textContent = 'full screen · tap things to fly to them · the chapter text is one tap away'; poster.addEventListener('click', () => { location.href = open.href; }); }
+    if (phone){ poster.querySelector('b').textContent = 'Open full screen'; poster.querySelector('span').textContent = 'full screen · tap things to fly to them · the chapter text is one tap away'; poster.addEventListener('click', () => { location.href = open.href; }); }
     else poster.addEventListener('click', () => load(w)); });
   if (!phone && 'IntersectionObserver' in window){ const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && wraps.indexOf(e.target) === 0){ load(e.target); io.unobserve(e.target); } }), { rootMargin: '200px' }); wraps.forEach(w => io.observe(w)); }
 </script>

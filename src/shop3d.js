@@ -83,7 +83,9 @@ function tubePath(n){ const d = cellDoor(n); return [[OFFICE[0], OFFICE[1], OFFI
 function along(pts, t){ const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i + 1]); segs.push([L, l, i]); L += l; } const d = t*L;
   for (const [s0, l, i] of segs) if (d <= s0 + l + 1e-6) return lerp3(pts[i], pts[i + 1], l ? (d - s0)/l : 0); return pts[pts.length - 1]; }
 // the AGV's run: cabinet to the crib's door (a cold pull) or just to the rack (a warm one), and back
-function agvPath(n, warm){ const h = agvHome(n), r = rackOf(n), c = CRIB(); return warm ? [h, [h[0], r.y1 + 2, 0]] : [h, [h[0], c.y0 - 8, 0], [c.x1 + 5, c.y0 - 8, 0]]; }
+// the AGV's lane runs in front of the cabinets (x0 - 14, between the office side and the cells); a back row reaches it by the corridor at the far end of the floor
+function agvPath(n, warm){ const h = agvHome(n), r = rackOf(n), c = CRIB(), lx = n.x0 - 14, door = [c.x1 + 5, c.y0 - 8, 0]; if (warm) return [h, [h[0], r.y1 + 2, 0]];
+  return n.row ? [h, [lx, h[1], 0], [lx, D - 6, 0], [SX0 - 14, D - 6, 0], [SX0 - 14, c.y0 - 8, 0], door] : [h, [lx, h[1], 0], [lx, c.y0 - 8, 0], door]; }
 
 /* ---------- scene ---------- */
 const scene = new THREE.Scene(); scene.background = new THREE.Color('#b8b4ac');
@@ -102,7 +104,9 @@ function rebuildStatic(){
     rect(g, 0, 0, w, h, CONCRETE); for (let i = 0; i < 1800; i++){ g.fillStyle = `rgba(${60 + Math.random()*40|0},${60 + Math.random()*40|0},${60 + Math.random()*35|0},${.05 + Math.random()*.08})`; g.fillRect(Math.random()*w, Math.random()*h, .6 + Math.random()*1.6, .6 + Math.random()*1.6); }
     hatch(g, 0, 0, 2.2, h); hatch(g, w - 2.2, 0, 2.2, h); hatch(g, 0, 0, w, 2.2); hatch(g, 0, h - 2.2, w, 2.2);
     rect(g, W - 30, 0, 18, D, '#8f8c85'); line(g, [[W - 30, 0], [W - 30, D]], WHITE, .9); line(g, [[W - 12, 0], [W - 12, D]], WHITE, .9);
-    for (const n of st.nodes) if (n.row === 0){ const y = n.y0 + SLW/2; line(g, [[W - 30, y], [n.x0 + n.depth + 2, y]], WHITE, .8, [3, 3]); }
+    for (const n of st.nodes){ const x1 = n.x0 + n.depth, y1 = n.y0 + SLW; line(g, [[W - 30, y1 + 8], [x1 + 4, y1 + 8], [x1 + 4, y1 - 5], [x1, y1 - 5]], WHITE, .8, [3, 3]);
+      const lx = n.x0 - 14; line(g, [[lx, n.y0 + 4], [lx, n.row ? D - 6 : REG_Y0 - 12]], '#e3c766', .8, [2, 3]); if (n.row) line(g, [[lx, D - 6], [SX0 - 14, D - 6]], '#e3c766', .8, [2, 3]); }
+    line(g, [[SX0 - 14, REG_Y0 - 12], [30, REG_Y0 - 12]], '#e3c766', .8, [2, 3]);
     for (const n of st.nodes){ const c = cellBox(n); hatch(g, c.x0 - 1.4, c.y0 - 1.4, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y1, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y0, 1.4, c.y1 - c.y0); hatch(g, c.x1, c.y0, 1.4, c.y1 - c.y0); }
     line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
@@ -207,7 +211,8 @@ function mkNode(n){
   out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, 1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => { g.translate(w, 0); g.scale(-1, 1); txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'); }, 12)));   // a decal lying flat reads mirrored from above unless flipped
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
-  const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];
+  const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1 - 9]], [[c.x1, c.y1 - 1], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];   // the gap at y1-9..y1-1 is the parts' way in
+  for (const y of [c.y1 - 9, c.y1 - 1]) out.rise.add(cyl(c.x1, y, 0, 9.6, .7, M(DARKM, { r: .4 }), { n: 10 }));
   for (const [a, b] of edges){ const L = Math.hypot(b[0] - a[0], b[1] - a[1]), nseg = Math.max(1, Math.round(L/16));
     for (let i = 0; i <= nseg; i++){ const t = i/nseg; out.rise.add(cyl(a[0] + (b[0] - a[0])*t, a[1] + (b[1] - a[1])*t, 0, 9, .5, postM, { n: 8 })); }
     const p = new THREE.Mesh(boxG(L, 7.5, .15), panelM); p.position.copy(V3((a[0] + b[0])/2, (a[1] + b[1])/2, 5)); p.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]); p.castShadow = false; out.rise.add(p);
@@ -402,11 +407,11 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = s
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
     items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   else { const ing = st.ingresses[0], gn = st.nodes.find(n => n.gpus && n.joined >= 1);
-    if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'NODE', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
+    if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'CELL', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
     if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }); if (p0.pvc) items.push({ at:[x + MW/2, y - .4, z + .3], text:'PALLET', on:false }); }
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
-    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'CONTROL', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
+    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
       { at:[s.x1, (s.y0 + s.y1)/2, 16], text:'STATION', on: st.parcels.length > 0 }, { at:[(d.x0 + d.x1)/2, d.y1, 24], text: ing ? 'DOCK' : 'DOCK', on: st.boom > .5 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   return items; }
 function pickAct(h){ const a = h.object.userData.act; if (a && a.type === 'board'){ const rows = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5), zTop = OFF.z1 - 3 - 1.9, i = Math.floor((zTop - h.point.y)/1.7); if (rows[i] && i >= 0) return { type:'app', app: rows[i].app }; } return a; }
