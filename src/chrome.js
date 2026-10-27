@@ -210,6 +210,27 @@ function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c)
   card.querySelector('.kick').innerHTML = c.kick; card.querySelector('h3').innerHTML = c.title; const body = card.querySelector('.body'); body.innerHTML = c.body; if (c.onBody) c.onBody(body);
   const acts = card.querySelector('.acts'); acts.innerHTML = ''; for (const x of c.acts){ const b = document.createElement('button'); b.textContent = x.label; if (x.title) b.title = x.title; if (x.go) b.className = 'go'; b.onclick = () => { x.onClick(); yard.invalidate(); }; acts.appendChild(b); } }
 
+/* ---------- the clock: a dial for simulated time, in the strip on a page and as a sheet in full screen ---------- */
+const CLK = { stops: [.1, .25, .5, 1, 2, 4], speed: 1, paused: false };
+const fmt = v => (v >= 1 ? v : +v.toFixed(2)) + '×';
+function setClock(speed, paused, quiet){ CLK.speed = Math.max(.05, Math.min(8, speed)); CLK.paused = !!paused; const was = SPEED; SPEED = CLK.paused ? 0 : CLK.speed;
+  try { sessionStorage.setItem('kubeshop.clock', String(CLK.speed)); } catch {}
+  drawClock(); if (was === 0 && SPEED > 0 && yard.resume) yard.resume(); if (!quiet && yard) yard.invalidate(); }
+function stepClock(){ if (!CLK.paused) setClock(CLK.speed, true); if (yard.step) yard.step(.1); }
+function nudgeClock(d){ const i = CLK.stops.findIndex(s => Math.abs(s - CLK.speed) < 1e-6), j = i < 0 ? (d > 0 ? CLK.stops.findIndex(s => s > CLK.speed) : CLK.stops.length - 1 - [...CLK.stops].reverse().findIndex(s => s < CLK.speed)) : i + d;
+  if (j >= 0 && j < CLK.stops.length) setClock(CLK.stops[j], CLK.paused); }
+const clockItems = () => [ { label: CLK.paused ? 'Resume' : 'Pause', sub: CLK.paused ? 'the floor and the room are held' : 'hold the floor and the room; the camera still moves', onClick: () => setClock(CLK.speed, !CLK.paused) },
+  { label: 'Step 0.1 s', sub: 'one simulated slice, pausing first', onClick: stepClock },
+  ...CLK.stops.map(s => ({ label: fmt(s), current: !CLK.paused && Math.abs(s - CLK.speed) < 1e-6, sub: s < 1 ? 'slower: follow each event' : s > 1 ? 'faster' : 'real time', onClick: () => setClock(s, false) })) ];
+function drawClock(){ const row = $('#clock'), pill = $('#clockb'); if (pill) pill.textContent = 'Clock ' + (CLK.paused ? '⏸ ' + fmt(CLK.speed) : fmt(CLK.speed));
+  if (!row) return; if (!row.childElementCount){ row.innerHTML = '<span class="k">Clock</span>' + CLK.stops.map(s => `<button data-s="${s}">${fmt(s)}</button>`).join('') + '<button data-p>Pause</button><button data-step title="advance one simulated 0.1 s">Step</button>';
+    row.querySelectorAll('button[data-s]').forEach(b => b.onclick = () => setClock(+b.dataset.s, false)); row.querySelector('button[data-p]').onclick = () => setClock(CLK.speed, !CLK.paused); row.querySelector('button[data-step]').onclick = stepClock; }
+  row.querySelectorAll('button[data-s]').forEach(b => b.setAttribute('aria-pressed', !CLK.paused && Math.abs(+b.dataset.s - CLK.speed) < 1e-6)); const p = row.querySelector('button[data-p]'); p.textContent = CLK.paused ? 'Resume' : 'Pause'; p.setAttribute('aria-pressed', CLK.paused); }
+function wireClock(){ let s0 = 1; try { s0 = +sessionStorage.getItem('kubeshop.clock') || 1; } catch {} if (Q.has('speed')) s0 = Math.max(.1, +Q.get('speed') || 1);
+  setClock(s0, false, true); const pill = $('#clockb'); if (pill) pill.onclick = () => openSheet('Clock', clockItems());
+  addEventListener('keydown', e => { if (/input|textarea|select/i.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '[') nudgeClock(-1); else if (e.key === ']') nudgeClock(1); else if (e.key === ' ' && !document.querySelector('.sheet.open')){ e.preventDefault(); setClock(CLK.speed, !CLK.paused); } }); }
+
 /* ---------- stats, switches, swatches, view ---------- */
 const statsEl = document.getElementById('stats'), prevStats = {};
 function drawStats(){ const shown = st.pods.filter(p => !(p.sys && !st.showSys) && p.phase !== 'terminating');
@@ -247,11 +268,11 @@ function wireSwitches(){
 }
 
 /* ---------- mount ---------- */
-function init(api){ yard = api; buildButtons(); wireSwitches();
+function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });
 }
 function tick(){ drawStats(); if (cardAct) renderCard(); }
-return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
+return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
 })();

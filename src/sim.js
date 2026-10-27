@@ -299,7 +299,7 @@ function tick(dt){
   if (st.live.pending){ busy = true; }
   return busy;
 }
-function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { const busy = tick(dt); if (!busy) loopOn = false; return busy; }); }
+function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { const busy = tick(dt); if (!busy) loopOn = false; return busy; }, 'sim'); }
 
 
 /* ---------- bootstrapping: an empty yard comes up in the real order ---------- */

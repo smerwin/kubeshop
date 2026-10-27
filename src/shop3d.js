@@ -304,7 +304,7 @@ function mkPod(p){
 }
 let spinA = 0;
 function syncPods(dt){
-  const seen = new Set(), k = ease(st.xr || 0); spinA += dt*9;
+  const seen = new Set(), k = ease(st.xr || 0); spinA += dt*SPEED*9;
   for (const p of st.pods){ if (!(p.pos && !NOPOS.has(p.phase) && !(p.sys && !st.showSys))) continue; seen.add(p.id);
     let P = Y.pods.get(p.id); if (!P){ P = mkPod(p); Y.pods.set(p.id, P); scene.add(P.g); }
     P.g.position.copy(V3(...p.pos));

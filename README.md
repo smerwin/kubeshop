@@ -79,6 +79,11 @@ and roll out). **Follow** keeps the camera on whatever the operation is doing: t
 run, the part on the conveyor, a crashing machine; any gesture releases it. The camera is remembered for the tab, so the
 guide's figures do not snap back to the front view.
 
+The **Clock** (next to the counts on a page, a pill among the switches in full screen) runs the whole simulation at 0.1x to
+4x, pauses it and steps it 0.1 s at a time; everything simulated follows it (job cards, AGVs, machines, parts, the control
+room's messages, how long a toast stays up), while the camera and the page stay in real time. `[` and `]` change the
+speed, `space` pauses; `?speed=` sets the start and the choice is remembered for the tab.
+
 Text is a function of zoom, drawn as screen-sized labels over the geometry: at the overview only the node names and the
 board's counts; from about two times closer every container's app and version and its GPU band; from about four times
 the pod name plates and the board's full rows. They fade between levels and never overlap. With **Labels** on, the

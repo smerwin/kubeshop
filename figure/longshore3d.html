@@ -29,13 +29,19 @@
   html.nolabels .lb{display:none}
   html.notext .lb:not(.callout){display:none}
   .actions{position:absolute;top:4px;left:0;display:flex;flex-direction:column;align-items:flex-start;gap:8px;z-index:2;max-width:220px}
-  .strip{position:absolute;top:44px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:10px;z-index:2;text-align:right}
+  .strip{position:absolute;top:44px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;z-index:2;text-align:right}
   .strip .ttl{display:none}
   .stats{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
   .stat .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
   .stat .v{font-size:34px;font-weight:800;line-height:1.05;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
   .stat.small .v{font-size:20px}
   .stat .v.bump{animation:bump .35s ease-out}
+  .clock{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:3px;margin-top:4px;max-width:150px}
+  .clock .k{width:100%;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:right}
+  .clock button{font:700 10px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:999px;border:1.3px solid var(--ink);background:var(--paper);color:var(--ink);cursor:pointer}
+  .clock button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+  html.yard .clock{display:none}
+  .toast .was{opacity:.55;font-weight:600} .toast .now{font-weight:700}
   @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
   .vset{position:absolute;top:4px;right:0;z-index:2}.vrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
   .vrow .yardonly{display:none}
@@ -125,7 +131,7 @@
   .sheet .x{position:absolute;right:8px;top:8px;all:unset;cursor:pointer;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;font-size:17px;color:var(--muted)} .sheet .x:hover{background:rgba(35,30,22,.08);color:var(--ink)}
   @media (max-width:560px){body{padding:14px 12px 24px}body > header{display:none}
     .actions{position:static;max-width:none;margin:6px 0 4px;flex-direction:row;flex-wrap:wrap;gap:6px}.act{font-size:12px;padding:4px 11px}
-    .strip{position:static;flex-direction:row;justify-content:flex-end;gap:18px;margin-bottom:4px}.stats{flex-direction:row;gap:18px}.stat .v{font-size:20px}
+    .strip{position:static;flex-direction:row;flex-wrap:wrap;justify-content:flex-end;gap:12px 18px;margin-bottom:4px}.stats{flex-direction:row;gap:18px}.stat .v{font-size:20px}.clock{max-width:none;margin-top:0}
     .vset{position:static;margin:8px 0 2px}.chips{left:0;top:calc(100% + 8px)}
     .zwrap{aspect-ratio:1/1.1}}
   /* ---------- yard mode: the canvas is the whole viewport and the page never scrolls ---------- */
@@ -159,8 +165,8 @@
 <header class="pagehead"><h1>Fig. K8 — Longshore</h1><span>drag to turn · pinch or ctrl+wheel to zoom · tap a thing to fly to it</span></header>
 <div class="stage">
   <div class="actions" id="btns"></div>
-  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button><button class="act yardonly" id="folb" aria-pressed="false">Follow</button><button class="act yardonly" id="ovb">Overview</button><button class="act" id="yardb" aria-pressed="false">Yard mode</button></div></div>
-  <div class="strip" id="strip"><div class="ttl">Longshore<button id="chapb" hidden>Chapter</button></div><div class="stats" id="stats"></div></div>
+  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button><button class="act yardonly" id="folb" aria-pressed="false">Follow</button><button class="act yardonly" id="ovb">Overview</button><button class="act yardonly" id="clockb">Clock 1×</button><button class="act" id="yardb" aria-pressed="false">Yard mode</button></div></div>
+  <div class="strip" id="strip"><div class="ttl">Longshore<button id="chapb" hidden>Chapter</button></div><div class="stats" id="stats"></div><div class="clock" id="clock"></div></div>
   <div class="zwrap" id="zwrap"><canvas id="gl"></canvas><svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg><div id="lbls"></div>
     <div class="zchip"><button class="zm" aria-label="Zoom out">−</button><button class="zp" aria-label="Reset zoom">100%</button><button class="zi" aria-label="Zoom in">+</button></div>
     <div class="compass" id="compass" title="Front view"><svg viewBox="-32 -32 64 64"><circle class="r" r="26"/><g class="m" id="cN"><path class="n" d="M0 -25L4 -17L-4 -17z"/></g><g class="m" id="cG"><text y="-1">G</text></g><g class="m" id="cT"><text y="-1">T</text></g><g class="m" id="cR"><text y="-1">R</text></g></svg></div>
@@ -495,7 +501,7 @@ function tick(dt){
   if (st.live.pending){ busy = true; }
   return busy;
 }
-function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { const busy = tick(dt); if (!busy) loopOn = false; return busy; }); }
+function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { const busy = tick(dt); if (!busy) loopOn = false; return busy; }, 'sim'); }
 
 
 /* ---------- bootstrapping: an empty yard comes up in the real order ---------- */
@@ -934,7 +940,8 @@ function mount(host, c){ cfg = c; el = host;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.log');
   R.lastT = performance.now(); render(); logLine(`Idle. Press a ${st.model === 'shop' ? 'floor' : 'yard'} button and watch the messages.`);
 }
-window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R };
+window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R,
+  step: dt => { if (!cfg) return; const s = cfg.speed; cfg.speed = () => 1; tick(dt); cfg.speed = s; render(); } };
 })();
 
 </script>
@@ -1151,6 +1158,27 @@ function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c)
   card.querySelector('.kick').innerHTML = c.kick; card.querySelector('h3').innerHTML = c.title; const body = card.querySelector('.body'); body.innerHTML = c.body; if (c.onBody) c.onBody(body);
   const acts = card.querySelector('.acts'); acts.innerHTML = ''; for (const x of c.acts){ const b = document.createElement('button'); b.textContent = x.label; if (x.title) b.title = x.title; if (x.go) b.className = 'go'; b.onclick = () => { x.onClick(); yard.invalidate(); }; acts.appendChild(b); } }
 
+/* ---------- the clock: a dial for simulated time, in the strip on a page and as a sheet in full screen ---------- */
+const CLK = { stops: [.1, .25, .5, 1, 2, 4], speed: 1, paused: false };
+const fmt = v => (v >= 1 ? v : +v.toFixed(2)) + '×';
+function setClock(speed, paused, quiet){ CLK.speed = Math.max(.05, Math.min(8, speed)); CLK.paused = !!paused; const was = SPEED; SPEED = CLK.paused ? 0 : CLK.speed;
+  try { sessionStorage.setItem('kubeshop.clock', String(CLK.speed)); } catch {}
+  drawClock(); if (was === 0 && SPEED > 0 && yard.resume) yard.resume(); if (!quiet && yard) yard.invalidate(); }
+function stepClock(){ if (!CLK.paused) setClock(CLK.speed, true); if (yard.step) yard.step(.1); }
+function nudgeClock(d){ const i = CLK.stops.findIndex(s => Math.abs(s - CLK.speed) < 1e-6), j = i < 0 ? (d > 0 ? CLK.stops.findIndex(s => s > CLK.speed) : CLK.stops.length - 1 - [...CLK.stops].reverse().findIndex(s => s < CLK.speed)) : i + d;
+  if (j >= 0 && j < CLK.stops.length) setClock(CLK.stops[j], CLK.paused); }
+const clockItems = () => [ { label: CLK.paused ? 'Resume' : 'Pause', sub: CLK.paused ? 'the floor and the room are held' : 'hold the floor and the room; the camera still moves', onClick: () => setClock(CLK.speed, !CLK.paused) },
+  { label: 'Step 0.1 s', sub: 'one simulated slice, pausing first', onClick: stepClock },
+  ...CLK.stops.map(s => ({ label: fmt(s), current: !CLK.paused && Math.abs(s - CLK.speed) < 1e-6, sub: s < 1 ? 'slower: follow each event' : s > 1 ? 'faster' : 'real time', onClick: () => setClock(s, false) })) ];
+function drawClock(){ const row = $('#clock'), pill = $('#clockb'); if (pill) pill.textContent = 'Clock ' + (CLK.paused ? '⏸ ' + fmt(CLK.speed) : fmt(CLK.speed));
+  if (!row) return; if (!row.childElementCount){ row.innerHTML = '<span class="k">Clock</span>' + CLK.stops.map(s => `<button data-s="${s}">${fmt(s)}</button>`).join('') + '<button data-p>Pause</button><button data-step title="advance one simulated 0.1 s">Step</button>';
+    row.querySelectorAll('button[data-s]').forEach(b => b.onclick = () => setClock(+b.dataset.s, false)); row.querySelector('button[data-p]').onclick = () => setClock(CLK.speed, !CLK.paused); row.querySelector('button[data-step]').onclick = stepClock; }
+  row.querySelectorAll('button[data-s]').forEach(b => b.setAttribute('aria-pressed', !CLK.paused && Math.abs(+b.dataset.s - CLK.speed) < 1e-6)); const p = row.querySelector('button[data-p]'); p.textContent = CLK.paused ? 'Resume' : 'Pause'; p.setAttribute('aria-pressed', CLK.paused); }
+function wireClock(){ let s0 = 1; try { s0 = +sessionStorage.getItem('kubeshop.clock') || 1; } catch {} if (Q.has('speed')) s0 = Math.max(.1, +Q.get('speed') || 1);
+  setClock(s0, false, true); const pill = $('#clockb'); if (pill) pill.onclick = () => openSheet('Clock', clockItems());
+  addEventListener('keydown', e => { if (/input|textarea|select/i.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '[') nudgeClock(-1); else if (e.key === ']') nudgeClock(1); else if (e.key === ' ' && !document.querySelector('.sheet.open')){ e.preventDefault(); setClock(CLK.speed, !CLK.paused); } }); }
+
 /* ---------- stats, switches, swatches, view ---------- */
 const statsEl = document.getElementById('stats'), prevStats = {};
 function drawStats(){ const shown = st.pods.filter(p => !(p.sys && !st.showSys) && p.phase !== 'terminating');
@@ -1188,13 +1216,13 @@ function wireSwitches(){
 }
 
 /* ---------- mount ---------- */
-function init(api){ yard = api; buildButtons(); wireSwitches();
+function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });
 }
 function tick(){ drawStats(); if (cardAct) renderCard(); }
-return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
+return { init, tick, open, hideCard, press, openSheet, closeSheets, setRoom, setYard, setClock, stepClock, syncSw, applyChapter, spinOff: () => vsp.setAttribute('aria-pressed', false), EXPLAIN };
 })();
 
 </script>

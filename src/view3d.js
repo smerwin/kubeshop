@@ -83,21 +83,28 @@ function loadCam(){ try { const s = JSON.parse(sessionStorage.getItem(CAMKEY)); 
   if (s.custom && s.yard === YARD_MODE()){ cam.custom = true; cam.focus.fromArray(s.f); cam.zoom = s.zoom; } applyFrame(); camMoved = false; return true; } catch { return false; } }
 
 /* ---------- the clock: simulation steps, camera moves, frames on demand (a timer fallback for hidden tabs) ---------- */
-const steps = new Set(); let driving = false, lastT = 0, dirty = true, fbT = 0;
+const steps = new Map(); let driving = false, lastT = 0, dirty = true, fbT = 0;   // step -> tag; 'sim' steps are held while the clock is paused
 const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT);
   const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - lastT)/1000)); lastT = now;
-  for (const s of [...steps]) if (s(dt) === false) steps.delete(s);
-  if (follow.on && steps.size) followTick(dt);
-  if (steps.size || dirty){ dirty = false; const moving = camMoved; camMoved = false;
+  let ran = false; for (const [s, tag] of [...steps]){ if (tag === 'sim' && SPEED === 0) continue; ran = true; if (s(dt) === false) steps.delete(s); }
+  if (follow.on && ran) followTick(dt);
+  if (ran || dirty){ dirty = false; const moving = camMoved; camMoved = false;
     const t0 = performance.now(); cfg.syncAll(dt); const t1 = performance.now(); placeCam(); cfg.render(moving, now); const t2 = performance.now();
     Chrome.tick(); drawLabels(); drawCompass(); if (window.ControlRoom) ControlRoom.observe();
     clearTimeout(restT); if (moving) restT = setTimeout(invalidate, 90);
     window.__ft = { sync: t1 - t0, render: t2 - t1, post: performance.now() - t2, moving, frames: (window.__ft ? window.__ft.frames : 0) + 1, ...(cfg.stats ? cfg.stats() : {}) }; }
-  if (steps.size) drive(); };
+  if ([...steps.values()].some(tag => !(tag === 'sim' && SPEED === 0))) drive(); };
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
-ui = { st, render: invalidate, invalidate, animate: step => { if (!steps.size && !driving) lastT = performance.now(); steps.add(step); drive(); },
-  flash: (text, ms = 1600) => { const t = document.getElementById('toast'); t.textContent = text[0].toUpperCase() + text.slice(1); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), ms); } };
+// a toast stays up for its simulated span: longer when the clock runs slow (up to 8 s), shorter when fast (never under 1.2 s); slowed down, the last few stay readable
+const toastLog = [];
+ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.size && !driving) lastT = performance.now(); steps.set(step, tag || 'ui'); drive(); },
+  flash: (text, ms = 1600) => { const t = document.getElementById('toast'), line = text[0].toUpperCase() + text.slice(1), hold = Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)));
+    toastLog.push(line); while (toastLog.length > 3) toastLog.shift(); const slow = SPEED > 0 && SPEED < 1, lines = slow ? toastLog : toastLog.slice(-1);
+    t.innerHTML = lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join(''); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
+// the clock: pause holds every 'sim' step (the floor and the room freeze, the camera still flies); step advances one simulated slice
+function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
+function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }
 window.ui = ui; window.__st = st;
 window.__proj = p => toScreen(p); window.__cam = cam; window.__advance = dt => { lastT = performance.now() - dt*1000; driving = true; frameFn(); };   // one frame, dt seconds on, whatever the tab's clock does window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
 
@@ -215,7 +222,7 @@ const params = q => {
   if (q.get('train') === '1') applyTrain();
   if (q.get('spark') === '1') applySpark();
   if (q.has('cordon')){ const n = st.nodes.find(n => n.name === q.get('cordon')); if (n){ n.cordoned = true; n.tape = 1; } } };
-const api = { cam, flyTo, frameBox, frameAct, overview, front, follow: setFollow, following: () => follow.on, invalidate, relayout: () => { cam.custom = false; reframe(); }, spin: spinToggle,
+const api = { cam, flyTo, frameBox, frameAct, overview, front, follow: setFollow, following: () => follow.on, invalidate, resume, step: stepSim, relayout: () => { cam.custom = false; reframe(); }, spin: spinToggle,
   select: a => { selKey = a && a.type === 'explain' ? 'c:' + a.text : null; invalidate(); }, toScreen, isYard: YARD_MODE, box: () => box, ppu, zoomFor, basis: () => basis(cam.yaw, cam.pitch), viewDir: () => viewDir(cam.yaw, cam.pitch), COARSE };
 window.yard = api;
 function mount(){
