@@ -300,9 +300,9 @@ const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], serv
   live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 },
   // security: the CA (the seal press), badges signed, the NetworkPolicy in force, refusals at the counter (the room plays them), forged job cards in the tube, the inspector's sign, timed follow-ups
   sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] },
-  // networking: the fabric (static routes, or BGP from every cabinet to its row's junction with two spine lanes), Service addressing,
+  // networking: the fabric (static routes, or BGP from every cabinet to its row's diverter with two spine belts), Service addressing,
   // the directory (CoreDNS), the mesh (sidecars, the mesh's own CA, a weighted canary) and a managed control plane behind the fence
-  net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], dns:{ n:0, flash:0 }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
+  net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], flick:{}, dns:{ n:0, flash:0 }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
 // on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
 const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
@@ -489,29 +489,43 @@ function request(){
 }
 // the spine has two lanes when the fabric runs BGP: consecutive parts take turns (equal-cost multipath); a canary part rides the second lane so the split shows
 const SPINE2 = () => LANE - 6.5;
+// the fabric's geometry: a row of cells is a rack, and its top-of-rack switch is a diverter on the spine belt; one spur per row leaves
+// the spine there, runs along a cross-aisle to the row's corridor, and the corridor runs along the cells' conveyor-side openings
+// (rows past the third share a cross-aisle, a few units apart)
+const rowCells = r => st.nodes.filter(n => n.row === r);
+const rowSpur = r => { const cols = Math.min(3, Math.max(1, st.nodes.length)); return SY0 + (r % cols)*(SLW + NGAP) + SLW + 8 + 4*Math.floor(r/cols); };
+const rowCorridor = r => Math.max(...rowCells(r).map(n => n.x0 + n.depth)) + 4;
+const DIVERTER = r => { const cells = rowCells(r); return cells.length ? { x: LANE, y: rowSpur(r), cx: rowCorridor(r), cells } : null; };
+const flick = (r, lane) => { st.net.flick[r] = { t: .55, lane }; };   // the diverter's arm swings as a part is sent down its spur
+const cellEntry = n => n.y0 + SLW - 5;                                 // the y of the cell's opening on the corridor side (the gap in the fence)
 function laneX(canary){ if (canary != null) return canary ? SPINE2() : LANE; return st.net.fabric === 'bgp' && isShop() ? (st.net.lane++ % 2 ? SPINE2() : LANE) : LANE; }
 function makeParcel(p, svc){
   const n = p && st.nodes.find(n => n.name === p.node), dns = isShop(), pts = dns ? [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 30, 2.2], [LANE, 45, 2.2]] : [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
-  if (p && n && isShop()){ const [px, py, pz] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yt = y1 + 8, yd = y1 - 5, lx = laneX(p.ver === 'v2' && st.net.mesh.on && st.net.mesh.canary ? true : null);
-    // the directory, the station, the spine lane, the corridor between cells, the cell's conveyor-side opening, the cross-aisle after the machine's row, the machine
-    if (lx !== LANE) pts.push([lx, 50, 2.2]); pts.push([lx, yt, 2.2], [x1 + 4, yt, 2.2], [x1 + 4, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
+  const divs = [];
+  if (p && n && isShop()){ const [px, py, pz] = p.pos, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yd = cellEntry(n), ys = rowSpur(n.row), cx = rowCorridor(n.row), lx = laneX(p.ver === 'v2' && st.net.mesh.on && st.net.mesh.canary ? true : null);
+    // the directory board, the station, the spine lane to the row's diverter, the spur to the row's corridor, the corridor to the cell's opening, the cross-aisle after the machine's row, the machine
+    if (lx !== LANE) pts.push([lx, 50, 2.2]); divs.push({ row: n.row, lane: lx, at: pts.length }); pts.push([lx, ys, 2.2], [cx, ys, 2.2], [cx, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
   else if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
   const dirD = dns ? segs[1].s0 + segs[1].l : -1, kioskD = dns ? segs[2].s0 + segs[2].l : segs[1].s0 + segs[1].l, dp = dns ? dnsPick() : null;
-  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0, dirD, kioskD, dhold: 0, dns: dns ? (dp ? 'ok' : 'fail') : null, dnsPod: dp };
+  for (const d of divs) d.d = segs[d.at] ? segs[d.at].s0 : L;
+  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0, dirD, kioskD, dhold: 0, dns: dns ? (dp ? 'ok' : 'fail') : null, dnsPod: dp, divs };
 }
 // a part from one machine to another (a Pod calling a Service): out of its bay to the cross aisle, the cell's conveyor-side opening, the lane, and into the other cell
 function makeLink(a, b, blocked){
   const na = st.nodes.find(n => n.name === a.node), nb = st.nodes.find(n => n.name === b.node), z = 2.2;
   const bay = (p, n) => { const [px, py] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r; return { px, py, x1, yt: y1 + 8, yd: y1 - 5, gx: r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX }; };
-  const A = bay(a, na), B = bay(b, nb), pts = [[A.px + 10.6, A.py + 5, z], [A.gx, A.py + 5, z], [A.gx, A.yd, z]];
-  // two cells in one row share a junction: the part stays on the row's corridor; across rows it takes the spine (one of its lanes)
-  if (na !== nb && na.row === nb.row && st.net.fabric === 'bgp'){ const cx = Math.max(A.x1, B.x1) + 4; pts.push([cx, A.yd, z], [cx, B.yd, z]); }
-  else if (na !== nb){ const lx = laneX(); pts.push([A.x1 + 4, A.yd, z], [A.x1 + 4, A.yt, z], [lx, A.yt, z], [lx, B.yt, z], [B.x1 + 4, B.yt, z], [B.x1 + 4, B.yd, z]); }
+  const A = bay(a, na), B = bay(b, nb), cxA = rowCorridor(na.row), cxB = rowCorridor(nb.row), pts = [[A.px + 10.6, A.py + 5, z], [A.gx, A.py + 5, z], [A.gx, A.yd, z]], divs = [];
+  // two cells in one row share a diverter: with BGP the switch forwards locally and the part stays on the row's corridor; across rows
+  // (or with static routes) it goes out the spur to the diverter, along the spine on one of its lanes, and in by the other row's spur
+  if (na !== nb && na.row === nb.row && st.net.fabric === 'bgp'){ pts.push([cxA, A.yd, z], [cxA, B.yd, z]); }
+  else if (na !== nb){ const lx = laneX(), ysA = rowSpur(na.row), ysB = rowSpur(nb.row); pts.push([cxA, A.yd, z], [cxA, ysA, z]); divs.push({ row: na.row, lane: lx, at: pts.length }); pts.push([lx, ysA, z]);
+    divs.push({ row: nb.row, lane: lx, at: pts.length }); pts.push([lx, ysB, z], [cxB, ysB, z], [cxB, B.yd, z]); }
   pts.push([B.gx, B.yd, z], [B.gx, B.py + 5, z], [B.px + 10.6, B.py + 5, z]);
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
+  for (const d of divs) d.d = segs[d.at] ? segs[d.at].s0 : L;
   const meshed = st.net.mesh.on && MESHED.has(a.app) && MESHED.has(b.app);
-  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: -1 };
+  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: -1, divs };
 }
 function parcelAt(pc, d){ for (const s of pc.segs) if (d <= s.s0 + s.l + 1e-6) return lerp3(s.a, s.b, s.l ? (d - s.s0)/s.l : 0); return pc.pts[pc.pts.length - 1]; }
 // the target is chosen when the part leaves the station (a Ready endpoint then) and re-checked every frame after: a machine that is
@@ -523,6 +537,7 @@ function parcelTick(pc, dt){
     // the directory: a lookup first (the name to a ClusterIP); with CoreDNS down the part waits out the timeout and comes back with no address
     if (dirD >= 0 && pc.t < dirD + .01 && pc.t + spd*dt >= dirD){ pc.t = dirD; if (!pc.dhold && pc.dnsPod){ st.net.hops.push({ pod: pc.dnsPod, t: 0, dur: .3 }); st.net.dns.flash = .3; } pc.dhold += dt; if (pc.dns === 'fail'){ if (pc.dhold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out, kube-dns has no Ready endpoints (no CoreDNS machine is up); connections already open keep working, new ones cannot find an address`); } return true; } if (pc.dhold < .3) return true; }
     if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
+    for (const dv of pc.divs || []) if (pc.t < dv.d && pc.t + spd*dt >= dv.d) flick(dv.row, dv.lane);   // the diverter sends it down the spur
     // a NetworkPolicy gate: the part stops at the machine's gate, is dropped there (the CNI drops the packet; the caller times out) and comes back red
     if (pc.blocked && pc.t + spd*dt >= pc.stop){ pc.t = pc.stop; pc.hold += dt; if (pc.hold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; const pol = st.sec.netpol;
         say('netpol-drop', `NetworkPolicy ${pol ? pol.name : ''}: ${pc.from.app} -> ${pc.pod.app} is not allowed, so the CNI drops the packet at ${pc.pod.name}'s gate (the caller times out; nothing in the office is asked)`); } return true; }
@@ -533,6 +548,7 @@ function parcelTick(pc, dt){
       else if (pc.reset){ pc.col = LAMPC.red; st.reqs.err++; st.reqs.reset++; say('reset-' + pc.pod.id, `Connection reset: ${pc.pod.name} ${pc.reset} while the part was on its way; no reply (the client retries, the Service already routes elsewhere)`); }
       else { pc.col = LAMPC.green; st.reqs.ok++; } }
     return true; }
+  for (const dv of pc.divs || []) if (pc.t > dv.d && pc.t - spd*dt*1.15 <= dv.d) flick(dv.row, dv.lane);   // and merges it back on the way out
   pc.t -= spd*dt*1.15; return pc.t > 0;
 }
 
@@ -757,16 +773,16 @@ function linkRequest(fromApp, toApp){ const a = pickPod(fromApp), b = pickPod(to
 setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st.sec.ca) return; st.t += SPEED; if (secTick(SPEED)) run(); else if (document.querySelector('.card.open')) ui.render(); }, 1000);
 
 /* ---------- networking: the fabric, the directory, the mesh, a managed control plane ----------
-   The fabric is the floor's road network drawn as a small Clos: a junction per row of cells (the top-of-rack switch) and a
-   main avenue with two lanes (the spine, equal-cost multipath). With static routes (Kubernetes The Hard Way) each host knows
-   the other cells' ranges by hand; with BGP every cabinet announces its own PodCIDR to its junction and withdraws it when the
+   The fabric is the floor's conveyor network drawn as a small Clos: a diverter per row of cells (the top-of-rack switch, where
+   the row's spur leaves the spine) and the spine itself, two belts of equal cost (equal-cost multipath). With static routes (Kubernetes The Hard Way) each host knows
+   the other cells' ranges by hand; with BGP every cabinet announces its own PodCIDR to its diverter and withdraws it when the
    cell is drained. The directory is CoreDNS: two pods behind the kube-dns ClusterIP that every pod's resolv.conf points at.
    The mesh adds a sidecar escort to each meshed machine, its own CA and a weighted split the Service never had. */
 const MESHED = new Set(['web', 'api']);
-function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: cordoned, its BGP speaker withdraws 10.200.${st.nodes.indexOf(n)}.0/24 from the junction; no new part is routed to it` : `${n.name}: its BGP speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 to the junction again`); run(); }
+function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: cordoned, its BGP speaker withdraws 10.200.${st.nodes.indexOf(n)}.0/24: the pulse runs up the spur, the line greys on the diverter's strip and the arm no longer sends that way` : `${n.name}: its BGP speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 again; its line is back on the diverter's strip`); run(); }
 function setFabric(f, quiet){ if (st.net.fabric === f) return quiet ? 0 : say('fabric', `The fabric already runs ${f === 'bgp' ? 'BGP' : 'static routes'}`); st.net.fabric = f;
   if (f === 'bgp'){ for (const n of st.nodes) if (n.joined >= 1 && !n.cordoned) st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: false }); }
-  if (!quiet) say('fabric', f === 'bgp' ? 'Fabric: BGP. Every cabinet runs a speaker (Cilium or Calico) that announces its PodCIDR to the row\'s junction; the junctions share them over the spine, whose two lanes carry parts in turn (ECMP)' : 'Fabric: static routes, the Hard Way: every host carries a route to each other cell\'s range, written by hand; one lane, no announcements');
+  if (!quiet) say('fabric', f === 'bgp' ? 'Fabric: BGP. Every cabinet runs a speaker (Cilium or Calico) that announces its PodCIDR up the spur to the row\'s diverter (the top-of-rack switch); the diverters share what they learn over the spine, whose two belts carry parts in turn (ECMP)' : 'Fabric: static routes, the Hard Way: every host carries a route to each other cell\'s range, written by hand; the diverter\'s strip is painted on, one belt, no announcements');
   run(); }
 function setSvcMode(m, quiet){ if (st.net.svc === m) return quiet ? 0 : say('svcmode', 'Already set'); st.net.svc = m;
   if (!quiet) say('svcmode', m === 'ebpf' ? 'Service addressing: eBPF. The CNI (Cilium) replaces kube-proxy: a Service address is rewritten at the socket or the packet by programs loaded into the kernel, no iptables chains; DigitalOcean Kubernetes ships this way' : 'Service addressing: kube-proxy in iptables mode writes a chain per Service that rewrites the ClusterIP to one Ready endpoint'); run(); }
@@ -791,6 +807,7 @@ function setManaged(on, quiet){ if (st.net.managed === !!on) return; st.net.mana
   if (ui) reframe(); run(); }
 function netTick(dt){ let busy = false; const N = st.net;
   for (const a of N.ann){ a.t += dt/a.dur; busy = true; } N.ann = N.ann.filter(a => a.t < 1.25);
+  for (const k of Object.keys(N.flick)){ N.flick[k].t -= dt; if (N.flick[k].t <= 0) delete N.flick[k]; else busy = true; }
   for (const h of N.hops){ h.t += dt/h.dur; busy = true; } N.hops = N.hops.filter(h => h.t < 1); if (N.dns.flash > 0){ N.dns.flash -= dt; busy = true; }
   const up = dnsUp(); if (up && N.dns.wasDown){ N.dns.wasDown = false; say('dnsback', 'A replacement CoreDNS machine is Ready: kube-dns has an endpoint again and the directory window lights up'); } if (!up && !N.dns.wasDown && st.pods.some(isDnsPod)) N.dns.wasDown = true;
   return busy; }
@@ -1193,7 +1210,7 @@ const BUTTONS = [
     { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
     { label: st.showSys ? 'hide system pods' : 'show system pods', sub: st.showSys ? 'they stay in their cells, undrawn' : 'kube-system pods: CoreDNS and the like, in the cells they run in', onClick: () => { st.showSys = !st.showSys; run(); } },
     ...(SHOP() ? [ { label:'fabric: static routes', sub:'the Hard Way: a route per cell, written by hand', current: st.net.fabric === 'static', onClick: () => setFabric('static') },
-      { label:'fabric: BGP', sub:'every cabinet announces its PodCIDR to the junction; two spine lanes', current: st.net.fabric === 'bgp', onClick: () => setFabric('bgp') },
+      { label:'fabric: BGP', sub:'every cabinet announces its PodCIDR to the row\'s diverter; two spine belts', current: st.net.fabric === 'bgp', onClick: () => setFabric('bgp') },
       { label:'service addressing: kube-proxy iptables', current: st.net.svc === 'iptables', onClick: () => setSvcMode('iptables') },
       { label:'service addressing: eBPF (kube-proxy replacement)', sub:'Cilium, as on DigitalOcean Kubernetes', current: st.net.svc === 'ebpf', onClick: () => setSvcMode('ebpf') },
       { label: st.net.managed ? 'self-managed control plane' : 'managed control plane', sub: st.net.managed ? 'bring the office back onto the mezzanine' : 'the office moves into the provider\'s building; a tunnel to every cabinet', onClick: () => setManaged(!st.net.managed) } ] : []) ] } ];
@@ -1325,8 +1342,8 @@ const EXPLAIN = {
   'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
   'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
   'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.',
-  'JUNCTION': 'The row\'s top-of-rack switch: with BGP every cabinet in the row announces its PodCIDR here, and the junctions trade routes over the spine.',
-  'SPINE': 'The main avenue of the fabric: two lanes of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
+  'DIVERTER': 'The row\'s top-of-rack switch: a switch arm on the spine belt that sends a part down the row\'s spur. Its strip lists the PodCIDRs it knows; with BGP every cabinet in the row announces its range here and the diverters trade routes over the spine.',
+  'SPINE': 'The main belt of the fabric: two belts of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
   'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR, withdrawing it when the node leaves.',
   'DIRECTORY': 'The kube-dns Service window: where a part asks for a name. The answer comes from a CoreDNS pod in one of the cells (the hop), not from the booth; every pod\'s resolv.conf points at this ClusterIP.',
   'COREDNS': 'A CoreDNS pod: the coredns Deployment in kube-system, two replicas in two cells, scheduled and pulled like any other pod. They are the directory\'s backends; the booth is only their Service.',
@@ -1348,7 +1365,7 @@ function cardFor(a){
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
-      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to junction ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
+      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to diverter ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
@@ -1384,8 +1401,8 @@ function cardFor(a){
   if (a.type === 'dns'){ const all = st.pods.filter(p => isDnsPod(p) && p.phase !== 'terminating'), ready = all.filter(isReady), ip = dnsIP();
     return { kick: 'Service · kube-system', title: `The directory window: kube-dns ${esc(ip)}`, body: `<table>${row('Service', `kube-dns · ClusterIP ${esc(ip)} · 53/UDP+TCP · selector k8s-app=kube-dns`)}${row('Endpoints', ready.length ? ready.map(p => LAMP(LAMPC.green) + esc(p.name) + ' <span style="color:var(--muted)">on ' + esc(p.node) + '</span>').join('<br>') : '<span style="color:#b3261e">none Ready: lookups fail</span>')}${all.length > ready.length ? row('Not Ready', all.filter(p => !ready.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name) + ' · ' + esc(phaseText(p))).join('<br>')) : ''}${row('Runs as', 'the coredns Deployment in kube-system: two pods in two cells, scheduled like any other (Cluster ▸ show system pods)')}${row('resolv.conf', `nameserver ${esc(ip)} · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5`)}${row('Answers', 'web -> web.default.svc.cluster.local -> the ClusterIP; a headless Service -> the pod addresses themselves')}</table>`,
       acts: [ { label:'stop CoreDNS', title:'delete both pods; the Deployment replaces them', onClick: () => stopDns() }, { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; run(); } }, { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
-  if (a.type === 'junction'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
-    return { kick: 'Fabric', title: `Junction ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${bgp ? (n.cordoned ? '<span style="color:#b3261e">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes')}${row('Uplinks', bgp ? 'two spine lanes, equal cost: parts take turns (ECMP)' : 'one lane')}</table>`,
+  if (a.type === 'diverter'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
+    return { kick: 'Fabric', title: `Diverter ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${n.cut ? '<span style="color:#b3261e">peer down (uplink cut)</span>' : bgp ? (n.cordoned ? '<span style="color:var(--muted)">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes, the strip is painted on')}${row('Uplinks', bgp ? 'two spine belts, equal cost: parts take turns (ECMP)' : 'one belt')}${row('Arm', 'swings across the belt to send a part down this row\'s spur; a part for another row rides past')}</table>`,
       acts: [ { label: bgp ? 'static routes' : 'switch to BGP', onClick: () => setFabric(bgp ? 'static' : 'bgp') } ] }; }
   if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;

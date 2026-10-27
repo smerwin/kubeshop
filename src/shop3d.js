@@ -4,7 +4,7 @@
    A node is a fenced work cell with machine bays, a controller cabinet (the kubelet), a tool rack (its image cache)
    and its own AGV; a pod is a machine with an andon stack; the planning office on the mezzanine holds the counter
    (API server), the ledger (etcd), the dispatcher (scheduler) and the order board (controllers); job cards reach the
-   cells through a pneumatic tube along the trusses (the watch stream); parts travel the conveyor through the dock
+   cells through a pneumatic tube (the watch stream); parts travel the conveyor through the dock
    (Ingress) and the sorting station (Service). See src/sim.js for the model and src/view3d.js for the camera.
    ============================================================ */
 import * as THREE from 'three';
@@ -80,7 +80,6 @@ const OFF = { x0: 2, x1: 36, y0: 2, y1: 40, z0: 24, z1: 42 };   // the planning 
 const ox = () => st.net.managed ? -42 : 0;                        // in managed mode the office stands in the provider's building past the floor's back edge
 const OFFV = () => ({ ...OFF, x0: OFF.x0 + ox(), x1: OFF.x1 + ox() });
 const DIR = () => ({ x0: W - 16, x1: W - 6, y0: 26, y1: 34 });     // the directory booth (CoreDNS) across the lane from the station, between the dock and the station
-const JUNCTION = r => { const cells = st.nodes.filter(n => n.row === r); if (!cells.length) return null; return { x: Math.max(...cells.map(n => n.x0 + n.depth)) + 4, y: SY0 - 13, cells }; };   // a row's top-of-rack switch at its corridor's head
 const CRIB = () => ({ x0: 4, x1: 30, y0: REG_Y0 - 4, y1: REG_Y0 + REG_MAX*REG_GAP, h: 22 });
 const DOCK = () => ({ x0: W - 36, x1: W - 6, y0: 14, y1: 24 });
 const STATION = () => ({ x0: W - 44, x1: W - 30, y0: 36, y1: 54 });
@@ -116,12 +115,14 @@ function rebuildStatic(){
     rect(g, 0, 0, w, h, CONCRETE); for (let i = 0; i < 1800; i++){ g.fillStyle = `rgba(${60 + Math.random()*40|0},${60 + Math.random()*40|0},${60 + Math.random()*35|0},${.05 + Math.random()*.08})`; g.fillRect(Math.random()*w, Math.random()*h, .6 + Math.random()*1.6, .6 + Math.random()*1.6); }
     hatch(g, 0, 0, 2.2, h); hatch(g, w - 2.2, 0, 2.2, h); hatch(g, 0, 0, w, 2.2); hatch(g, 0, h - 2.2, w, 2.2);
     rect(g, W - 30, 0, 18, D, '#8f8c85'); line(g, [[W - 30, 0], [W - 30, D]], WHITE, .9); line(g, [[W - 12, 0], [W - 12, D]], WHITE, .9);
-    for (const n of st.nodes){ const x1 = n.x0 + n.depth, y1 = n.y0 + SLW; line(g, [[W - 30, y1 + 8], [x1 + 4, y1 + 8], [x1 + 4, y1 - 5], [x1, y1 - 5]], WHITE, .8, [3, 3]);
-      const lx = n.x0 - 14; line(g, [[lx, n.y0 + 4], [lx, n.row ? D - 6 : REG_Y0 - 12]], '#e3c766', .8, [2, 3]); if (n.row) line(g, [[lx, D - 6], [SX0 - 14, D - 6]], '#e3c766', .8, [2, 3]); }
+    // the belts: the spine (two of them with BGP), and per row the spur from its diverter to the corridor, the corridor, and each cell's entry
+    const belt = (x0, y0, x1, y1) => { const w = 1.5; rect(g, Math.min(x0, x1) - w, Math.min(y0, y1) - w, Math.abs(x1 - x0) + 2*w, Math.abs(y1 - y0) + 2*w, '#726f68'); line(g, [[x0, y0], [x1, y1]], WHITE, .7, [3, 3]); };
+    belt(LANE, 0, LANE, D); if (st.net.fabric === 'bgp') belt(SPINE2(), 44, SPINE2(), D - 8);
+    for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const ys = Dv.cells.map(cellEntry); belt(LANE, Dv.y, Dv.cx, Dv.y); belt(Dv.cx, Math.min(Dv.y, ...ys), Dv.cx, Math.max(Dv.y, ...ys)); for (const n of Dv.cells) belt(Dv.cx, cellEntry(n), n.x0 + n.depth, cellEntry(n)); }
+    for (const n of st.nodes){ const lx = n.x0 - 14; line(g, [[lx, n.y0 + 4], [lx, n.row ? D - 6 : REG_Y0 - 12]], '#e3c766', .8, [2, 3]); if (n.row) line(g, [[lx, D - 6], [SX0 - 14, D - 6]], '#e3c766', .8, [2, 3]); }
     line(g, [[SX0 - 14, REG_Y0 - 12], [30, REG_Y0 - 12]], '#e3c766', .8, [2, 3]);
     for (const n of st.nodes){ const c = cellBox(n); hatch(g, c.x0 - 1.4, c.y0 - 1.4, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y1, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y0, 1.4, c.y1 - c.y0); hatch(g, c.x1, c.y0, 1.4, c.y1 - c.y0); }
-    line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]);
-    if (st.net.fabric === 'bgp') line(g, [[SPINE2(), 44], [SPINE2(), D - 8]], WHITE, .8, [4, 3]); }, 4);   // the spine's second lane
+    line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
   // the pneumatic tube network overhead (the hall's roof is implied; the light comes from above)
@@ -133,7 +134,7 @@ function rebuildStatic(){
     const pnl = new THREE.Mesh(boxG(.15, 8.5, 72), pm); pnl.position.copy(V3(-3, 28, 5.2)); pnl.castShadow = false; F.add(pnl); F.add(rod([-3, -8, 10], [-3, 64, 10], .35, M(YEL, { r: .5 })));
     F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); txt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.5, 1.3, WHITE); txt(g, 'the office is theirs, the cells are yours · konnectivity tunnel to every cabinet', w/2, 3.2, .85, '#c9d2ea', 700); }, 24)));
     S.add(F); }
-  Y.junctions = []; for (let r = 0; r < 8; r++){ const J = JUNCTION(r); if (!J) break; const out = mkJunction(r, J); Y.junctions.push(out); S.add(out.g); }
+  Y.divs = []; for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const out = mkDiverter(r, Dv); Y.divs.push(out); S.add(out.g); }
   Y.dir = mkDirectory(); S.add(Y.dir.g);
   Y.crib = mkCrib(); S.add(Y.crib.g);
   Y.station = mkStation(); S.add(Y.station.g);
@@ -200,15 +201,21 @@ function mkOffice(){
   out.annex.visible = false; g.add(out.annex);
   return out;
 }
-/* a row's junction: the top-of-rack switch at the head of the row's corridor, with the route card of what it has learned */
-function routeTex(r, J){ const bgp = st.net.fabric === 'bgp', lines = J.cells.map(n => { const i = st.nodes.indexOf(n); return bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cordoned ? 'withdrawn' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`; });
-  return tex(`routecard|${r}|${bgp}|${lines.join(';')}`, 9, 1.4 + lines.length*1.1, (g, w, h) => { rect(g, 0, 0, w, h, WHITE); txt(g, bgp ? 'ROUTES LEARNED · BGP' : 'ROUTES · STATIC', w/2, .6, .6, '#1d1f22'); lines.forEach((l, i) => txt(g, l, .3, 1.6 + i*1.1, .5, /withdrawn/.test(l) ? '#b3261e' : '#3a3d42', 700, 'left')); }, 40); }
-function mkJunction(r, J){ const g = new THREE.Group(), out = { g, key: '' }, x = J.x, y = J.y;
-  g.add(box(x - 3.5, y - 3.5, 0, x + 3.5, y + 3.5, 8, M('#3d4147', { r: .45, m: .4 }), { r: .4 })); g.add(box(x - 3.8, y - 3.8, 8, x + 3.8, y + 3.8, 8.8, M(YEL, { r: .5 }), { r: .2 }));
-  g.add(decal([x + 3.52, y, 5.2], [1, 0, 0], [0, -1, 0], 6.4, 2.4, tex(`junction|${r}`, 6.4, 2.4, (g2, w, h) => { txt(g2, `JUNCTION ${r + 1}`, w/2, .8, .8, WHITE); txt(g2, 'top-of-rack switch', w/2, 1.75, .55, '#c9c4b8', 700); }, 32)));
-  for (let i = 0; i < 4; i++) g.add(lamp(x + 3.6, y - 2.4 + i*1.6, 1.6, LAMP.green, .25));
-  out.card = box(x - 4.6, y - 3, 0, x - 3.6, y + 3, 9, M(WHITE, { r: .5 }), { r: .15 }); g.add(out.card); out.cardDecal = decal([x - 4.62, y, 4.6], [-1, 0, 0], [0, 1, 0], 9, 1.4 + J.cells.length*1.1, routeTex(r, J)); g.add(out.cardDecal);
-  out.lamp = lamp(x, y, 9.6, LAMP.green, .5); g.add(out.lamp); out.r = r; out.J = J; g.add(ao(x, y, 16, 16)); g.children[0].userData.act = { type: 'junction', row: r }; pickables.push(g.children[0]); return out; }
+/* a row's diverter: the top-of-rack switch, a switch arm on the spine belt where the row's spur leaves it, with the route strip of
+   what it has learned from the cells on its row (painted on with static routes; a line per announcement with BGP) */
+const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'peer down' : n.cordoned ? 'withdrawn' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!(n.cut || (bgp && n.cordoned)) }; }); };
+const stripH = Dv => 1.5 + Dv.cells.length*1.05;
+function routeTex(r, Dv){ const bgp = st.net.fabric === 'bgp', lines = stripLines(Dv);
+  return tex(`strip|${r}|${bgp}|${lines.map(l => l.text + l.off).join(';')}`, 9, stripH(Dv), (g, w, h) => { rect(g, 0, 0, w, h, '#f4f2ec'); rect(g, 0, 0, w, .95, '#1d1f22'); txt(g, bgp ? `DIVERTER ${r + 1} · ROUTES LEARNED · BGP` : `DIVERTER ${r + 1} · ROUTES · STATIC`, w/2, .5, .5, WHITE);
+    lines.forEach((l, i) => txt(g, l.text, .3, 1.55 + i*1.05, .5, l.off ? '#9a948a' : '#3a3d42', 700, 'left')); }, 40); }
+function mkDiverter(r, Dv){ const g = new THREE.Group(), out = { g, key: '', r, Dv, arms: [] }, x = Dv.x, y = Dv.y, bgp = st.net.fabric === 'bgp', lanes = bgp ? [SPINE2(), LANE] : [LANE], x0 = lanes[0] - 4.5, x1 = x + 4.5;
+  // the frame across the belt(s) with a pivot post per belt; the arm lies along the belt and swings across it to send a part down the spur
+  const frame = box(x0, y - 3.4, 0, x1, y + 3.4, 1, M('#3d4147', { r: .45, m: .4 }), { r: .2 }); frame.userData.act = { type: 'diverter', row: r }; pickables.push(frame); g.add(frame);
+  g.add(box(x0, y + 2.6, 0, x1, y + 3.4, 4.2, M(YEL, { r: .5 }), { r: .15 }));
+  for (const lx of lanes){ const arm = new THREE.Group(); arm.position.copy(V3(lx + 2.6, y + 2.6, 2.4)); arm.add(rod([0, 0, 0], [0, -6.4, 0], .42, M('#e2483d', { r: .5 }))); arm.add(cyl(0, 0, -1.8, 1.4, .8, M(DARKM, { r: .4 }), { n: 10 })); arm.add(lamp(0, 0, 1.9, LAMP.green, .32)); g.add(arm); out.arms.push({ g: arm, lane: lx, lamp: arm.children[2] }); }
+  // the route strip: a plate standing beside the belt, facing the way the camera looks by default
+  const h = stripH(Dv); g.add(box(x1 + .8, y - 4.5, 0, x1 + 1.3, y + 4.5, h + 1.4, M(DARKM, { r: .5 }), { r: .1 })); out.stripDecal = decal([x1 + 1.32, y, .9 + h/2], [1, 0, 0], [0, -1, 0], 9, h, routeTex(r, Dv)); g.add(out.stripDecal);
+  out.lamp = lamp(x1 + 1.05, y + 4.5, h + 1.7, LAMP.green, .45); g.add(out.lamp); g.add(ao(x, y, 22, 14)); return out; }
 /* the directory: CoreDNS, two small machines in a booth with the phone book; every machine's resolv.conf points here */
 function mkDirectory(){ const d = DIR(), g = new THREE.Group(), out = { g, lamps: [] }, m = m0();
   g.add(box(d.x0, d.y0, 0, d.x1, d.y1, 1, M(CONCRETE, { r: .85 }), { r: .2 })); out.body = box(d.x0 + .5, d.y0 + .5, 1, d.x1 - .5, d.y1 - .5, 7, own('#f1e6c8', { r: .55 }), { r: .4 }); out.body.userData.act = { type: 'dns' }; pickables.push(out.body); g.add(out.body);
@@ -445,12 +452,13 @@ function syncParts(){ while (Y.parts.length < st.parcels.length){ const g = new 
     scene.add(g); Y.parts.push({ g, b, l, sl }); }
   while (Y.parts.length > st.parcels.length){ const P = Y.parts.pop(); dispose(P.g); }
   st.parcels.forEach((pc, i) => { const P = Y.parts[i], p = parcelAt(pc, pc.t); P.g.position.copy(V3(p[0], p[1], p[2] - 2.2)); if (P.b.material.color.getHexString() !== pc.col.slice(1)) P.b.material.color.set(pc.col); setLamp(P.l, pc.canary && pc.col !== LAMPC.red ? LAMP.amber : pc.col); P.sl.visible = !!pc.sleeve && pc.col !== LAMPC.red; }); }
-// BGP announcements: a puck with a flag runs from the cabinet down the aisle and along the front road to the row's junction (red: a withdrawal)
-function annPath(n){ const cb = cabinet(n), J = JUNCTION(n.row) || { x: n.x0 + n.depth + 4, y: SY0 - 13 }; return [[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 2], [(cb.x0 + cb.x1)/2, J.y, 6], [J.x, J.y, 6], [J.x, J.y, 9.6]]; }
+// BGP announcements: a pulse with a flag runs from the cabinet across the cell's entry, up the corridor and the spur to the row's diverter (red: a withdrawal)
+function annPath(n){ const cb = cabinet(n), Dv = DIVERTER(n.row), yd = cellEntry(n), cx = Dv ? Dv.cx : n.x0 + n.depth + 4, ys = Dv ? Dv.y : yd; return [[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 2], [(cb.x0 + cb.x1)/2, yd, 6], [cx, yd, 6], [cx, ys, 6], [LANE, ys, 6], [LANE + 5, ys, 6]]; }
 function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length){ const g = new THREE.Group(); const s = new THREE.Mesh(sphG(.9), own(LAMP.green, { e: 2, r: .3 })); s.castShadow = false; g.add(s); g.add(box(.8, -.1, .6, 1, 2.2, 2.2, own('#2d7bd6', { r: .5 }), { r: .1 })); scene.add(g); Y.ann.push({ g, s }); }
   while (Y.ann.length > st.net.ann.length){ const A = Y.ann.pop(); dispose(A.g); }
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
-  for (const Jn of Y.junctions || []){ const key = st.net.fabric + '|' + Jn.J.cells.map(n => n.cordoned ? 1 : 0).join(''); if (Jn.key !== key){ Jn.key = key; Jn.cardDecal.material.map = routeTex(Jn.r, Jn.J); Jn.cardDecal.material.needsUpdate = true; } setLamp(Jn.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber); }
+  for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cordoned ? 1 : 0) + (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
+    const f = st.net.flick[Dv.r]; for (const a of Dv.arms){ const on = f && f.lane === a.lane, u = on ? 1 - f.t/.55 : 0; a.g.rotation.y = 1.1*Math.sin(Math.PI*u); setLamp(a.lamp, on ? LAMP.amber : LAMP.green); } }   // the arm swings out across the belt and back
   const Dd = Y.dir; if (Dd){ const up = dnsUp(), fl = st.net.dns.flash > 0; setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); Dd.win.material.emissiveIntensity = up ? (fl ? 3.2 : 1.2) : 0; Dd.win.material.color.set(up ? '#ffe3a0' : '#3a3d42'); }
   // the lookup's hop: a dashed line and a dot from the window to the CoreDNS machine that answers, and back (only while those machines are drawn)
   Y.hops = Y.hops || []; while (Y.hops.length < st.net.hops.length){ const g = new THREE.Group(); const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]), new THREE.LineDashedMaterial({ color: '#ffe3a0', dashSize: 2, gapSize: 1.4 })); g.add(line); const dot = lamp(0, 0, 0, LAMP.amber, .5); g.add(dot); scene.add(g); Y.hops.push({ g, line, dot }); }
@@ -516,7 +524,7 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
   if (n){ const c = cellBox(n); return [[c.x0 - 12, c.y0, 0], [c.x1, c.y1, 18]]; }
   if (a.type === 'tower') return [[OFF.x0 + ox(), OFF.y0, 0], [OFF.x1 + 2 + ox(), OFF.y1, OFF.z1 + 4]];
   if (a.type === 'dns'){ const d = DIR(); return [[d.x0, d.y0, 0], [d.x1 + 1, d.y1, 13]]; }
-  if (a.type === 'junction'){ const J = JUNCTION(a.row || 0); return J ? [[J.x - 6, J.y - 5, 0], [J.x + 5, J.y + 5, 11]] : null; }
+  if (a.type === 'diverter'){ const Dv = DIVERTER(a.row || 0); return Dv ? [[SPINE2() - 5, Dv.y - 6, 0], [Dv.x + 7, Dv.y + 6, 8]] : null; }
   if (a.type === 'board') return [[OFF.x0 + 6 + ox(), OFF.y1, OFF.z0 + 4], [OFF.x1 - 6 + ox(), OFF.y1 + 2, OFF.z1 - 3]];
   if (a.type === 'registry'){ const c = CRIB(); return [[c.x0, c.y0, 0], [c.x1, c.y1, c.h + 3]]; }
   if (a.type === 'kiosk'){ const s = STATION(); return [[s.x0, s.y0, 0], [s.x1 + 2, s.y1, 20]]; }
@@ -559,7 +567,7 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
-    { const J = JUNCTION(0), dd = DIR(); if (J) items.push({ at:[J.x, J.y, 10], text:'JUNCTION', on: st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.net.dns.flash > 0 });
+    { const Dv = DIVERTER(0), dd = DIR(); if (Dv) items.push({ at:[Dv.x + 2.6, Dv.y, 5], text:'DIVERTER', on: !!st.net.flick[0] || st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.net.dns.flash > 0 });
       if (st.showSys) for (const p of st.pods.filter(p => isDnsPod(p) && p.pos && !NOPOS.has(p.phase))) items.push({ at:[p.pos[0] + MW/2, p.pos[1] + 1, p.pos[2] + MH + 2], text:'COREDNS', on: st.net.hops.some(h => h.pod === p) });
       if (st.net.fabric === 'bgp'){ items.push({ at:[SPINE2(), 90, 2.5], text:'SPINE', on: st.parcels.length > 0 }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x1 - 1.5, cb.y0 + 6.3, cb.h + 5], text:'BGP SPEAKER', on: st.net.ann.some(a => a.node === n0.name) }); } }
       if (st.net.mesh.on){ const mp = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && MESHED.has(p.app)); if (mp) items.push({ at:[mp.pos[0] + 6.6, mp.pos[1] - 1.3, mp.pos[2] + 3.4], text:'ESCORT', on: st.parcels.some(pc => pc.sleeve) }); items.push({ at:[o.x1 + 13, o.y0 + 8, o.z0 + 11], text:'MESH DESK', on:false }); }

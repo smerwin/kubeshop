@@ -12,7 +12,7 @@ Volcano-style PodGroup that starts in sync), drain, send a request, and the clus
 that stamps a badge for every component and every cell (mutual TLS, kubelet CSRs and rotation), a NetworkPolicy as
 gates on the spurs into a job's machines, an inspector at the counter (Pod Security Admission), a forged job card refused
 at authentication, Secrets in a locked drawer, signed crates, the logbook as the audit log. Then the networking: the floor's
-roads as a small Clos fabric with a junction per row and a two-lane spine (static routes, or BGP announced from every cabinet
+belts as a small Clos fabric with a diverter (the top-of-rack switch) per row and a two-belt spine (static routes, or BGP announced from every cabinet
 with ECMP), kube-proxy's iptables or the CNI's eBPF on the cabinet's switch plate, the directory booth (CoreDNS) every part
 stops at first, a service mesh (escort sidecars, sealed sleeves, the mesh's own CA, a weighted canary) and a managed
 control plane behind the provider's fence with a konnectivity relay on every cabinet. Scheduling is instant; what takes time is each cell
