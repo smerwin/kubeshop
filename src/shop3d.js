@@ -111,10 +111,7 @@ function rebuildStatic(){
     line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
-  // trusses with lamps across the hall, and the pneumatic tube network along them
-  for (let y = 30; y < D; y += 60){ S.add(box(-10, y - 1.5, TRUSS_Z, W + 10, y + 1.5, TRUSS_Z + 3, M(STEEL, { r: .4, m: .6 }), { r: 0 }));
-    for (let x = 20; x < W; x += 50){ S.add(box(x - 4, y - 1.2, TRUSS_Z - 2.2, x + 4, y + 1.2, TRUSS_Z, M(DARKM, { r: .5 }), { r: .3 })); S.add(box(x - 3.4, y - .8, TRUSS_Z - 2.3, x + 3.4, y + .8, TRUSS_Z - 2.1, M('#fff4dc', { e: 1.8, r: .4 }), { r: 0, shadow: false })); } }
-  for (const x of [-6, W + 6]) for (let y = 30; y < D; y += 60) S.add(box(x - 1.5, y - 1.5, 0, x + 1.5, y + 1.5, TRUSS_Z + 3, M(STEEL, { r: .45, m: .5 }), { r: 0 }));
+  // the pneumatic tube network overhead (the hall's roof is implied; the light comes from above)
   const tubeM = M(GLASS, { a: .32, r: .15, m: .1 }); tubeM.depthWrite = false;
   const trunk = [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, D - 20, TUBE_Z]];
   for (let i = 0; i < trunk.length - 1; i++) S.add(rod(trunk[i], trunk[i + 1], 1.1, tubeM));
