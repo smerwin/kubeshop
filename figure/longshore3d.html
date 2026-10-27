@@ -298,7 +298,10 @@ const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], serv
   crane:{ x:75, y:130, z:36, carry:null, job:null, queue:[] }, caps:[], strobe:0, parcels:[], boom:0, boomT:0, rr:0, showSys:false,
   live:{ url:null, poll:0, timer:0, status:'' }, said:{}, pending503:0, cp:{ etcd:1, api:1, ctrl:1, hold:0 }, boot:null, reqs:{ sent:0, ok:0, err:0, reset:0 },
   // security: the CA (the seal press), badges signed, the NetworkPolicy in force, refusals at the counter (the room plays them), forged job cards in the tube, the inspector's sign, timed follow-ups
-  sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] } };
+  sec:{ ca:1, badges:0, netpol:null, refuse:[], refuseT:0, forged:[], inspect:0, stamp:0, queue:[] },
+  // networking: the fabric (static routes, or BGP from every cabinet to its row's junction with two spine lanes), Service addressing,
+  // the directory (CoreDNS), the mesh (sidecars, the mesh's own CA, a weighted canary) and a managed control plane behind the fence
+  net:{ fabric:'static', svc:'iptables', lane:0, ann:[], dns:{ up:true, down:0, n:0 }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
 // on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
 const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
@@ -337,9 +340,10 @@ function reconcile(){
       const extra = live.length - dep.replicas;
       if (extra > 0) live.slice().sort((a, b) => b.born - a.born).slice(0, extra).forEach(p => terminate(p));
     } else {
-      // rolling update, maxSurge 1 / maxUnavailable 0: one new pod up, then one old pod down once it is Ready
-      if (live.length < dep.replicas + 1 && newer.length < dep.replicas){ st.pods.push(makePod(dep)); say('roll-' + dep.app, `Rollout: new ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} surges one ${dep.version} Pod`); }
-      if (readyN > dep.replicas && older.length){ terminate(older.sort((a, b) => a.born - b.born)[0]); say('rolldown-' + dep.app, `A ${dep.version} Pod is Ready, so one old Pod is scaled down`); }
+      // rolling update, maxSurge 1 / maxUnavailable 0: one new pod up, then one old pod down once it is Ready; a paused rollout holds with its first new pod up
+      if (dep.paused && newer.length >= 1){ /* kubectl rollout pause: the canary stays, the old ReplicaSet keeps its pods */ }
+      else if (live.length < dep.replicas + 1 && newer.length < dep.replicas){ st.pods.push(makePod(dep)); say('roll-' + dep.app, `Rollout: new ReplicaSet ${dep.name}-${rsHash(dep.app, dep.version)} surges one ${dep.version} Pod`); }
+      if (!(dep.paused && newer.length >= 1) && readyN > dep.replicas && older.length){ terminate(older.sort((a, b) => a.born - b.born)[0]); say('rolldown-' + dep.app, `A ${dep.version} Pod is Ready, so one old Pod is scaled down`); }
     }
   }
   markBands(); refreshRegistry();
@@ -477,35 +481,47 @@ function request(){
   if (!svc) return say('nosvc', 'No Service to route to');
   st.reqs.sent++;
   if (!eps.length){ st.parcels.push(makeParcel(null, svc)); st.reqs.err++; return say('503', `503: Service ${svc.name} has no Ready endpoints`); }
-  const p = eps[st.rr++ % eps.length];
-  st.parcels.push(makeParcel(p, svc)); say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> Service ${svc.name} -> ${p.name}`);
+  const M = st.net.mesh, split = M.on && M.canary > 0 && svc.name === 'web' && eps.some(p => p.ver === 'v2') && eps.some(p => p.ver !== 'v2');
+  let p; if (split){ const v2 = eps.filter(p => p.ver === 'v2'), v1 = eps.filter(p => p.ver !== 'v2'); p = (++M.n % Math.round(100/M.canary) === 0) ? v2[M.n % v2.length] : v1[st.rr++ % v1.length]; } else p = eps[st.rr++ % eps.length];
+  const pc = makeParcel(p, svc); if (split) pc.canary = p.ver === 'v2'; st.parcels.push(pc);
+  say('req', `GET ${st.ingresses[0] ? st.ingresses[0].host : svc.name} -> ${st.net.dns.up ? 'directory: ' + svc.name + '.default.svc.cluster.local -> ClusterIP' : 'directory closed'} -> Service ${svc.name} -> ${p.name}${split ? (pc.canary ? ' (the canary: the sidecars\' 90/10 split, a VirtualService / HTTPRoute, not a Service feature)' : ' (v1, by the sidecars\' weighted split)') : ''}`);
 }
+// the spine has two lanes when the fabric runs BGP: consecutive parts take turns (equal-cost multipath); a canary part rides the second lane so the split shows
+const SPINE2 = () => LANE - 6.5;
+function laneX(canary){ if (canary != null) return canary ? SPINE2() : LANE; return st.net.fabric === 'bgp' && isShop() ? (st.net.lane++ % 2 ? SPINE2() : LANE) : LANE; }
 function makeParcel(p, svc){
-  const n = p && st.nodes.find(n => n.name === p.node), pts = [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
-  if (p && n && isShop()){ const [px, py, pz] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yt = y1 + 8, yd = y1 - 5;
-    // the corridor between cells, the cell's conveyor-side opening, the cross-aisle after the machine's row, the machine
-    pts.push([LANE, yt, 2.2], [x1 + 4, yt, 2.2], [x1 + 4, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
+  const n = p && st.nodes.find(n => n.name === p.node), dns = isShop(), pts = dns ? [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 30, 2.2], [LANE, 45, 2.2]] : [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
+  if (p && n && isShop()){ const [px, py, pz] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r, gx = r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX, yt = y1 + 8, yd = y1 - 5, lx = laneX(p.ver === 'v2' && st.net.mesh.on && st.net.mesh.canary ? true : null);
+    // the directory, the station, the spine lane, the corridor between cells, the cell's conveyor-side opening, the cross-aisle after the machine's row, the machine
+    if (lx !== LANE) pts.push([lx, 50, 2.2]); pts.push([lx, yt, 2.2], [x1 + 4, yt, 2.2], [x1 + 4, yd, 2.2], [gx, yd, 2.2], [gx, py + 5, 2.2], [px + 10.6, py + 5, 2.2]); }
   else if (p && n){ const [px, py, pz] = p.pos, yt = py + PL + 3; pts.push([LANE, yt, 2.2], [n.x0 + SLD + 3, yt, 2.2], [n.x0 + SLD, yt, SLH + 2.2], [px + PW/2, yt, SLH + 2.2], [px + PW/2, yt, pz + 2.2], [px + PW/2, py + PL + .8, pz + 2.2]); }
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
-  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0 };
+  const dirD = dns ? segs[1].s0 + segs[1].l : -1, kioskD = dns ? segs[2].s0 + segs[2].l : segs[1].s0 + segs[1].l;
+  return { pts, segs, L, pod: p, svc, t: 0, dir: 1, col: p ? palOf(p.app).l : LAMPC.red, hold: 0, dirD, kioskD, dhold: 0, dns: dns ? (st.net.dns.up ? 'ok' : 'fail') : null };
 }
 // a part from one machine to another (a Pod calling a Service): out of its bay to the cross aisle, the cell's conveyor-side opening, the lane, and into the other cell
 function makeLink(a, b, blocked){
   const na = st.nodes.find(n => n.name === a.node), nb = st.nodes.find(n => n.name === b.node), z = 2.2;
   const bay = (p, n) => { const [px, py] = p.pos, y1 = n.y0 + SLW, x1 = n.x0 + n.depth, r = p.slot.r; return { px, py, x1, yt: y1 + 8, yd: y1 - 5, gx: r >= 2 ? x1 - 3.5 : n.x0 + 17.5 + r*BAYX }; };
   const A = bay(a, na), B = bay(b, nb), pts = [[A.px + 10.6, A.py + 5, z], [A.gx, A.py + 5, z], [A.gx, A.yd, z]];
-  if (na !== nb) pts.push([A.x1 + 4, A.yd, z], [A.x1 + 4, A.yt, z], [LANE, A.yt, z], [LANE, B.yt, z], [B.x1 + 4, B.yt, z], [B.x1 + 4, B.yd, z]);
+  // two cells in one row share a junction: the part stays on the row's corridor; across rows it takes the spine (one of its lanes)
+  if (na !== nb && na.row === nb.row && st.net.fabric === 'bgp'){ const cx = Math.max(A.x1, B.x1) + 4; pts.push([cx, A.yd, z], [cx, B.yd, z]); }
+  else if (na !== nb){ const lx = laneX(); pts.push([A.x1 + 4, A.yd, z], [A.x1 + 4, A.yt, z], [lx, A.yt, z], [lx, B.yt, z], [B.x1 + 4, B.yt, z], [B.x1 + 4, B.yd, z]); }
   pts.push([B.gx, B.yd, z], [B.gx, B.py + 5, z], [B.px + 10.6, B.py + 5, z]);
   const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i+1]); segs.push({ a: pts[i], b: pts[i+1], s0: L, l }); L += l; }
-  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0 };
+  const meshed = st.net.mesh.on && MESHED.has(a.app) && MESHED.has(b.app);
+  return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: -1 };
 }
 function parcelAt(pc, d){ for (const s of pc.segs) if (d <= s.s0 + s.l + 1e-6) return lerp3(s.a, s.b, s.l ? (d - s.s0)/s.l : 0); return pc.pts[pc.pts.length - 1]; }
 // the target is chosen when the part leaves the station (a Ready endpoint then) and re-checked every frame after: a machine that is
 // draining still answers (in-flight connections finish inside the grace period); one that has powered down, crashed or been removed
 // cannot, so the part turns red where the machine was and comes back as a connection reset
 function parcelTick(pc, dt){
-  const spd = 95, kioskD = pc.link ? -1 : pc.segs[1].s0 + pc.segs[1].l;
-  if (pc.dir === 1){ if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
+  const spd = 95, kioskD = pc.kioskD != null ? pc.kioskD : pc.link ? -1 : pc.segs[1].s0 + pc.segs[1].l, dirD = pc.dirD == null ? -1 : pc.dirD;
+  if (pc.dir === 1){
+    // the directory: a lookup first (the name to a ClusterIP); with CoreDNS down the part waits out the timeout and comes back with no address
+    if (dirD >= 0 && pc.t < dirD + .01 && pc.t + spd*dt >= dirD){ pc.t = dirD; pc.dhold += dt; if (pc.dns === 'fail'){ if (pc.dhold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out, the directory is closed (CoreDNS has no Ready pods); connections already open keep working, new ones cannot find an address`); } return true; } if (pc.dhold < .3) return true; }
+    if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
     // a NetworkPolicy gate: the part stops at the machine's gate, is dropped there (the CNI drops the packet; the caller times out) and comes back red
     if (pc.blocked && pc.t + spd*dt >= pc.stop){ pc.t = pc.stop; pc.hold += dt; if (pc.hold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; const pol = st.sec.netpol;
         say('netpol-drop', `NetworkPolicy ${pol ? pol.name : ''}: ${pc.from.app} -> ${pc.pod.app} is not allowed, so the CNI drops the packet at ${pc.pod.name}'s gate (the caller times out; nothing in the office is asked)`); } return true; }
@@ -532,7 +548,7 @@ function tick(dt){
   for (const n of st.nodes) if (n.joining && n.joined < 1){ n.joined = Math.min(1, n.joined + dt/.9); busy = true; }   // a node joins only once its own kubeadm join has run
   for (const p of st.pods.slice()) if (podTick(p, dt)) busy = true;
   for (const n of st.nodes){ const g = n.cordoned ? 1 : 0; if (n.tape !== g){ n.tape = Math.max(0, Math.min(1, n.tape + (g - n.tape > 0 ? dt/.5 : -dt/.5))); busy = true; } }
-  if (secTick(dt)) busy = true;
+  if (secTick(dt)) busy = true; if (netTick(dt)) busy = true;
   st.parcels = st.parcels.filter(pc => parcelTick(pc, dt)); if (st.parcels.length) busy = true;
   const boomUp = st.parcels.some(pc => Math.abs(pc.t - 20) < 30 || pc.t < 50) ? 1 : 0;
   if (st.boom !== boomUp){ st.boom = Math.max(0, Math.min(1, st.boom + (boomUp ? dt/.35 : -dt/.5))); busy = true; }
@@ -570,7 +586,7 @@ function bootTick(dt){ const b = st.boot; b.t += dt; while (b.i < b.ev.length &&
 function normalize(raw){
   if (raw && Array.isArray(raw.nodes) && !raw.items) return raw;
   const items = raw && raw.items ? raw.items : Array.isArray(raw) ? raw : [];
-  const out = { context: raw.context || 'cluster', nodes: [], pods: [], deployments: [], services: [], ingresses: [] };
+  const out = { context: raw.context || 'cluster', nodes: [], pods: [], deployments: [], services: [], ingresses: [] }; let tunnel = false, cpPods = false;
   const lab = (o, k) => o.metadata && o.metadata.labels ? o.metadata.labels[k] : undefined;
   const appOf = o => { const m = o.metadata || {}, l = m.labels || {}; if (l.app) return l.app; if (l['app.kubernetes.io/name']) return l['app.kubernetes.io/name']; if (l['k8s-app']) return l['k8s-app'];
     const own = (m.ownerReferences || [])[0]; if (own && own.kind === 'ReplicaSet') return own.name.replace(/-[a-z0-9]{6,10}$/, ''); if (own) return own.name; return (m.name || 'pod').replace(/(-[a-z0-9]{5,10}){1,2}$/, ''); };
@@ -585,17 +601,20 @@ function normalize(raw){
         version: lab(o, 'version') || lab(o, 'app.kubernetes.io/version') || (own && own.kind === 'ReplicaSet' ? own.name.slice(-5) : (img.split(':')[1] || 'v1')),
         pvc: (vols.find(v => v.persistentVolumeClaim) || {}).name, configMap: (vols.find(v => v.configMap) || {}).name, secret: (vols.find(v => v.secret) || {}).name,
         system: m.namespace === 'kube-system' || (own && own.kind === 'DaemonSet') }); }
-    else if (o.kind === 'Deployment' || o.kind === 'StatefulSet' || o.kind === 'DaemonSet'){ const sel = (sp.selector && sp.selector.matchLabels) || {};
+    if (o.kind === 'DaemonSet' && /konnectivity-agent|cloud-provider|cloud-controller/.test(m.name || '')) tunnel = true;
+    if (o.kind === 'Pod' && /^(kube-apiserver|etcd|kube-controller-manager|kube-scheduler)-/.test(m.name || '')) cpPods = true;
+    if (o.kind === 'Deployment' || o.kind === 'StatefulSet' || o.kind === 'DaemonSet'){ const sel = (sp.selector && sp.selector.matchLabels) || {};
       const tpl = (sp.template && sp.template.spec) || {}, img = ((tpl.containers || [])[0] || {}).image || '';
       out.deployments.push({ name: m.name, namespace: m.namespace, kind: o.kind, app: sel.app || sel['app.kubernetes.io/name'] || sel['k8s-app'] || m.name, replicas: sp.replicas != null ? sp.replicas : (stt.desiredNumberScheduled || 0),
         ready: stt.readyReplicas || stt.numberReady || 0, version: img.split(':')[1] || 'v1', containers: (tpl.containers || []).map(c => ({ name: c.name, image: c.image })), system: m.namespace === 'kube-system' || o.kind === 'DaemonSet' }); }
     else if (o.kind === 'Service') out.services.push({ name: m.name, namespace: m.namespace, selector: sp.selector || {}, ports: (sp.ports || []).map(p => p.port) });
     else if (o.kind === 'Ingress'){ for (const r of (sp.rules || [])){ const pth = ((r.http || {}).paths || [])[0] || {}, be = (pth.backend || {}).service || {}; out.ingresses.push({ host: r.host || '*', service: be.name, port: (be.port || {}).number }); } }
   }
+  out.managed = tunnel && !cpPods;   // a tunnel agent on every node and no control-plane pods in sight: the office is the provider's
   return out;
 }
 function applySnapshot(data, instant){
-  data = normalize(data);
+  data = normalize(data); if (st.mode === 'live' && data.managed != null && data.managed !== st.net.managed) setManaged(data.managed, true);
   const nodeNames = (data.nodes || []).map(n => n.name), sameNodes = nodeNames.length === st.nodes.length && nodeNames.every((n, i) => st.nodes[i].name === n);
   if (!sameNodes){ const old = new Map(st.nodes.map(n => [n.name, n]));
     st.nodes = (data.nodes || []).map(n => Object.assign(old.get(n.name) || { used: new Set(), tape: 0, joined: 1, joining: true, cache: new Set(), pull: null }, { name: n.name, ready: n.ready !== false, cordoned: !!n.cordoned, gpus: n.gpus || 0 }));
@@ -682,9 +701,9 @@ function crashPod(pod){ if (st.mode === 'live') return liveNote('kubectl exec <p
   p.phase = 'crash'; p.phaseT = 0; p.fire = 1; p.ready = false; say('crash', `Crash: ${p.name} container exited; the kubelet restarts it in place (the Pod keeps its name and node)`); run(); }
 function unreadyPod(pod){ if (st.mode === 'live') return liveNote('(make a readiness probe fail: e.g. stop the health endpoint)'); const p = pod || pickPod('web'); if (!p) return say('nopod', 'No Ready web Pod right now');
   p.phase = 'unready'; p.phaseT = 0; p.ready = false; say('unready', `Probe: ${p.name} readiness failing, so the Service stops sending it traffic (the Pod is not restarted)`); run(); }
-function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); n.cordoned = true; const ev = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); ev.forEach(terminate);
+function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); n.cordoned = true; announce(n, true); const ev = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); ev.forEach(terminate);
   say('drain', `kubectl drain ${n.name}: cordoned, ${ev.length} Pod${ev.length === 1 ? '' : 's'} evicted; ReplicaSets recreate them elsewhere`); run(); }
-function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; say('uncordon', `kubectl uncordon ${n.name}: schedulable again`); run(); }
+function uncordon(n){ if (st.mode === 'live') return liveNote(`kubectl uncordon ${n.name}`); n.cordoned = false; announce(n, false); say('uncordon', `kubectl uncordon ${n.name}: schedulable again`); run(); }
 function podInfo(p){ const d = depOf(p.app); say('info-' + p.id, `${p.name} · ${p.node || 'Pending'} · ${p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase} · ${p.containers.length} container${p.containers.length === 1 ? '' : 's'} · restarts ${p.restarts}${p.pvc ? ' · volume ' + p.pvc : ''}${d && d.kind === 'StatefulSet' ? ' · StatefulSet' : ''}`, 3000); }
 
 
@@ -735,6 +754,37 @@ function linkRequest(fromApp, toApp){ const a = pickPod(fromApp), b = pickPod(to
   say('link-' + fromApp, `${a.name} -> Service ${toApp}:${(st.services.find(s => s.name === toApp) || { ports: [0] }).ports[0] || ''} -> ${b.name}${blocked ? ' (the policy will drop it at the gate)' : pol && pol.to === toApp ? ' (allowed by the policy)' : ''}`); run(); }
 // a slow heartbeat so the badges age while the floor is idle (the loop only runs while something moves); it follows the Clock and never draws a frame of its own
 setInterval(() => { if (!ui || loopOn || SPEED <= 0 || st.mode !== 'demo' || !st.sec.ca) return; st.t += SPEED; if (secTick(SPEED)) run(); else if (document.querySelector('.card.open')) ui.render(); }, 1000);
+
+/* ---------- networking: the fabric, the directory, the mesh, a managed control plane ----------
+   The fabric is the floor's road network drawn as a small Clos: a junction per row of cells (the top-of-rack switch) and a
+   main avenue with two lanes (the spine, equal-cost multipath). With static routes (Kubernetes The Hard Way) each host knows
+   the other cells' ranges by hand; with BGP every cabinet announces its own PodCIDR to its junction and withdraws it when the
+   cell is drained. The directory is CoreDNS: two pods behind the kube-dns ClusterIP that every pod's resolv.conf points at.
+   The mesh adds a sidecar escort to each meshed machine, its own CA and a weighted split the Service never had. */
+const MESHED = new Set(['web', 'api']);
+function announce(n, withdraw){ if (st.net.fabric !== 'bgp' || !isShop()) return; st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: !!withdraw }); say('bgp-' + n.name, withdraw ? `${n.name}: cordoned, its BGP speaker withdraws 10.200.${st.nodes.indexOf(n)}.0/24 from the junction; no new part is routed to it` : `${n.name}: its BGP speaker announces 10.200.${st.nodes.indexOf(n)}.0/24 to the junction again`); run(); }
+function setFabric(f, quiet){ if (st.net.fabric === f) return quiet ? 0 : say('fabric', `The fabric already runs ${f === 'bgp' ? 'BGP' : 'static routes'}`); st.net.fabric = f;
+  if (f === 'bgp'){ for (const n of st.nodes) if (n.joined >= 1 && !n.cordoned) st.net.ann.push({ node: n.name, t: 0, dur: 1.4, withdraw: false }); }
+  if (!quiet) say('fabric', f === 'bgp' ? 'Fabric: BGP. Every cabinet runs a speaker (Cilium or Calico) that announces its PodCIDR to the row\'s junction; the junctions share them over the spine, whose two lanes carry parts in turn (ECMP)' : 'Fabric: static routes, the Hard Way: every host carries a route to each other cell\'s range, written by hand; one lane, no announcements');
+  run(); }
+function setSvcMode(m, quiet){ if (st.net.svc === m) return quiet ? 0 : say('svcmode', 'Already set'); st.net.svc = m;
+  if (!quiet) say('svcmode', m === 'ebpf' ? 'Service addressing: eBPF. The CNI (Cilium) replaces kube-proxy: a Service address is rewritten at the socket or the packet by programs loaded into the kernel, no iptables chains; DigitalOcean Kubernetes ships this way' : 'Service addressing: kube-proxy in iptables mode writes a chain per Service that rewrites the ClusterIP to one Ready endpoint'); run(); }
+function stopDns(){ if (st.mode === 'live') return liveNote('kubectl -n kube-system scale deploy/coredns --replicas=0'); const d = st.net.dns; if (!d.up) return say('dnsdown', 'The directory is already closed'); d.up = false; d.down = 0;
+  say('dnsstop', 'kubectl -n kube-system delete pod -l k8s-app=kube-dns: CoreDNS has no Ready pods, kube-dns has no endpoints. The directory goes dark: new lookups fail, open connections do not notice. The Deployment is already making replacements'); run(); }
+function applyMesh(quiet){ if (st.mode === 'live') return liveNote('istioctl install / linkerd install, then label the namespace for injection'); const M = st.net.mesh; if (M.on) return quiet ? 0 : say('mesh', 'The mesh is already installed'); M.on = true;
+  if (!quiet) say('mesh', 'kubectl label ns default istio-injection=enabled, then a rollout restart: every web and api machine gets an escort cartridge (the sidecar proxy); the mesh desk in the annex issues each one a certificate from the mesh\'s own CA, and parts between them travel in a sealed sleeve (mutual TLS the cluster CA knows nothing about)'); run(); }
+function applyCanary(pct, quiet){ if (st.mode === 'live') return liveNote('kubectl apply -f virtualservice-web.yaml   # weight 90 / 10'); if (!st.net.mesh.on) applyMesh(true); const M = st.net.mesh, d = depOf('web'); if (!d) return;
+  M.canary = pct; M.n = 0; if (d.version !== 'v2'){ d.version = 'v2'; } d.paused = true;
+  if (!quiet) say('canary', `kubectl set image deploy/web ... v2 && kubectl rollout pause deploy/web, then a VirtualService (or an HTTPRoute) with weights 90 / 10: one v2 machine comes up and stays, and the sidecars send one part in ten to it. The Service itself would round-robin all of them equally; this split lives in the mesh`); run(); }
+function removeMesh(){ if (st.mode === 'live') return liveNote('istioctl uninstall --purge'); const M = st.net.mesh, d = depOf('web'); if (!M.on && !M.canary) return say('nomesh', 'No mesh to remove'); M.on = false; M.canary = 0;
+  if (d && d.paused){ d.paused = false; say('meshoff', 'Mesh removed: the escorts and the sleeves go, the sorting station is back to round robin, and kubectl rollout resume deploy/web lets the paused rollout finish to v2'); } else say('meshoff', 'Mesh removed: the escorts and the sleeves go, parts travel in the clear again and the station is back to round robin'); run(); }
+function setManaged(on, quiet){ if (st.net.managed === !!on) return; st.net.managed = !!on; OFFICE[0] = on ? -22 : 20;
+  if (!quiet) say('managed', on ? 'Managed control plane: the planning office moves into the provider\'s building behind the fence. The counter still takes every request; the cells reach it, and it reaches them for logs and exec, through the konnectivity tunnel (a relay on every cabinet). The provider owns the office, you own the cells' : 'The control plane is yours again: the office is back on the mezzanine, no tunnel needed');
+  if (ui) reframe(); run(); }
+function netTick(dt){ let busy = false; const N = st.net;
+  for (const a of N.ann){ a.t += dt/a.dur; busy = true; } N.ann = N.ann.filter(a => a.t < 1.25);
+  const d = N.dns; if (!d.up){ d.down += dt; busy = true; if (d.down > 6){ d.up = true; say('dnsback', 'The CoreDNS Deployment\'s new pods are Ready and kube-dns has endpoints again: the directory is open'); } }
+  return busy; }
 
 </script>
 <script>
@@ -828,6 +878,8 @@ function staticSvg(){
   s += `<path d="M${kx(4) + 50} 492L612 492L612 ${BUS + 8}" fill="none" stroke="${INKC}" stroke-width="1" opacity=".55"/>` + text('write', 610, BUS + 20, { size: 8.5, weight: 600, col: MUTED, anchor: 'end' });
   // the other direction: the API server calls into the kubelet for logs, exec, port-forward and metrics
   s += `<g id="k-in">` + box(454, 532, 156, 36, { r: 5 }) + text('inbound :10250\nlogs · exec · port-forward', 532, 550, { size: 8.5 }) + '</g>';
+  // cluster DNS: CoreDNS pods behind the kube-dns ClusterIP, the first stop of every request by name
+  s += `<g id="dns">` + box(30, 532, 170, 36, { r: 5 }) + text('CoreDNS · kube-dns 10.96.0.10\nweb -> web.default.svc.cluster.local', 115, 550, { size: 8 }) + '</g>';
   // kube-proxy
   s += box(650, 410, 330, 170, { fill: PAPERC, sw: 1.8 }) + `<g id="p-title"></g>`;
   s += `<g id="p-inf">` + box(662, 456, 306, 24, { r: 4 }) + text('informer: EndpointSlices', 815, 468, { size: 10 }) + '</g>';
@@ -1017,7 +1069,9 @@ function observe(){
   if (!prev.cp.api && now.cp.api) chain('cp:api', async () => { for (let i = 0; i < 6; i++) lit('stage' + i, 900); lit('watch', 900); logLine('kube-apiserver: serving on :6443 (etcd reachable)'); });
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
-  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => { R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
+  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => {
+      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `CoreDNS: ${pc.svc.name}.default.svc.cluster.local -> SERVFAIL / timeout: kube-dns has no endpoints; the client cannot resolve the name` : `CoreDNS: ${pc.svc.name}.default.svc.cluster.local -> A ${pc.svc.name === 'web' ? '10.96.0.12' : '10.96.0.' + (20 + pc.svc.name.length)} (the ClusterIP; the search list and ndots:5 in resolv.conf expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
+      R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
   prev = now;
 }
 const depOfName = app => { const d = cfg.st.deploys.find(d => d.app === app); return d ? d.name : app; };
@@ -1105,6 +1159,9 @@ const BUTTONS = [
     { label:'delete spark', disabled: !depOf('spark'), why:'spark is not deployed', onClick: () => deleteDep('spark') },
     ...(SHOP() ? [ { label:'NetworkPolicy: db accepts only api', current: !!st.sec.netpol && st.mode === 'demo', onClick: () => applyNetpol() },
       { label:'remove the policy', disabled: !st.sec.netpol, why:'no NetworkPolicy in force', onClick: () => removeNetpol() } ] : []),
+    ...(SHOP() ? [ { label:'mesh: inject sidecars into web and api', current: st.net.mesh.on && st.mode === 'demo', onClick: () => applyMesh() },
+      { label:'canary: 10% of web to v2', current: st.net.mesh.canary === 10, onClick: () => applyCanary(10) },
+      { label:'remove the mesh', disabled: !st.net.mesh.on && !st.net.mesh.canary, why:'no mesh installed', onClick: () => removeMesh() } ] : []),
     { label:'reset the demo', onClick: () => { startDemo(); say('reset', 'Demo cluster reset: web x3, api x2, db x1'); } } ] },
   { label:'Scale web', short:'Scale', choices: () => scaleChoices('web') },
   { label:'Roll out', choices: () => { const w = depOf('web'), a = depOf('api'); return [
@@ -1116,7 +1173,7 @@ const BUTTONS = [
     { label:'delete the db pod', onClick: () => deletePod('db') },
     { label:'crash a container', onClick: () => crashPod() },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
-    ...(SHOP() ? [ { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
+    ...(SHOP() ? [ { label:'stop CoreDNS', disabled: !st.net.dns.up, why:'the directory is already closed', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
     { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
     { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
@@ -1125,7 +1182,12 @@ const BUTTONS = [
     { label: SHOP() ? 'the demo floor' : 'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
     { label:'open a kubectl JSON file', onClick: () => loadFile() },
     { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
-    { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ];
+    { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } },
+    ...(SHOP() ? [ { label:'fabric: static routes', sub:'the Hard Way: a route per cell, written by hand', current: st.net.fabric === 'static', onClick: () => setFabric('static') },
+      { label:'fabric: BGP', sub:'every cabinet announces its PodCIDR to the junction; two spine lanes', current: st.net.fabric === 'bgp', onClick: () => setFabric('bgp') },
+      { label:'service addressing: kube-proxy iptables', current: st.net.svc === 'iptables', onClick: () => setSvcMode('iptables') },
+      { label:'service addressing: eBPF (kube-proxy replacement)', sub:'Cilium, as on DigitalOcean Kubernetes', current: st.net.svc === 'ebpf', onClick: () => setSvcMode('ebpf') },
+      { label: st.net.managed ? 'self-managed control plane' : 'managed control plane', sub: st.net.managed ? 'bring the office back onto the mezzanine' : 'the office moves into the provider\'s building; a tunnel to every cabinet', onClick: () => setManaged(!st.net.managed) } ] : []) ] } ];
 const scaleChoices = app => [1, 2, 3, 5, 8].map(n => ({ label:`${n} replica${n === 1 ? '' : 's'}`, current: st.mode === 'demo' && !!depOf(app) && depOf(app).replicas === n, onClick: () => scaleTo(app, n) }));
 const btns = document.getElementById('btns');
 const closeChips = () => document.querySelectorAll('.stepwrap.open').forEach(w => w.classList.remove('open'));
@@ -1165,7 +1227,8 @@ async function loadChapter(id){ try {
   chap.querySelector('.prose').innerHTML = col.innerHTML + `<a class="more" href="${GUIDE}#${encodeURIComponent(id)}">Back to the guide ↗</a>`; chapb.hidden = false; } catch {} }
 // a camera intent per chapter: frame the thing the chapter is about, or follow the operation it presses
 const CHAPTER = {
-  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 }, security: { follow: 1 },
+  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 }, security: { follow: 1 }, fabric: { follow: 1 }, dns: { follow: 1 }, mesh: { follow: 1 },
+  managed: { frame: () => ({ type:'tower' }) },
   pods: { frame: () => { const p = st.pods.find(p => p.pos && p.configMap) || st.pods.find(p => p.pos); return p && { type:'pod', id: p.id }; } },
   nodes: { frame: () => st.nodes[0] && { type:'node', node: st.nodes[0].name } },
   control: { frame: () => ({ type:'tower' }) },
@@ -1252,7 +1315,15 @@ const EXPLAIN = {
   'PVC': 'A PersistentVolumeClaim: the fixture pallet under the machine, storage bound to the Pod that outlives any program in it.',
   'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
   'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
-  'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.' };
+  'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.',
+  'JUNCTION': 'The row\'s top-of-rack switch: with BGP every cabinet in the row announces its PodCIDR here, and the junctions trade routes over the spine.',
+  'SPINE': 'The main avenue of the fabric: two lanes of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
+  'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR, withdrawing it when the node leaves.',
+  'DIRECTORY': 'CoreDNS: two pods in kube-system behind the kube-dns ClusterIP. Every pod\'s resolv.conf points here; a Service name becomes its ClusterIP, a headless Service becomes the pod addresses.',
+  'ESCORT': 'The sidecar proxy (Envoy for Istio, the Linkerd proxy) injected beside the containers: it takes the machine\'s parts in and out, encrypts them to other escorts, retries, times out and reports.',
+  'MESH DESK': 'The mesh control plane (istiod, or Linkerd\'s): it issues each escort a certificate from the mesh\'s own CA, which is not the cluster CA, and pushes routing rules such as a weighted split.',
+  'RELAY': 'The konnectivity agent: a managed control plane cannot reach into your network, so each node runs a relay that opens a tunnel to the provider\'s counter; logs and exec come back through it.',
+  'PROVIDER': 'A managed control plane: the API server, etcd, the scheduler and the controllers run in the provider\'s building; you see the counter\'s address and nothing behind it.' };
 function cardFor(a){
   if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (!p) return null; const d = depOf(p.app), live = st.mode === 'live';
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
@@ -1267,7 +1338,7 @@ function cardFor(a){
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
-      (SHOP() ? row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
+      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to junction ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
@@ -1275,12 +1346,13 @@ function cardFor(a){
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
       row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) +
-      (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
+      (SHOP() && st.net.managed ? row('Owner', 'the provider: a managed control plane behind the fence, reached through the konnectivity tunnel; the cells are yours') : '') + (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
       acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title: T().boot, onClick: () => bootstrap() } ] }; }
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
-      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) + '</table>',
+      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) +
+      (SHOP() ? row('Name', `${esc(svc.name)}.default.svc.cluster.local -> this ClusterIP, from the directory (CoreDNS)`) : '') + (SHOP() && st.net.mesh.on && st.net.mesh.canary && svc.name === 'web' ? row('Mesh split', `${100 - st.net.mesh.canary} / ${st.net.mesh.canary} v1 / v2 by the sidecars (VirtualService / HTTPRoute), not by this Service`) : '') + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
     return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}${row('Answered', `${st.reqs.ok} of ${st.reqs.sent}`)}${row('Errors', st.reqs.err ? `${st.reqs.err}: ${st.reqs.reset} connection reset, ${st.reqs.err - st.reqs.reset} with no endpoint (503)` : 'none')}</table>`,
@@ -1299,6 +1371,11 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
+  if (a.type === 'dns'){ const d = st.net.dns; return { kick: 'Cluster DNS · kube-system', title: 'The directory (CoreDNS)', body: `<table>${row('Service', 'kube-dns · ClusterIP 10.96.0.10 · 53/UDP+TCP')}${row('Pods', LAMP(d.up ? LAMPC.green : LAMPC.red) + (d.up ? '2/2 CoreDNS Ready' : '0/2 Ready: the Deployment is replacing them'))}${row('resolv.conf', 'nameserver 10.96.0.10 · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5')}${row('Answers', 'web -> web.default.svc.cluster.local -> the ClusterIP; a headless Service -> the pod addresses themselves')}</table>`,
+      acts: [ { label: d.up ? 'stop CoreDNS' : 'coming back…', onClick: () => stopDns() }, { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
+  if (a.type === 'junction'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
+    return { kick: 'Fabric', title: `Junction ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${bgp ? (n.cordoned ? '<span style="color:#b3261e">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes')}${row('Uplinks', bgp ? 'two spine lanes, equal cost: parts take turns (ECMP)' : 'one lane')}</table>`,
+      acts: [ { label: bgp ? 'static routes' : 'switch to BGP', onClick: () => setFabric(bgp ? 'static' : 'bgp') } ] }; }
   if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;
 }
@@ -1368,6 +1445,7 @@ function wireSwitches(){
 function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.get('netpol') === '1' && SHOP()) applyNetpol(true);
+  if (SHOP()){ if (Q.get('fabric') === 'bgp') setFabric('bgp', true); if (Q.get('svc') === 'ebpf') setSvcMode('ebpf', true); if (Q.get('mesh') === '1') applyMesh(true); if (Q.has('canary')) applyCanary(+Q.get('canary') || 10, true); if (Q.get('managed') === '1') setManaged(true, true); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
   const tst = $('#toast'); if (tst) tst.addEventListener('click', e => { e.stopPropagation(); fanToasts(); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });

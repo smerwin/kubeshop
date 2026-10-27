@@ -77,6 +77,10 @@ const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h,
 const MW = 9, ML = 10, MH = 8;                         // a machine: 9 deep (x), 10 wide (y), 8 tall
 const TRUSS_Z = 50, TUBE_Z = 46, TUBE_X = 40;          // the trusses and the tube trunk's height; the trunk runs along y at TUBE_X
 const OFF = { x0: 2, x1: 36, y0: 2, y1: 40, z0: 24, z1: 42 };   // the planning office on its mezzanine
+const ox = () => st.net.managed ? -42 : 0;                        // in managed mode the office stands in the provider's building past the floor's back edge
+const OFFV = () => ({ ...OFF, x0: OFF.x0 + ox(), x1: OFF.x1 + ox() });
+const DIR = () => ({ x0: W - 16, x1: W - 6, y0: 26, y1: 34 });     // the directory booth (CoreDNS) across the lane from the station, between the dock and the station
+const JUNCTION = r => { const cells = st.nodes.filter(n => n.row === r); if (!cells.length) return null; return { x: Math.max(...cells.map(n => n.x0 + n.depth)) + 4, y: SY0 - 13, cells }; };   // a row's top-of-rack switch at its corridor's head
 const CRIB = () => ({ x0: 4, x1: 30, y0: REG_Y0 - 4, y1: REG_Y0 + REG_MAX*REG_GAP, h: 22 });
 const DOCK = () => ({ x0: W - 36, x1: W - 6, y0: 14, y1: 24 });
 const STATION = () => ({ x0: W - 44, x1: W - 30, y0: 36, y1: 54 });
@@ -101,14 +105,14 @@ const Y = { statics: new THREE.Group(), nodes: new Map(), pods: new Map(), caps:
 scene.add(Y.statics);
 const pickables = [];
 const m0 = () => PALS[st.pal];
-function staticKey(){ return [W, D, st.pal, st.nodes.map(n => n.name + ':' + n.row + ':' + n.depth).join(','), (st.ingresses[0] || {}).host, (svcMain() || {}).name].join('|'); }
+function staticKey(){ return [W, D, st.pal, st.nodes.map(n => n.name + ':' + n.row + ':' + n.depth).join(','), (st.ingresses[0] || {}).host, (svcMain() || {}).name, st.net.fabric, st.net.managed].join('|'); }
 function rebuildStatic(){
   dispose(Y.statics); Y.statics = new THREE.Group(); scene.add(Y.statics); pickables.length = 0;
   for (const N of Y.nodes.values()) dispose(N.g); Y.nodes.clear();
   const S = Y.statics;
   // the hall: a wide floor beyond the shop floor, the shop floor itself with its painted lanes and the yellow edge stripes
   const hall = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), M(FLOOR, { r: .95 })); hall.rotation.x = -Math.PI/2; hall.position.copy(V3(W/2, D/2, -.2)); hall.receiveShadow = true; S.add(hall);
-  const paint = tex(`paint|${W}|${D}|${st.nodes.map(n => n.row === 0 ? n.y0 : '').join(',')}`, W, D, (g, w, h) => {
+  const paint = tex(`paint|${W}|${D}|${st.nodes.map(n => n.row === 0 ? n.y0 : '').join(',')}|${st.net.fabric}`, W, D, (g, w, h) => {
     rect(g, 0, 0, w, h, CONCRETE); for (let i = 0; i < 1800; i++){ g.fillStyle = `rgba(${60 + Math.random()*40|0},${60 + Math.random()*40|0},${60 + Math.random()*35|0},${.05 + Math.random()*.08})`; g.fillRect(Math.random()*w, Math.random()*h, .6 + Math.random()*1.6, .6 + Math.random()*1.6); }
     hatch(g, 0, 0, 2.2, h); hatch(g, w - 2.2, 0, 2.2, h); hatch(g, 0, 0, w, 2.2); hatch(g, 0, h - 2.2, w, 2.2);
     rect(g, W - 30, 0, 18, D, '#8f8c85'); line(g, [[W - 30, 0], [W - 30, D]], WHITE, .9); line(g, [[W - 12, 0], [W - 12, D]], WHITE, .9);
@@ -116,14 +120,21 @@ function rebuildStatic(){
       const lx = n.x0 - 14; line(g, [[lx, n.y0 + 4], [lx, n.row ? D - 6 : REG_Y0 - 12]], '#e3c766', .8, [2, 3]); if (n.row) line(g, [[lx, D - 6], [SX0 - 14, D - 6]], '#e3c766', .8, [2, 3]); }
     line(g, [[SX0 - 14, REG_Y0 - 12], [30, REG_Y0 - 12]], '#e3c766', .8, [2, 3]);
     for (const n of st.nodes){ const c = cellBox(n); hatch(g, c.x0 - 1.4, c.y0 - 1.4, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y1, c.x1 - c.x0 + 2.8, 1.4); hatch(g, c.x0 - 1.4, c.y0, 1.4, c.y1 - c.y0); hatch(g, c.x1, c.y0, 1.4, c.y1 - c.y0); }
-    line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
+    line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]);
+    if (st.net.fabric === 'bgp') line(g, [[SPINE2(), 44], [SPINE2(), D - 8]], WHITE, .8, [4, 3]); }, 4);   // the spine's second lane
   paint.anisotropy = 8;
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
   // the pneumatic tube network overhead (the hall's roof is implied; the light comes from above)
   const tubeM = M(GLASS, { a: .32, r: .15, m: .1 }); tubeM.depthWrite = false;
   const trunk = [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, D - 20, TUBE_Z]];
   for (let i = 0; i < trunk.length - 1; i++) S.add(rod(trunk[i], trunk[i + 1], 1.1, tubeM));
-  Y.office = mkOffice(); S.add(Y.office.g);
+  Y.office = mkOffice(); Y.office.g.position.x = ox(); S.add(Y.office.g);
+  if (st.net.managed){ const F = new THREE.Group(); for (let y = -8; y <= 64; y += 12) F.add(cyl(-3, y, 0, 10, .5, M(YEL, { r: .5 }), { n: 8 })); const pm = own('#4a4e54', { a: .35, r: .5, m: .4 }); pm.depthWrite = false; pm.side = THREE.DoubleSide;
+    const pnl = new THREE.Mesh(boxG(.15, 8.5, 72), pm); pnl.position.copy(V3(-3, 28, 5.2)); pnl.castShadow = false; F.add(pnl); F.add(rod([-3, -8, 10], [-3, 64, 10], .35, M(YEL, { r: .5 })));
+    F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); txt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.5, 1.3, WHITE); txt(g, 'the office is theirs, the cells are yours · konnectivity tunnel to every cabinet', w/2, 3.2, .85, '#c9d2ea', 700); }, 24)));
+    S.add(F); }
+  Y.junctions = []; for (let r = 0; r < 8; r++){ const J = JUNCTION(r); if (!J) break; const out = mkJunction(r, J); Y.junctions.push(out); S.add(out.g); }
+  Y.dir = mkDirectory(); S.add(Y.dir.g);
   Y.crib = mkCrib(); S.add(Y.crib.g);
   Y.station = mkStation(); S.add(Y.station.g);
   Y.dock = mkDock(); S.add(Y.dock.g);
@@ -147,7 +158,7 @@ function mkOffice(){
   // the counter (API server) by the tube's mouth, with a screen
   ins.add(box(o.x0 + 14, o.y0 + 14, z, o.x0 + 22, o.y0 + 26, z + 5, M(WHITE, { r: .5 }), { r: .4 }));
   out.screens.api = box(o.x0 + 14.4, o.y0 + 16, z + 5, o.x0 + 16.4, o.y0 + 24, z + 9, own(LAMP.green, { e: 1.6, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.api);
-  ins.add(cyl(OFFICE[0], OFFICE[1], z, OFFICE[2], 1.4, M(DARKM), { n: 12 }));
+  ins.add(cyl(OFF.x0 + 18, OFFICE[1], z, OFFICE[2], 1.4, M(DARKM), { n: 12 }));
   // the ledger: a cabinet with three drawers (the Raft members), a lamp each
   ins.add(box(o.x0 + 3, o.y0 + 3, z, o.x0 + 11, o.y0 + 11, z + 13, M('#4a4f55', { r: .5, m: .3 }), { r: .4 }));
   out.drawers = [0, 1, 2].map(i => { const l = lamp(o.x0 + 11.2, o.y0 + 7, z + 11 - i*4, LAMP.green, .55); ins.add(box(o.x0 + 11, o.y0 + 4, z + 9.6 - i*4, o.x0 + 11.4, o.y0 + 10, z + 12.4 - i*4, M('#5b6168', { r: .5, m: .3 }), { r: .15 })); ins.add(l); return l; });
@@ -179,8 +190,33 @@ function mkOffice(){
   out.board = box(o.x0 + 6, o.y1 + .4, o.z0 + 4, o.x1 - 6, o.y1 + 1.2, o.z1 - 3, M(WHITE, { r: .5 }), { r: .2 }); out.board.userData.act = { type: 'board' }; pickables.push(out.board); g.add(out.board);
   out.boardDecal = decal([(o.x0 + o.x1)/2, o.y1 + 1.25, (o.z0 + 4 + o.z1 - 3)/2], [0, 1, 0], [1, 0, 0], o.x1 - o.x0 - 12, o.z1 - o.z0 - 7, boardTex()); g.add(out.boardDecal);
   g.add(ao(o.x0 + 12, o.y0 + 20, 80, 60));
+  // the mesh desk in the annex: istiod or the Linkerd control plane, with the mesh's own badge press (its CA is not the cluster CA)
+  const ax = { x0: o.x1 + 1.5, x1: o.x1 + 13, y0: o.y0 + 1, y1: o.y0 + 15 }; out.annex = new THREE.Group();
+  out.annex.add(cyl(ax.x1 - 2, ax.y0 + 2, 0, o.z0, 1.2, M(STEEL, { r: .4, m: .6 }), { n: 10 })); out.annex.add(cyl(ax.x1 - 2, ax.y1 - 2, 0, o.z0, 1.2, M(STEEL, { r: .4, m: .6 }), { n: 10 }));
+  out.annex.add(box(ax.x0, ax.y0, o.z0 - 2.5, ax.x1, ax.y1, o.z0, M(CONCRETE, { r: .8 }), { r: .4 })); out.annex.add(box(ax.x0 - .5, ax.y0 - .5, o.z0, ax.x1 + .5, ax.y1 + .5, o.z0 + 1.2, M(m.l, { r: .5 }), { r: .3 }));
+  const ag = own(GLASS, { a: .28, r: .1, m: .2 }); ag.depthWrite = false; ag.side = THREE.DoubleSide; out.annex.add(box(ax.x0, ax.y0, o.z0 + 1.2, ax.x1, ax.y1, o.z0 + 10, ag, { r: 0, shadow: false })); out.annex.add(box(ax.x0 - .6, ax.y0 - .6, o.z0 + 10, ax.x1 + .6, ax.y1 + .6, o.z0 + 11, M(DARKM, { r: .6 }), { r: .2 }));
+  out.annex.add(box(ax.x0 + 2, ax.y0 + 3, z, ax.x0 + 8, ax.y1 - 3, z + 4, M(WHITE, { r: .5 }), { r: .3 })); out.annex.add(box(ax.x0 + 3, ax.y0 + 4, z + 4, ax.x0 + 6, ax.y0 + 7, z + 6.6, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); out.annex.add(cyl(ax.x0 + 4.5, ax.y0 + 5.5, z + 6.6, z + 7.6, .8, M('#9b7bd6', { r: .35, m: .6 }), { n: 10 }));
+  out.annex.add(decal([ax.x1 + .02, (ax.y0 + ax.y1)/2, o.z0 + 5.5], [1, 0, 0], [0, -1, 0], 12, 3.6, tex('meshdesk', 12, 3.6, (g, w, h) => { rect(g, 0, 0, w, h, '#3b2a66'); txt(g, 'MESH DESK · istiod / linkerd', w/2, 1, .85, WHITE); txt(g, 'MESH CA: not the cluster CA', w/2, 2.4, .8, '#d9c8ff', 700); }, 24)));
+  out.annex.visible = false; g.add(out.annex);
   return out;
 }
+/* a row's junction: the top-of-rack switch at the head of the row's corridor, with the route card of what it has learned */
+function routeTex(r, J){ const bgp = st.net.fabric === 'bgp', lines = J.cells.map(n => { const i = st.nodes.indexOf(n); return bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cordoned ? 'withdrawn' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`; });
+  return tex(`routecard|${r}|${bgp}|${lines.join(';')}`, 9, 1.4 + lines.length*1.1, (g, w, h) => { rect(g, 0, 0, w, h, WHITE); txt(g, bgp ? 'ROUTES LEARNED · BGP' : 'ROUTES · STATIC', w/2, .6, .6, '#1d1f22'); lines.forEach((l, i) => txt(g, l, .3, 1.6 + i*1.1, .5, /withdrawn/.test(l) ? '#b3261e' : '#3a3d42', 700, 'left')); }, 40); }
+function mkJunction(r, J){ const g = new THREE.Group(), out = { g, key: '' }, x = J.x, y = J.y;
+  g.add(box(x - 3.5, y - 3.5, 0, x + 3.5, y + 3.5, 8, M('#3d4147', { r: .45, m: .4 }), { r: .4 })); g.add(box(x - 3.8, y - 3.8, 8, x + 3.8, y + 3.8, 8.8, M(YEL, { r: .5 }), { r: .2 }));
+  g.add(decal([x + 3.52, y, 5.2], [1, 0, 0], [0, -1, 0], 6.4, 2.4, tex(`junction|${r}`, 6.4, 2.4, (g2, w, h) => { txt(g2, `JUNCTION ${r + 1}`, w/2, .8, .8, WHITE); txt(g2, 'top-of-rack switch', w/2, 1.75, .55, '#c9c4b8', 700); }, 32)));
+  for (let i = 0; i < 4; i++) g.add(lamp(x + 3.6, y - 2.4 + i*1.6, 1.6, LAMP.green, .25));
+  out.card = box(x - 4.6, y - 3, 0, x - 3.6, y + 3, 9, M(WHITE, { r: .5 }), { r: .15 }); g.add(out.card); out.cardDecal = decal([x - 4.62, y, 4.6], [-1, 0, 0], [0, 1, 0], 9, 1.4 + J.cells.length*1.1, routeTex(r, J)); g.add(out.cardDecal);
+  out.lamp = lamp(x, y, 9.6, LAMP.green, .5); g.add(out.lamp); out.r = r; out.J = J; g.add(ao(x, y, 16, 16)); g.children[0].userData.act = { type: 'junction', row: r }; pickables.push(g.children[0]); return out; }
+/* the directory: CoreDNS, two small machines in a booth with the phone book; every machine's resolv.conf points here */
+function mkDirectory(){ const d = DIR(), g = new THREE.Group(), out = { g, lamps: [] }, m = m0();
+  g.add(box(d.x0, d.y0, 0, d.x1, d.y1, 1, M(CONCRETE, { r: .85 }), { r: .2 })); out.body = box(d.x0 + .5, d.y0 + .5, 1, d.x1 - .5, d.y1 - .5, 7, own('#f1e6c8', { r: .55 }), { r: .4 }); out.body.userData.act = { type: 'dns' }; pickables.push(out.body); g.add(out.body);
+  g.add(box(d.x0 - .4, d.y0 - .4, 7, d.x1 + .4, d.y1 + .4, 8, M(m.l, { r: .5 }), { r: .3 })); g.add(box(d.x1 - 1.2, d.y0 + 1.5, 8, d.x1 + .1, d.y1 - 1.5, 12.2, M(DARKM, { r: .5 }), { r: .3 }));
+  g.add(decal([d.x1 + .12, (d.y0 + d.y1)/2, 10.1], [1, 0, 0], [0, -1, 0], 6.6, 3.6, tex('dirsign', 6.6, 3.6, (g2, w, h) => { txt(g2, 'DIRECTORY', w/2, .9, .95, WHITE); txt(g2, 'CoreDNS · kube-dns', w/2, 2, .62, LAMP.amber); txt(g2, '10.96.0.10', w/2, 2.9, .6, '#c9c4b8', 700); }, 32)));
+  for (let i = 0; i < 2; i++){ const x0 = d.x0 + 1.5 + i*4.2, y0 = d.y0 + 1.5; g.add(box(x0, y0, 1, x0 + 3.4, y0 + 3, 3.6, own('#5a82c6', { r: .45, m: .2 }), { r: .3 })); const l = lamp(x0 + 2.9, y0 + 2.5, 4, LAMP.green, .3); g.add(l); out.lamps.push(l); }
+  g.add(box(d.x0 + 2, d.y1 - 3.5, 1, d.x0 + 6, d.y1 - 1, 2.2, M('#8e6236', { r: .7 }), { r: .15 })); g.add(decal([d.x0 + 4, d.y1 - .98, 1.6], [0, 1, 0], [1, 0, 0], 3.6, 1, tex('book', 3.6, 1, (g2, w, h) => txt(g2, 'cluster.local', w/2, h/2, .5, WHITE, 800), 48)));
+  out.lamp = lamp(d.x1 + .4, d.y1 - 1, 12.6, LAMP.green, .5); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 20, 16)); return out; }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5);
   return deps.map(d => { const live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length;
     return { col: palOf(d.app).l, text: `${d.name.slice(0, 7)}  x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, bad: rd < d.replicas }; }); }
@@ -263,6 +299,13 @@ function mkNode(n){
   // the cabinet's badge: the kubelet's client certificate, stamped at join, renewed on rotation (it flashes), red once expired
   out.badge = decal([cb.x1 + .52, cb.y1 - 4.2, 3.4], [1, 0, 0], [0, -1, 0], 5.2, 2.2, idBadgeTex(true, n.name)); out.badge.visible = false; out.rise.add(out.badge); out.badgeKey = '';
   out.badgeLamp = lamp(cb.x1 + .5, cb.y1 - 7.2, 3.4, LAMP.amber, .3); setLamp(out.badgeLamp, LAMP.amber, false); out.rise.add(out.badgeLamp);
+  // how Service addresses are rewritten here: kube-proxy's iptables chains, or the CNI's eBPF programs in place of kube-proxy
+  out.svcDecal = decal([cb.x1 + .52, cb.y1 - 4.2, 1.3], [1, 0, 0], [0, -1, 0], 5.2, 1.2, svcTex(st.net.svc)); out.rise.add(out.svcDecal); out.svcKey = st.net.svc;
+  // the BGP speaker on the cabinet (a small mast and flag, shown while the fabric runs BGP) and the konnectivity relay (managed mode)
+  out.bgp = new THREE.Group(); out.bgp.add(rod([cb.x1 - 1.5, cb.y0 + 5, cb.h + .8], [cb.x1 - 1.5, cb.y0 + 5, cb.h + 5.2], .18, M(DARKM))); out.bgp.add(box(cb.x1 - 1.6, cb.y0 + 5, cb.h + 3.8, cb.x1 - 1.4, cb.y0 + 7.6, cb.h + 5.2, M('#2d7bd6', { r: .5 }), { r: .1 }));
+  out.bgp.add(decal([cb.x1 - 1.38, cb.y0 + 6.3, cb.h + 4.5], [1, 0, 0], [0, -1, 0], 2.4, 1.2, tex('bgpflag', 2.4, 1.2, (g2, w, h) => { rect(g2, 0, 0, w, h, '#2d7bd6'); txt(g2, 'BGP', w/2, h/2, .6, WHITE); }, 48))); out.bgp.visible = false; out.rise.add(out.bgp);
+  out.relay = new THREE.Group(); out.relay.add(box(cb.x0 + .8, cb.y0 + .8, cb.h + .8, cb.x0 + 4.4, cb.y0 + 4.2, cb.h + 2.6, M('#2b3a66', { r: .5 }), { r: .2 })); out.relay.add(lamp(cb.x0 + 4.2, cb.y0 + 2.5, cb.h + 2.9, LAMP.blue, .3));
+  out.relay.add(decal([cb.x0 + 4.42, cb.y0 + 2.5, cb.h + 1.7], [1, 0, 0], [0, -1, 0], 3.2, 1.4, tex('relay', 3.2, 1.4, (g2, w, h) => { txt(g2, 'RELAY', w/2, .45, .5, WHITE); txt(g2, 'konnectivity', w/2, 1.05, .42, '#c9d2ea', 700); }, 48))); out.relay.visible = false; out.rise.add(out.relay);
   out.lamp = lamp(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + 1.8, LAMP.green, .8); out.rise.add(out.lamp); out.rise.add(cyl(cb.x1 - 1.2, cb.y0 + 1.5, cb.h + .8, cb.h + 1.4, .5, M(DARKM), { n: 8 }));
   const ins = new THREE.Group(); ins.add(box(cb.x0 + 1, cb.y0 + 1, 1, cb.x1 - 1, cb.y0 + 4.5, 6, M('#2b2e32', { r: .4 }), { r: .2 })); ins.add(cyl((cb.x0 + cb.x1)/2, cb.y0 + 2.7, 6, 9, 1.4, M(STEEL, { r: .3, m: .7 }), { n: 12 }));
   ins.add(box(cb.x0 + 1, cb.y1 - 5, 1, cb.x1 - 1, cb.y1 - 1.5, 4, M('#1f2226', { r: .4 }), { r: .2 })); for (let i = 0; i < 4; i++) ins.add(lamp(cb.x1 - 1, cb.y1 - 4.4 + i*.9, 4.3, [LAMP.green, LAMP.amber, LAMP.blue, LAMP.green][i], .25));
@@ -296,6 +339,7 @@ function mkNode(n){
   out.signDecal = decal([c.x1 + 2.02, my, 6.5], [1, 0, 0], [0, -1, 0], 15, 4, tex('maint', 15, 4, (g, w, h) => { rect(g, 0, 0, w, h, YEL); txt(g, 'MAINTENANCE', w/2, 1.5, 1.7, '#1d1f22'); txt(g, 'cordoned · no new jobs', w/2, 3.1, .95, '#1d1f22', 700); }, 24)); out.tape.add(out.signDecal);
   g.add(out.tape); g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 24, c.y1 - c.y0 + 10)); return out;
 }
+const svcTex = mode => tex('svc|' + mode, 5.2, 1.2, (g, w, h) => { rect(g, 0, 0, w, h, mode === 'ebpf' ? '#1f4034' : '#3a3d42'); txt(g, mode === 'ebpf' ? 'eBPF · no kube-proxy' : 'kube-proxy · iptables', w/2, h/2, .5, WHITE); }, 48);
 function gaugeMesh(n, out){ const cb = cabinet(n), cap = cellCap(), frac = Math.min(1, n.used.size/cap), q = Math.round(frac*20)/20, key = q + '|' + cap; if (out.gaugeKey === key) return; out.gaugeKey = key;
   dispose(out.gauge); out.gauge = new THREE.Group(); out.rise.add(out.gauge); const col = frac > .85 ? LAMP.red : frac > .6 ? LAMP.amber : LAMP.green;
   out.gauge.add(box(cb.x1 - .1, cb.y0 + 1, 2, cb.x1 + .3, cb.y0 + 2.6, 8.5, M('#1f2226'), { r: .1 })); out.gauge.add(box(cb.x1 + .3, cb.y0 + 1.2, 2.2, cb.x1 + .5, cb.y0 + 2.4, 2.2 + Math.max(.2, 6.1*q), own(col, { e: 1.4, r: .4 }), { r: 0, shadow: false })); }
@@ -307,6 +351,7 @@ function syncNodes(dt){
     N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
     const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
     const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
+    N.bgp.visible = st.net.fabric === 'bgp' && j >= 1; N.relay.visible = st.net.managed && j >= 1; if (N.svcKey !== st.net.svc){ N.svcKey = st.net.svc; N.svcDecal.material.map = svcTex(st.net.svc); N.svcDecal.material.needsUpdate = true; }
     if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = idBadgeTex(n.cert.ok, n.name); N.badge.material.needsUpdate = true; }
       const f = n.cert.flash || 0; N.badge.scale.setScalar(1 + .5*Math.sin(Math.min(1, f/.9)*Math.PI)); setLamp(N.badgeLamp, LAMP.amber, f > 0 && Math.floor(f*8) % 2 === 0); }
     else { N.badge.visible = false; setLamp(N.badgeLamp, LAMP.amber, false); }
@@ -347,6 +392,9 @@ function mkPod(p){
   out.gateLamp = lamp(MW + 2.6, ML/2, 4.6, LAMP.red, .35); out.gate.add(out.gateLamp);
   out.gate.add(box(MW + 2.45, ML/2 - 1.7, .9, MW + 2.75, ML/2 + 1.7, 2.2, own(WHITE, { r: .6 }), { r: .08 })); out.gate.add(decal([MW + 2.77, ML/2, 1.55], [1, 0, 0], [0, -1, 0], 3.2, 1.1, tex('polsign', 3.2, 1.1, (g, w, h) => { rect(g, 0, 0, w, h, '#e2483d'); txt(g, 'NETWORK POLICY', w/2, h/2, .36, WHITE); }, 60)));
   out.gate.visible = false; g.add(out.gate);
+  // the escort: the sidecar proxy riding on a meshed machine, handling its parts in and out
+  out.escort = new THREE.Group(); out.escort.add(box(5.4, -1.3, .3, 7.8, -.02, 3.2, own('#3b2a66', { r: .5, m: .2 }), { r: .25 })); out.escort.add(lamp(7.5, -1.4, 3.4, LAMP.blue, .25));
+  out.escort.add(decal([6.6, -1.32, 1.75], [0, -1, 0], [-1, 0, 0], 2.2, 2.4, tex('escort', 2.2, 2.4, (g2, w, h) => { txt(g2, 'ESCORT', w/2, .6, .48, WHITE); txt(g2, 'sidecar', w/2, 1.3, .42, '#d9c8ff', 700); txt(g2, 'proxy', w/2, 1.9, .42, '#d9c8ff', 700); }, 48))); out.escort.visible = false; out.machine.add(out.escort);
   out.machine.add(ao(MW/2, ML/2, MW + 6, ML + 6)); g.add(out.machine);
   // the job card on the bay while the cell waits for the image
   out.card = new THREE.Group(); out.card.add(box(MW/2 - 2.2, ML/2 - 1.4, 1.2, MW/2 + 2.2, ML/2 + 1.4, 1.5, own(WHITE, { r: .6 }), { r: .1 })); out.card.add(rod([MW/2, ML/2, 0], [MW/2, ML/2, 1.2], .25, own(DARKM))); g.add(out.card);
@@ -360,6 +408,7 @@ function syncPods(dt){
     P.g.position.copy(V3(...p.pos));
     const waiting = p.phase === 'queued' || p.phase === 'pulling' || p.phase === 'staged' || p.phase === 'dropping';
     P.card.visible = waiting; P.machine.visible = !waiting;
+    P.escort.visible = st.net.mesh.on && MESHED.has(p.app) && !waiting && p.phase !== 'terminating';
     const pol = st.sec.netpol, gated = !!(pol && pol.to === p.app && !waiting && p.phase !== 'terminating'); P.gate.visible = gated;
     if (gated){ const open = st.parcels.some(pc => pc.pod === p && pc.link && !pc.blocked && pc.L - pc.t < (pc.dir === 1 ? 44 : 12)) ? 1 : 0; P.boomUp = Math.max(0, Math.min(1, P.boomUp + (open ? dt : -dt)*6));   // lifts as an allowed part comes down the aisle, drops once it has left
       rodTo(P.boom, [MW + 2.6, 1.2, 2.8 + 4*ease(P.boomUp)], [MW + 2.6, ML - 1.2, 2.8 + 4*ease(P.boomUp)], .26); setLamp(P.gateLamp, P.boomUp > .5 ? LAMP.green : LAMP.red); }
@@ -389,9 +438,19 @@ function syncCaps(){ while (Y.caps.length < st.caps.length){ const g = new THREE
   while (Y.caps.length > st.caps.length){ const C = Y.caps.pop(); dispose(C.g); }
   st.caps.forEach((cp, i) => { const n = st.nodes.find(n => n.name === cp.node); if (!n) return; const path = tubePath(n), t = Math.min(1, cp.t), a = along(path, t), b = along(path, Math.min(1, t + .01)), C = Y.caps[i];
     C.g.position.copy(V3(...a)); const d = V3(b[0] - a[0], b[1] - a[1], b[2] - a[2]); if (d.length() > 1e-4) C.cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); }); }
-function syncParts(){ while (Y.parts.length < st.parcels.length){ const g = new THREE.Group(); const b = box(-1.6, -1.6, 0, 1.6, 1.6, 3, own(WHITE, { r: .5 }), { r: .4 }); g.add(b); const l = lamp(0, 0, 3.6, LAMP.green, .45); g.add(l); scene.add(g); Y.parts.push({ g, b, l }); }
+function syncParts(){ while (Y.parts.length < st.parcels.length){ const g = new THREE.Group(); const b = box(-1.6, -1.6, 0, 1.6, 1.6, 3, own(WHITE, { r: .5 }), { r: .4 }); g.add(b); const l = lamp(0, 0, 3.6, LAMP.green, .45); g.add(l);
+    const sm = own('#9b7bd6', { a: .35, r: .2, m: .1 }); sm.depthWrite = false; const sl = box(-2.4, -2.4, -.3, 2.4, 2.4, 4.2, sm, { r: .8, shadow: false }); sl.visible = false; g.add(sl);   // the mesh's sealed sleeve: mutual TLS between escorts
+    scene.add(g); Y.parts.push({ g, b, l, sl }); }
   while (Y.parts.length > st.parcels.length){ const P = Y.parts.pop(); dispose(P.g); }
-  st.parcels.forEach((pc, i) => { const P = Y.parts[i], p = parcelAt(pc, pc.t); P.g.position.copy(V3(p[0], p[1], p[2] - 2.2)); if (P.b.material.color.getHexString() !== pc.col.slice(1)) P.b.material.color.set(pc.col); setLamp(P.l, pc.col); }); }
+  st.parcels.forEach((pc, i) => { const P = Y.parts[i], p = parcelAt(pc, pc.t); P.g.position.copy(V3(p[0], p[1], p[2] - 2.2)); if (P.b.material.color.getHexString() !== pc.col.slice(1)) P.b.material.color.set(pc.col); setLamp(P.l, pc.canary && pc.col !== LAMPC.red ? LAMP.amber : pc.col); P.sl.visible = !!pc.sleeve && pc.col !== LAMPC.red; }); }
+// BGP announcements: a puck with a flag runs from the cabinet down the aisle and along the front road to the row's junction (red: a withdrawal)
+function annPath(n){ const cb = cabinet(n), J = JUNCTION(n.row) || { x: n.x0 + n.depth + 4, y: SY0 - 13 }; return [[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 2], [(cb.x0 + cb.x1)/2, J.y, 6], [J.x, J.y, 6], [J.x, J.y, 9.6]]; }
+function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length){ const g = new THREE.Group(); const s = new THREE.Mesh(sphG(.9), own(LAMP.green, { e: 2, r: .3 })); s.castShadow = false; g.add(s); g.add(box(.8, -.1, .6, 1, 2.2, 2.2, own('#2d7bd6', { r: .5 }), { r: .1 })); scene.add(g); Y.ann.push({ g, s }); }
+  while (Y.ann.length > st.net.ann.length){ const A = Y.ann.pop(); dispose(A.g); }
+  st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
+  for (const Jn of Y.junctions || []){ const key = st.net.fabric + '|' + Jn.J.cells.map(n => n.cordoned ? 1 : 0).join(''); if (Jn.key !== key){ Jn.key = key; Jn.cardDecal.material.map = routeTex(Jn.r, Jn.J); Jn.cardDecal.material.needsUpdate = true; } setLamp(Jn.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber); }
+  const Dd = Y.dir; if (Dd){ const up = st.net.dns.up; Dd.lamps.forEach(l => setLamp(l, LAMP.green, up)); setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); }
+  const O = Y.office; if (O && O.annex) O.annex.visible = st.net.mesh.on; }
 function syncStatics(){
   const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
   setLamp(O.pressLamp, LAMP.green, !!SEC.ca); O.pressHead.position.y = O.pressY - 1.7*Math.abs(Math.sin(Math.max(0, SEC.stamp)*Math.PI*2)); for (const b of O.badges) b.visible = !!SEC.ca;
@@ -405,7 +464,7 @@ function syncStatics(){
   const k = ease(st.xr || 0); for (const Ob of [Y.office, Y.station]){ if (Ob.k === k) continue; Ob.k = k; for (const c of Ob.cases) setAlpha(c, Ob === Y.office ? .28*(1 - .6*k) : 1 - .75*k); for (const i of Ob.insides){ if (k > 0 || Ob === Y.office) i.visible = true; else i.visible = true; } }
   key.intensity = 2.4 + (strobe ? 1.5 : 0);
 }
-function syncAll(dt){ if (staticKey() !== Y.key) rebuildStatic(); syncNodes(dt); syncPods(dt); syncCrib(); syncCaps(); syncParts(); syncStatics(); }
+function syncAll(dt){ if (staticKey() !== Y.key) rebuildStatic(); syncNodes(dt); syncPods(dt); syncCrib(); syncCaps(); syncParts(); syncNet(); syncStatics(); }
 
 /* ---------- light and the render pipeline ---------- */
 const canvas = document.getElementById('gl'), zwrap = document.getElementById('zwrap');
@@ -448,18 +507,21 @@ window.__shot = (q, w, h) => { window.__forceVp = w ? { w, h } : null; sizeKey =
 function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.id), n = a.type === 'node' && st.nodes.find(n => n.name === a.node);
   if (p && p.pos) return [[p.pos[0] - 1, p.pos[1] - 1, p.pos[2]], [p.pos[0] + MW + 1, p.pos[1] + ML + 1, p.pos[2] + MH + 5]];
   if (n){ const c = cellBox(n); return [[c.x0 - 12, c.y0, 0], [c.x1, c.y1, 18]]; }
-  if (a.type === 'tower') return [[OFF.x0, OFF.y0, 0], [OFF.x1 + 2, OFF.y1, OFF.z1 + 4]];
-  if (a.type === 'board') return [[OFF.x0 + 6, OFF.y1, OFF.z0 + 4], [OFF.x1 - 6, OFF.y1 + 2, OFF.z1 - 3]];
+  if (a.type === 'tower') return [[OFF.x0 + ox(), OFF.y0, 0], [OFF.x1 + 2 + ox(), OFF.y1, OFF.z1 + 4]];
+  if (a.type === 'dns'){ const d = DIR(); return [[d.x0, d.y0, 0], [d.x1 + 1, d.y1, 13]]; }
+  if (a.type === 'junction'){ const J = JUNCTION(a.row || 0); return J ? [[J.x - 6, J.y - 5, 0], [J.x + 5, J.y + 5, 11]] : null; }
+  if (a.type === 'board') return [[OFF.x0 + 6 + ox(), OFF.y1, OFF.z0 + 4], [OFF.x1 - 6 + ox(), OFF.y1 + 2, OFF.z1 - 3]];
   if (a.type === 'registry'){ const c = CRIB(); return [[c.x0, c.y0, 0], [c.x1, c.y1, c.h + 3]]; }
   if (a.type === 'kiosk'){ const s = STATION(); return [[s.x0, s.y0, 0], [s.x1 + 2, s.y1, 20]]; }
   if (a.type === 'gate'){ const d = DOCK(); return [[d.x0 - 1, d.y0 - 1, 0], [d.x1 + 1, d.y1 + 1, 25]]; }
-  if (a.type === 'crane') return [[OFF.x0, OFF.y0, OFF.z0], [OFF.x1, OFF.y1, OFF.z1]];
+  if (a.type === 'crane') return [[OFF.x0 + ox(), OFF.y0, OFF.z0], [OFF.x1 + ox(), OFF.y1, OFF.z1]];
   if (a.type === 'app'){ const ps = st.pods.filter(p => p.app === a.app && p.pos); if (!ps.length) return null; const b = [[1e9, 1e9, 1e9], [-1e9, -1e9, -1e9]];
     for (const p of ps) for (let i = 0; i < 3; i++){ b[0][i] = Math.min(b[0][i], p.pos[i]); b[1][i] = Math.max(b[1][i], p.pos[i] + [MW, ML, MH + 4][i]); } return b; }
   return null; }
 function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH/2];
   if (st.sec.forged.length){ const f = st.sec.forged[0]; return { p: along(FORGE(), Math.min(1, f.t)), z: zoomFor(3) }; }
-  if (st.sec.inspect > 0 || st.sec.refuseT > 0) return { p: [OFF.x0 + 21, OFF.y0 + 16, OFF.z0 + 6], z: zoomFor(3.2) };
+  if (st.sec.inspect > 0 || st.sec.refuseT > 0) return { p: [OFF.x0 + ox() + 21, OFF.y0 + 16, OFF.z0 + 6], z: zoomFor(3.2) };
+  if (st.net.ann.length){ const a = st.net.ann[0], n = st.nodes.find(n => n.name === a.node); if (n) return { p: along(annPath(n), Math.min(1, a.t)), z: zoomFor(3.2) }; }
   if (st.caps.length){ const cp = st.caps[0], n = st.nodes.find(n => n.name === cp.node); if (n) return { p: along(tubePath(n), Math.min(1, cp.t)), z: zoomFor(3) }; }
   const pn = st.nodes.find(n => n.pull); if (pn) return { p: along(agvPath(pn, pn.pull.warm), (() => { const u = pn.pull.t/pn.pull.dur; return ease(Math.min(1, u < .5 ? u*2 : 2 - u*2)); })()), z: zoomFor(3.6) };
   if (st.parcels.length){ const pc = st.parcels[0]; return { p: parcelAt(pc, pc.t), z: zoomFor(4) }; }
@@ -472,11 +534,11 @@ function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML
 function labelItems({ L1, L2 }){ const items = [];
   for (const n of st.nodes){ if (n.joined < 1) continue; const c = cellBox(n); items.push({ key: 'n:' + n.name, cls: 'node', text: esc(n.name) + (n.gpus ? ` · GPU x${n.gpus}` : ''), at: [c.x1 + 4, (c.y0 + c.y1)/2, 0], pri: 8, act: { type:'node', node: n.name } }); }
   const rows = boardRows(); if (rows.length){ const full = L2 || L1 && rows.length <= 2;
-    items.push({ key: 'board', cls: 'board', lines: full ? rows.length : 1, text: full ? rows.map(r => `<i style="background:${r.col}"></i>${r.bad ? '<span style="color:#b3261e">' : ''}${esc(r.text)}${r.bad ? '</span>' : ''}`).join('<br>') : rows.map(r => `<i style="background:${r.col}"></i>${esc(r.text.split(/\s+/)[1] || '')} ${esc((r.text.match(/running (\d+)/) || [])[1] || '')}`).join(' '), at: [(OFF.x0 + OFF.x1)/2, OFF.y1 + 2, OFF.z1 - 1], pri: 7, act: { type:'board' } }); }
+    items.push({ key: 'board', cls: 'board', lines: full ? rows.length : 1, text: full ? rows.map(r => `<i style="background:${r.col}"></i>${r.bad ? '<span style="color:#b3261e">' : ''}${esc(r.text)}${r.bad ? '</span>' : ''}`).join('<br>') : rows.map(r => `<i style="background:${r.col}"></i>${esc(r.text.split(/\s+/)[1] || '')} ${esc((r.text.match(/running (\d+)/) || [])[1] || '')}`).join(' '), at: [(OFF.x0 + OFF.x1)/2 + ox(), OFF.y1 + 2, OFF.z1 - 1], pri: 7, act: { type:'board' } }); }
   if (L1) for (const p of st.pods){ if (!p.pos || NOPOS.has(p.phase) || p.sys && !st.showSys || p.alpha < .5) continue;
     items.push({ key: 'p:' + p.id, cls: 'pod', col: palOf(p.app).l, text: `${esc(p.app)} ${esc(p.ver)}` + (p.gpu ? `<b>GPU x${p.gpu}</b>` : ''), sub: L2 ? p.name : '', at: [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 5.5], up: true, pri: 6, act: { type:'pod', id: p.id } }); }
   return items; }
-function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = st.nodes[0], p0 = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && p.configMap) || st.pods.find(p => p.pos && !NOPOS.has(p.phase));
+function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 = st.nodes[0], p0 = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && p.configMap) || st.pods.find(p => p.pos && !NOPOS.has(p.phase));
   if (k > .6){ if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + 3, y + 2.5, z + 3], text:'PROGRAM', on: isReady(p0) }, { at:[x + 2, y + ML - 2, z + 3], text:'DATA PORT', on: isReady(p0) }); if (p0.configMap) items.push({ at:[x + MW, y + 3.3, z + 4.4], text:`CONFIGMAP ${p0.configMap}`, on:false }); }
     const sec = st.pods.find(p => p.pos && p.secret); if (sec) items.push({ at:[sec.pos[0] - 1, sec.pos[1] + ML - 2.5, sec.pos[2] + 1.3], text:`SECRET ${sec.secret}`, on:false });
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
@@ -490,6 +552,10 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = s
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
+    { const J = JUNCTION(0), dd = DIR(); if (J) items.push({ at:[J.x, J.y, 10], text:'JUNCTION', on: st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.parcels.some(pc => pc.dirD >= 0 && pc.t < pc.dirD + .5 && pc.dir === 1) });
+      if (st.net.fabric === 'bgp'){ items.push({ at:[SPINE2(), 90, 2.5], text:'SPINE', on: st.parcels.length > 0 }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x1 - 1.5, cb.y0 + 6.3, cb.h + 5], text:'BGP SPEAKER', on: st.net.ann.some(a => a.node === n0.name) }); } }
+      if (st.net.mesh.on){ const mp = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && MESHED.has(p.app)); if (mp) items.push({ at:[mp.pos[0] + 6.6, mp.pos[1] - 1.3, mp.pos[2] + 3.4], text:'ESCORT', on: st.parcels.some(pc => pc.sleeve) }); items.push({ at:[o.x1 + 13, o.y0 + 8, o.z0 + 11], text:'MESH DESK', on:false }); }
+      if (st.net.managed){ items.push({ at:[-3, 28, 15], text:'PROVIDER', on:false }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x0 + 2.6, cb.y0 + 2.5, cb.h + 3], text:'RELAY', on: st.caps.length > 0 }); } } }
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
     items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[(o.x0 + o.x1)/2, o.y1 + 1.3, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
@@ -500,5 +566,5 @@ function pickAct(h){ const a = h.object.userData.act; if (a && a.type === 'board
 /* ---------- mount ---------- */
 const view = View3D(THREE, { key: 'shop', scene, camera, pickables, render, syncAll, bboxOf, followTarget, labelItems, calloutItems, pickAct,
   faceViews: { board: [100, 45], kiosk: [30, 60], gate: [75, 60], registry: [20, 50], tower: [20, 70] },
-  compassPoints: () => ({ G: [W - 20, 19], T: [19, 21], R: [17, REG_Y0 + 40] }), onResize: () => { sizeKey = ''; }, stats: () => ({ calls: renderer.info.render.calls, scale: window.__scale, bloom: bloomOK }) });
+  compassPoints: () => ({ G: [W - 20, 19], T: [19 + ox(), 21], R: [17, REG_Y0 + 40] }), extent: () => ({ x0: st.net.managed ? -48 : 0 }), onResize: () => { sizeKey = ''; }, stats: () => ({ calls: renderer.info.render.calls, scale: window.__scale, bloom: bloomOK }) });
 view.mount();
