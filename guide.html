@@ -53,7 +53,7 @@
   <h1>Kubernetes, <span>as a job shop</span><br>on a factory floor</h1>
   <p class="lead">Every Kubernetes idea is drawn here as something you could walk up to: pods are machines running a program, nodes are fenced work cells with their own controller cabinet, the scheduler is the dispatcher in the planning office, and a binding is a job card blown through a pneumatic tube to the cell. Press the buttons and watch the real operations happen, one true step at a time, from bootstrapping an empty shop to a rolling update. Turn it, zoom in, switch on See-through, open the control room to watch the messages behind each move. Then point it at your own cluster.</p>
   <nav class="toc">
-    <a href="#yard">0 The floor</a><a href="#boot">1 Bootstrap</a><a href="#pods">2 Pods</a><a href="#nodes">3 Nodes</a><a href="#control">4 Control plane</a><a href="#room">5 Control room</a><a href="#apply">6 Apply</a><a href="#scale">7 Scale</a><a href="#rollout">8 Roll out</a><a href="#heal">9 Self-healing</a><a href="#probes">10 Probes</a><a href="#gpu">11 GPUs</a><a href="#gang">12 Gang scheduling</a><a href="#drain">13 Drain</a><a href="#traffic">14 Traffic</a><a href="#security">15 Security</a><a href="#live">16 Your cluster</a><a href="#kthw">vs The Hard Way</a>
+    <a href="#yard">0 The floor</a><a href="#boot">1 Bootstrap</a><a href="#pods">2 Pods</a><a href="#nodes">3 Nodes</a><a href="#control">4 Control plane</a><a href="#room">5 Control room</a><a href="#apply">6 Apply</a><a href="#scale">7 Scale</a><a href="#rollout">8 Roll out</a><a href="#heal">9 Self-healing</a><a href="#probes">10 Probes</a><a href="#gpu">11 GPUs</a><a href="#gang">12 Gang scheduling</a><a href="#drain">13 Drain</a><a href="#traffic">14 Traffic</a><a href="#security">15 Security</a><a href="#fabric">16 Fabric</a><a href="#dns">17 DNS</a><a href="#mesh">18 Mesh</a><a href="#managed">19 Managed</a><a href="#live">20 Your cluster</a><a href="#kthw">vs The Hard Way</a>
   </nav>
 </header>
 
@@ -90,6 +90,10 @@
       <tr><td>Locked drawer in the ledger</td><td>Secrets encrypted at rest</td><td>The counter encrypts Secret values with a key only the office holds before they reach etcd.</td></tr>
       <tr><td>Tamper seal on a crate</td><td>Image signature</td><td>An admission policy checks the seal before a machine may load the crate; unsigned is refused.</td></tr>
       <tr><td>The office logbook</td><td>Audit log</td><td>Every request the counter decided, with who, what and the verdict (the control room's log panel).</td></tr>
+      <tr><td>Junctions and the two-lane spine</td><td>The fabric (BGP, ECMP)</td><td>Each row's top-of-rack switch learns the cells' PodCIDRs from their BGP speakers; parts take the spine lanes in turn.</td></tr>
+      <tr><td>The directory booth</td><td>CoreDNS (kube-dns)</td><td>Two pods behind a ClusterIP that every machine's resolv.conf points at; a Service name becomes its station's address.</td></tr>
+      <tr><td>Escorts, sleeves, the mesh desk</td><td>Service mesh</td><td>Sidecar proxies with the mesh's own mutual TLS and routing rules (a weighted canary); the mesh CA is not the cluster CA.</td></tr>
+      <tr><td>The provider's building and the relays</td><td>Managed control plane, konnectivity</td><td>The office stands in the provider's network; a tunnel from every cabinet lets the counter reach the cells.</td></tr>
     </table>
     <p style="margin-top:12px;font-size:14.5px;color:var(--muted)">Colour is the app: <span class="sw" style="background:#76a0e2"></span>web <span class="sw" style="background:#93d3b0"></span>api <span class="sw" style="background:#ef6a4c"></span>db <span class="sw" style="background:#f3a6bb"></span>cache. The swatches under the figure recolour the office, the crib and the dock trim.</p>
   </div>
@@ -357,9 +361,69 @@ kube-bench                                <span class="c"># the CIS benchmark ag
   <div class="figwrap" data-ch="security" data-src="figure/shopfloor.html?chapter=security&xr=1&press=Apply>NetworkPolicy@900,Break>forge@5600,Break>apply a privileged@8600,Break>let node-b@11200"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=security&xr=1&press=Apply>NetworkPolicy@900,Break>forge@5600,Break>apply a privileged@8600,Break>let node-b@11200">Open full screen ↗</a><div class="poster"><b>Load fig. 15</b><span>applies the policy, forges a card, tries a privileged pod, lets a badge expire</span></div></div>
 </section>
 
+<section class="ch" id="fabric">
+  <div>
+    <div class="num">Fig. 16 · operation</div>
+    <h2>The fabric: roads, junctions and BGP</h2>
+    <div class="yard"><b>On the floor</b>At the head of each row of cells stands a <strong>junction</strong>, the row's top-of-rack switch, with a route card on its side. Pick <kbd>Cluster ▸ fabric: BGP</kbd>: every cabinet raises a BGP flag and sends a puck down the aisle to the junction, the card fills with the ranges it has learned, and the spine (the avenue along the conveyor) gains a second lane; send a few requests and watch consecutive parts take the two lanes in turn. <kbd>Drain ▸ drain node-b</kbd> sends a red puck: the route is withdrawn and the card says so; uncordon and it is announced again. <kbd>Cluster ▸ fabric: static routes</kbd> is the Hard Way: the routes painted in front of each fence, one lane, nothing announced. <kbd>Cluster ▸ service addressing</kbd> swaps the cabinet's switch plate between kube-proxy's iptables and the CNI's eBPF programs.</div>
+    <p>A pod's address comes from its node's <code>PodCIDR</code>, so the only networking question that matters is how every other node learns where that range lives. The Hard Way writes a route per node by hand. A real data centre uses the pattern RFC 7938 describes: each rack's top-of-rack switch and each spine switch is a BGP router in its own autonomous system, the racks peer with the spines, and a prefix learned at one junction reaches every other junction with equal-cost paths over every spine, so flows spread across the fabric (ECMP). Kubernetes joins that fabric when the CNI runs a BGP speaker on every node: Cilium's BGP control plane or Calico's BIRD peers with the top-of-rack switch, announces the node's PodCIDR, and withdraws it when the node leaves. No overlay, no encapsulation: a pod address is just another route in the fabric, and the same speaker can announce Service and LoadBalancer addresses so that traffic from outside reaches a node directly.</p>
+    <p>Overlays are the other answer: a VXLAN or Geneve tunnel between nodes carries pod traffic over whatever the underlay offers, at the cost of encapsulation and of being invisible to the fabric. Most clouds sit in between, with the provider's network handing out the routes. Either way <strong>kube-proxy</strong> is a separate concern: it rewrites Service addresses, not pod addresses, and it does it in the kernel's iptables (one chain per Service, picking an endpoint at random), in IPVS, or in nftables. A CNI like Cilium can replace it entirely with eBPF programs that rewrite the destination at the socket or on the packet, with no chains to walk; DigitalOcean Kubernetes runs that way, which you can see on any such cluster by the absence of a kube-proxy DaemonSet.</p>
+    <pre>kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'   <span class="c"># each node's range</span>
+cilium bgp peers                   <span class="c"># Cilium: the speakers and their sessions</span>
+calicoctl node status              <span class="c"># Calico: BIRD's BGP sessions</span>
+kubectl -n kube-system get ds kube-proxy   <span class="c"># absent on a kube-proxy-replacement cluster</span>
+ip route                            <span class="c"># on a node: one route per other node's PodCIDR</span></pre>
+    <p class="try">Try: switch to BGP, send six requests in a row and count the parts on each spine lane.</p>
+  </div>
+  <div class="figwrap" data-ch="fabric" data-src="figure/shopfloor.html?chapter=fabric&fabric=bgp&labels=1&press=Send@900,Send@1500,Send@2100,Drain>drain node-b@4000"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=fabric&fabric=bgp&labels=1&press=Send@900,Send@1500,Send@2100,Drain>drain node-b@4000">Open full screen ↗</a><div class="poster"><b>Load fig. 16</b><span>BGP on, three requests over the two lanes, then a drain withdraws a route</span></div></div>
+</section>
+
+<section class="ch" id="dns">
+  <div>
+    <div class="num">Fig. 17 · operation</div>
+    <h2>Cluster DNS: the directory</h2>
+    <div class="yard"><b>On the floor</b>Between the dock and the sorting station stands the <strong>directory</strong> booth with its phone book: CoreDNS. Every part from the dock stops there first, asks for <code>web.default.svc.cluster.local</code>, is handed the station's ClusterIP, and goes on; the control room logs the lookup. Press <kbd>Break ▸ stop CoreDNS</kbd>: the booth goes dark, new parts wait at the counter, time out and come back red, while parts already past the directory are answered as before. A few seconds later the Deployment's replacement pods are Ready and the lights come back.</div>
+    <p>Cluster DNS is not part of the control plane; it is an ordinary Deployment, <code>coredns</code> in <code>kube-system</code>, two pods behind a Service that is still called <code>kube-dns</code> on a fixed ClusterIP (the tenth address of the Service range, <code>10.96.0.10</code> here). The kubelet writes every pod's <code>resolv.conf</code> to point at it, with the search list <code>default.svc.cluster.local svc.cluster.local cluster.local</code> and <code>ndots:5</code>, which is why a pod can say <code>web</code> and the resolver tries <code>web.default.svc.cluster.local</code> first. CoreDNS answers from the API server's Services and EndpointSlices: a normal Service resolves to its ClusterIP; a <strong>headless</strong> Service (<code>clusterIP: None</code>) has no station and resolves to the pod addresses themselves, one A record each, which is how a StatefulSet's members find each other by name. Names outside the cluster are forwarded upstream. Because DNS is pods, it fails like pods: when kube-dns has no endpoints, new lookups time out while connections already open carry on, so a DNS outage looks like new requests failing and old ones fine. NodeLocal DNSCache puts a cache on every node to keep the lookups off the network and survive a flap.</p>
+    <pre>kubectl -n kube-system get deploy coredns svc kube-dns
+kubectl -n kube-system get cm coredns -o yaml        <span class="c"># the Corefile: kubernetes cluster.local, forward . /etc/resolv.conf</span>
+kubectl run -it --rm dns --image=busybox -- nslookup web   <span class="c"># 10.96.0.12 web.default.svc.cluster.local</span>
+kubectl exec web-6b8fd-xk2p9 -- cat /etc/resolv.conf <span class="c"># nameserver 10.96.0.10, search ..., ndots:5</span></pre>
+  </div>
+  <div class="figwrap" data-ch="dns" data-src="figure/shopfloor.html?chapter=dns&room=1&press=Send@900,Break>stop CoreDNS@3000,Send@3800"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=dns&room=1&press=Send@900,Break>stop CoreDNS@3000,Send@3800">Open full screen ↗</a><div class="poster"><b>Load fig. 17</b><span>a lookup, then CoreDNS stopped and a request that cannot find its name</span></div></div>
+</section>
+
+<section class="ch" id="mesh">
+  <div>
+    <div class="num">Fig. 18 · operation</div>
+    <h2>A service mesh: escorts and sleeves</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Apply ▸ mesh: inject sidecars into web and api</kbd>: each of those machines gets an <strong>escort</strong> cartridge (the sidecar proxy), a <strong>mesh desk</strong> opens in the office annex with its own small badge press, and a part sent from web to db or api to db travels in a translucent <strong>sleeve</strong>. Then <kbd>Apply ▸ canary: 10% of web to v2</kbd>: one v2 web machine comes up and the rollout pauses; send ten requests and nine go to v1 and one, on the second lane with an amber lamp, to v2. <kbd>Apply ▸ remove the mesh</kbd> takes the escorts away and lets the rollout finish.</div>
+    <p>A mesh is a proxy beside every pod. Istio injects Envoy, Linkerd injects its own small Rust proxy, and in both the sidecar takes over the pod's traffic in and out without the application knowing. Between two escorts the connection is the mesh's <strong>mutual TLS</strong>, with certificates the mesh control plane (istiod, or Linkerd's identity service) issues from the mesh's own CA, rotated every day or so; that CA is not the cluster CA from chapter 15, and the two are easy to confuse: one proves who a kubelet is to the API server, the other proves which pod is talking to which pod. The desk also pushes rules to every escort: <strong>retries</strong> and <strong>timeouts</strong> per route, <strong>circuit breaking</strong> that stops sending to an endpoint that keeps failing, and the weighted split in the figure, which is a <code>VirtualService</code> in Istio or an <code>HTTPRoute</code> from the Gateway API in either mesh. A Service cannot do that: kube-proxy picks endpoints with no idea of version or weight, so a canary without a mesh is only ever as fine-grained as the replica count. The escorts also see every request, so the mesh is where golden-signal <strong>observability</strong> (rate, errors, latency per route) and traces come from without touching the code.</p>
+    <p>Istio's <strong>ambient</strong> mode drops the sidecars: a per-node <em>ztunnel</em> carries the mutual TLS for every pod on the node and an optional waypoint proxy per namespace does the routing, which spares the per-pod memory and the restarts that injection needs. The price of any mesh is another control plane to keep healthy and a hop on every request; the Gateway API is the common language the meshes and the ingress controllers are converging on.</p>
+    <pre>istioctl proxy-status                  <span class="c"># every escort and whether its config is current</span>
+linkerd check && linkerd viz stat deploy  <span class="c"># Linkerd: health, then rate / success / latency per Deployment</span>
+kubectl get httproute,virtualservice -A   <span class="c"># the routing rules: weights, retries, timeouts</span>
+kubectl rollout pause deploy/web          <span class="c"># hold the canary at one pod; resume when the numbers look right</span></pre>
+  </div>
+  <div class="figwrap" data-ch="mesh" data-src="figure/shopfloor.html?chapter=mesh&mesh=1&labels=1&press=Apply>canary@900,Send@3200,Send@3700,Send@4200,Send@4700,Send@5200,Send@5700,Send@6200,Send@6700,Send@7200,Send@7700"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=mesh&mesh=1&labels=1&press=Apply>canary@900,Send@3200,Send@3700,Send@4200,Send@4700,Send@5200,Send@5700,Send@6200,Send@6700,Send@7200,Send@7700">Open full screen ↗</a><div class="poster"><b>Load fig. 18</b><span>the mesh installed, a 10% canary, ten requests</span></div></div>
+</section>
+
+<section class="ch" id="managed">
+  <div>
+    <div class="num">Fig. 19 · operation</div>
+    <h2>A managed control plane</h2>
+    <div class="yard"><b>On the floor</b>Pick <kbd>Cluster ▸ managed control plane</kbd>. The planning office leaves the mezzanine for the <strong>provider's building</strong> past the floor's back edge, behind a fence with their sign on it, and every cabinet gets a small <strong>relay</strong> box. The tube still runs to every cell, the counter still takes every job card, and <kbd>logs</kbd> on a machine still reaches the cabinet, now through the relay. When the figure watches a real cluster it switches to this mode by itself if it sees a konnectivity agent on every node and no control-plane pods.</div>
+    <p>On EKS, GKE, AKS or DOKS the API server, etcd, the scheduler and the controllers run in the provider's own network and you are given the counter's address and nothing else. Two things make that work. The kubelets reach the API server as before, because it has a public or peered address. The API server reaching the kubelets (chapter 4: logs, exec, port-forward, metrics) is the problem, since it cannot route into your VPC; the <strong>konnectivity</strong> service solves it the way the design doc describes: a <code>konnectivity-agent</code> on every node dials out to a konnectivity server beside the API server and keeps the tunnel open, and the API server sends its kubelet calls through that tunnel instead of connecting directly. That is why a managed cluster carries a DaemonSet you never created, and why <code>kubectl logs</code> fails first when the tunnel is unhealthy while <code>kubectl get</code> still works.</p>
+    <p>The split of responsibility follows the fence. The provider owns the office: the CA and its certificates, etcd and its backups and encryption keys, the audit pipeline, upgrades of the control plane. You own the cells and everything on them: node pools and their patching, the CNI and its policies, RBAC, Secrets and image provenance, Pod Security, the mesh if you run one, and the workloads. Nothing in the chapters before this changes; only the place the office stands.</p>
+    <pre>kubectl -n kube-system get ds                      <span class="c"># konnectivity-agent (or the provider's bridge) on every node</span>
+kubectl -n kube-system get pods -l component=kube-apiserver   <span class="c"># nothing: the office is not on your nodes</span>
+kubectl cluster-info                               <span class="c"># the counter's address, in the provider's network</span></pre>
+  </div>
+  <div class="figwrap" data-ch="managed" data-src="figure/shopfloor.html?chapter=managed&managed=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=managed&managed=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 19</b><span>the office in the provider's building, relays on every cabinet</span></div></div>
+</section>
+
 <section class="ch" id="live">
   <div>
-    <div class="num">Fig. 16 · your cluster</div>
+    <div class="num">Fig. 20 · your cluster</div>
     <h2>Point it at a real cluster</h2>
     <div class="yard"><b>On the floor</b>Under <kbd>Cluster</kbd> the figure can open a kubectl JSON file or watch a local URL. In that mode it only watches: the operation buttons show the kubectl command instead of acting. New pods arrive as job cards and come up from the rack or the crib, deleted ones power down, a cordon puts the tape up, probes change the andons. System pods (kube-system, DaemonSets) are hidden until you show them.</div>
     <h3>One snapshot, no server</h3>
@@ -372,7 +436,7 @@ python3 tools/longshore.py serve -n shop --context prod
 kubectl scale deploy/web --replicas=5          <span class="c"># and watch the cards go out</span></pre>
     <p>The helper only ever runs <code>kubectl get</code>. Each node gets a cell with twelve bays that grows a row at a time if it must; more than three nodes adds rows of cells behind. The app colour comes from the <code>app</code> or <code>app.kubernetes.io/name</code> label, or the ReplicaSet name.</p>
   </div>
-  <div class="figwrap" data-ch="live" data-src="figure/shopfloor.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=live&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 16</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
+  <div class="figwrap" data-ch="live" data-src="figure/shopfloor.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=live&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 20</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
 </section>
 
 <section class="ch wide" id="kthw">
@@ -389,6 +453,7 @@ kubectl scale deploy/web --replicas=5          <span class="c"># and watch the c
       <tr><td>08 Control plane</td><td>The office, and the counter phoning the cabinet (chapter 4)</td><td>There: the three components start together under systemd and the clients retry; the system:kube-apiserver-to-kubelet role lets the API server into the kubelets. Here: the lights come up in dependency order.</td></tr>
       <tr><td>09 Workers</td><td>The cells and their cabinets (chapter 3)</td><td>Aligned: containerd over the CRI socket, cgroupDriver systemd, maxPods (16 there, twelve bays here), the bridge CNI with a PodCIDR per node.</td></tr>
       <tr><td>11 Pod network routes</td><td>The ROUTE lanes between cells (chapter 3)</td><td>There: a static route per node's /24. Here: the same, drawn; a fuller CNI would bring an overlay and NetworkPolicy.</td></tr>
+      <tr><td>(no lab)</td><td>The directory, the mesh, the managed office (chapters 17 to 19)</td><td>The Hard Way installs no CoreDNS in its current labs, no mesh and no managed control plane; its fabric is static routes (chapter 16's first setting).</td></tr>
       <tr><td>12 Smoke test</td><td>The checks in chapters 14 and 15</td><td>Aligned: a Secret read back from etcd, a Deployment, port-forward, logs, exec, a NodePort Service. No Ingress controller there, so the dock is ours.</td></tr>
     </table>
     <p style="margin-top:12px;font-size:14.5px;color:var(--muted)">The Hard Way names its workers node-0 and node-1 and its control plane simply server; the floor calls them node-a, node-b, node-c and the planning office.</p>
