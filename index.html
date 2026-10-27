@@ -21,7 +21,8 @@
   .figwrap{position:relative;border:2px solid var(--ink);border-radius:14px;box-shadow:5px 5px 0 var(--ink);background:var(--paper);overflow:hidden}
   .figwrap iframe{display:block;width:100%;height:720px;border:0;background:var(--paper)}
   .figwrap.tall iframe{height:1180px}
-  .figwrap .open{position:absolute;right:10px;top:10px;z-index:2;font-size:11.5px;text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:3px 10px;background:var(--cream)}
+  .figwrap .open{position:absolute;right:10px;top:10px;z-index:4;font-size:11.5px;text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:3px 10px;background:var(--cream)}
+  .figwrap .open:hover{background:var(--accent)}
   .figwrap .poster{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:var(--paper);cursor:pointer;z-index:3}
   .figwrap .poster b{font:700 15px ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;border:2px solid var(--ink);border-radius:999px;padding:9px 18px;background:var(--accent);box-shadow:3px 3px 0 var(--ink)}
   .figwrap .poster span{font-size:13px;color:var(--muted)}
@@ -60,9 +61,9 @@
   <div>
     <div class="num">Fig. 0 · the whole thing</div>
     <h2>A cluster is a container terminal</h2>
-    <p>Drag to turn it round. Zoom with the wheel (ctrl/cmd) or pinch. <strong>See-through</strong> fades every case so you can see what is inside the containers, the booths and the tower; <strong>Labels</strong> names the parts; <strong>Control room</strong> opens the schematic of the control plane under the yard. Click a container to read its name and status; click a booth to drain or uncordon its node; click the gate to send a request.</p>
+    <p>It moves like a map. Drag to turn it round, pinch or ctrl+wheel to zoom, double-tap to zoom in, two-finger tap to zoom out. Tap a container, a slab, the booth, the tower, the kiosk, the gate or a row on the board and the camera flies to it and a card opens with its state and the actions that make sense there. Names appear as you get closer: at the overview only the nodes and the board's counts, then every container's app and version, then the pod names. <strong>See-through</strong> fades every case so you can see what is inside the containers, the booths and the tower, with tappable labels on the parts; <strong>Follow</strong> keeps the camera on whatever the crane, a request or a crashing pod is doing; <strong>Control room</strong> opens the schematic of the control plane. On a phone, <em>Open in yard mode</em> gives the figure the whole screen with the chapter's text a tap away.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html"><a class="open" target="_blank" href="figure/longshore3d.html">Open full size ↗</a><div class="poster"><b>Load the yard</b><span>interactive · hand-inked · turns all the way round</span></div></div>
+  <div class="figwrap" data-ch="yard" data-src="figure/longshore3d.html?chapter=yard"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=yard">Open in yard mode ↗</a><div class="poster"><b>Load the yard</b><span>interactive · hand-inked · turns all the way round</span></div></div>
   <div>
     <table class="key">
       <tr><th>In the yard</th><th>In Kubernetes</th><th>Why it fits</th></tr>
@@ -96,7 +97,7 @@ kubeadm join 10.0.0.1:6443 --token ... --discovery-token-ca-cert-hash ...
 kubectl get nodes --watch                      <span class="c"># NotReady -> Ready</span>
 kubectl apply -f app/</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?boot=1"><a class="open" target="_blank" href="figure/longshore3d.html?boot=1">Open ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
+  <div class="figwrap" data-ch="boot" data-src="figure/longshore3d.html?chapter=boot&boot=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=boot&boot=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
 </section>
 
 <section class="ch" id="pods">
@@ -112,7 +113,7 @@ kubectl describe pod web-6b8fd-xk2p9
 kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
     <p class="try">Try: click a container for its name, node, container count and restarts.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?xr=1&labels=1&yaw=62&pitch=42"><a class="open" target="_blank" href="figure/longshore3d.html?xr=1&labels=1&yaw=62&pitch=42">Open ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
+  <div class="figwrap" data-ch="pods" data-src="figure/longshore3d.html?chapter=pods&xr=1&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=pods&xr=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
 </section>
 
 <section class="ch" id="nodes">
@@ -126,7 +127,7 @@ kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
 kubectl describe node node-a      <span class="c"># capacity, allocated, conditions</span>
 kubectl top node                   <span class="c"># live usage (metrics-server)</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?labels=1&yaw=58&pitch=38"><a class="open" target="_blank" href="figure/longshore3d.html?labels=1&yaw=58&pitch=38">Open ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
+  <div class="figwrap" data-ch="nodes" data-src="figure/longshore3d.html?chapter=nodes&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=nodes&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
 </section>
 
 <section class="ch" id="control">
@@ -140,7 +141,7 @@ kubectl top node                   <span class="c"># live usage (metrics-server)
 kubectl get events --sort-by=.lastTimestamp
 kubectl get rs                      <span class="c"># the ReplicaSets a Deployment made</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?xr=1&labels=1&yaw=18&pitch=36"><a class="open" target="_blank" href="figure/longshore3d.html?xr=1&labels=1&yaw=18&pitch=36">Open ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the tower</span></div></div>
+  <div class="figwrap" data-ch="control" data-src="figure/longshore3d.html?chapter=control&xr=1&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=control&xr=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the tower</span></div></div>
 </section>
 
 <section class="ch" id="room">
@@ -159,7 +160,7 @@ ETCDCTL_API=3 etcdctl endpoint status --cluster -w table   <span class="c"># lea
 ETCDCTL_API=3 etcdctl member list</pre>
     <p class="try">Try: scale to 8, then stop the etcd leader while the ReplicaSet is still creating pods, and watch the writes queue at the API server until the new leader is elected.</p>
   </div>
-  <div class="figwrap tall" data-src="figure/longshore3d.html?room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/longshore3d.html?room=1&press=Scale>5@900">Open ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
+  <div class="figwrap tall" data-ch="room" data-src="figure/longshore3d.html?chapter=room&room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=room&room=1&press=Scale>5@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="apply">
@@ -185,7 +186,7 @@ kubectl apply -f cache.yaml
 kubectl rollout status deploy/cache
 kubectl delete -f cache.yaml        <span class="c"># and the pods go with it</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Apply>cache@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Apply>cache@900">Open ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
+  <div class="figwrap" data-ch="apply" data-src="figure/longshore3d.html?chapter=apply&press=Apply>cache@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=apply&press=Apply>cache@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
 </section>
 
 <section class="ch" id="scale">
@@ -200,7 +201,7 @@ kubectl get pods -l app=web -o wide --watch
 kubectl autoscale deploy/web --min=3 --max=10 --cpu-percent=70</pre>
     <p class="try">Try: scale to 8, then <kbd>Drain</kbd> a node and watch where the evicted pods land.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Scale>8@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Scale>8@900">Open ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
+  <div class="figwrap" data-ch="scale" data-src="figure/longshore3d.html?chapter=scale&press=Scale>8@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=scale&press=Scale>8@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="rollout">
@@ -215,7 +216,7 @@ kubectl rollout history deploy/web
 kubectl rollout undo deploy/web      <span class="c"># back to the previous ReplicaSet</span></pre>
     <p class="try">Try: <kbd>Roll out ▸ web back to v1</kbd> to watch the undo.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Roll out>web v2@900">Open ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
+  <div class="figwrap" data-ch="rollout" data-src="figure/longshore3d.html?chapter=rollout&press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=rollout&press=Roll out>web v2@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="heal">
@@ -228,7 +229,7 @@ kubectl rollout undo deploy/web      <span class="c"># back to the previous Repl
 kubectl get pods -l app=web          <span class="c"># a new name appears</span>
 kubectl get events | grep -i replicaset</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Break>delete@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Break>delete@900">Open ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
+  <div class="figwrap" data-ch="heal" data-src="figure/longshore3d.html?chapter=heal&press=Break>delete@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=heal&press=Break>delete@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
 </section>
 
 <section class="ch" id="probes">
@@ -244,7 +245,7 @@ livenessProbe:  { httpGet: { path: /livez,   port: 8080 }, failureThreshold: 3 }
 kubectl get pods                      <span class="c"># READY 0/1 but STATUS Running: readiness</span>
 kubectl get pods                      <span class="c"># RESTARTS climbing: liveness or a crash</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/longshore3d.html?press=Break>crash@900,Break>delete the db@3400">Open ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one container, then deletes the db pod</span></div></div>
+  <div class="figwrap" data-ch="probes" data-src="figure/longshore3d.html?chapter=probes&press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=probes&press=Break>crash@900,Break>delete the db@3400">Open in yard mode ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one container, then deletes the db pod</span></div></div>
 </section>
 
 <section class="ch" id="gpu">
@@ -260,7 +261,7 @@ kubectl describe node node-c | grep -A3 Allocatable
 kubectl get pods -l app=train            <span class="c"># 2 Running, 1 Pending</span>
 kubectl describe pod train-...           <span class="c"># 0/3 nodes are available: 3 Insufficient nvidia.com/gpu</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?train=1&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?train=1&labels=1">Open ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
+  <div class="figwrap" data-ch="gpu" data-src="figure/longshore3d.html?chapter=gpu&train=1&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=gpu&train=1&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="gang">
@@ -279,7 +280,7 @@ annotations: { scheduling.k8s.io/group-name: spark }
 
 kubectl get podgroup spark        <span class="c"># Pending -> Running once all 4 fit</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?spark=1"><a class="open" target="_blank" href="figure/longshore3d.html?spark=1">Open ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
+  <div class="figwrap" data-ch="gang" data-src="figure/longshore3d.html?chapter=gang&spark=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=gang&spark=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
 </section>
 
 <section class="ch" id="drain">
@@ -293,7 +294,7 @@ kubectl drain node-a --ignore-daemonsets --delete-emptydir-data
 <span class="c"># ... reboot / replace the machine ...</span>
 kubectl uncordon node-a</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Drain>drain node-a@900">Open ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
+  <div class="figwrap" data-ch="drain" data-src="figure/longshore3d.html?chapter=drain&press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=drain&press=Drain>drain node-a@900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
 </section>
 
 <section class="ch" id="traffic">
@@ -307,7 +308,7 @@ kubectl get endpointslices -l kubernetes.io/service-name=web
 kubectl get ingress                   <span class="c"># shop.example.com -> web:80</span>
 kubectl port-forward svc/web 8080:80  <span class="c"># try it from your laptop</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Send@900,Send@2400,Send@3900">Open ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
+  <div class="figwrap" data-ch="traffic" data-src="figure/longshore3d.html?chapter=traffic&press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=traffic&press=Send@900,Send@2400,Send@3900">Open in yard mode ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
 </section>
 
 <section class="ch" id="live">
@@ -325,7 +326,7 @@ python3 tools/longshore.py serve -n shop --context prod
 kubectl scale deploy/web --replicas=5          <span class="c"># and watch the crane</span></pre>
     <p>The helper only ever runs <code>kubectl get</code>. Each node gets a slab with eighteen slots per three tiers and stacks higher if it must; more than three nodes adds rows of slabs behind. The app colour comes from the <code>app</code> or <code>app.kubernetes.io/name</code> label, or the ReplicaSet name. The newest version of an app wears the pale band.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore3d.html?labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?labels=1">Open ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
+  <div class="figwrap" data-ch="live" data-src="figure/longshore3d.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?yard=1&chapter=live&labels=1">Open in yard mode ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
 </section>
 
 <footer>
@@ -334,9 +335,12 @@ kubectl scale deploy/web --replicas=5          <span class="c"># and watch the c
 </div>
 <script>
   // each figure loads on demand (they are full pages); the first one when it scrolls near
-  const wraps = [...document.querySelectorAll('.figwrap')];
+  const wraps = [...document.querySelectorAll('.figwrap')], phone = matchMedia('(max-width:860px)').matches;
   const load = w => { if (w.classList.contains('loaded')) return; const fr = document.createElement('iframe'); fr.src = w.dataset.src; fr.title = 'Longshore figure'; fr.loading = 'lazy'; w.appendChild(fr); w.classList.add('loaded'); };
-  wraps.forEach(w => w.querySelector('.poster').addEventListener('click', () => load(w)));
-  if ('IntersectionObserver' in window){ const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && wraps.indexOf(e.target) === 0){ load(e.target); io.unobserve(e.target); } }), { rootMargin: '200px' }); wraps.forEach(w => io.observe(w)); }
+  // on a phone the figure gets the whole screen (yard mode) instead of a frame in the page; the chapter's text rides along
+  wraps.forEach(w => { const poster = w.querySelector('.poster'), open = w.querySelector('.open');
+    if (phone){ poster.querySelector('b').textContent = 'Open in yard mode'; poster.querySelector('span').textContent = 'full screen · tap things to fly to them · the chapter text is one tap away'; poster.addEventListener('click', () => { location.href = open.href; }); }
+    else poster.addEventListener('click', () => load(w)); });
+  if (!phone && 'IntersectionObserver' in window){ const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && wraps.indexOf(e.target) === 0){ load(e.target); io.unobserve(e.target); } }), { rootMargin: '200px' }); wraps.forEach(w => io.observe(w)); }
 </script>
 </body></html>

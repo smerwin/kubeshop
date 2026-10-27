@@ -18,13 +18,16 @@ web server (`python3 -m http.server`) and open `index.html`.
 - `index.html` — the guide: sixteen chapters, each with prose, the kubectl commands and the figure preset to that scene.
 - `figure/longshore3d.html` — the figure: the yard in three.js with real depth, drawn in the hand-inked
   [Colorfigures](https://april-zhu.com/colorfigures) look (flat tone bands, an ink pass, a flat blue shadow, paper grain).
-  Drag to turn it all the way round, pinch or ctrl+wheel to zoom, See-through, Labels, and **Control room**: a schematic
-  under the yard that animates what the control plane does for every operation (the API server pipeline, etcd's Raft
-  group with a leader and term, the controllers' informer / queue / reconcile loops, the scheduler cycle, the kubelet
-  sync loop). It loads three r186 from `figure/vendor/` (no build, works offline).
+  It moves like a map (see [Moving around](#moving-around-the-yard)): tap anything to fly to it and act on it, names
+  appear as you get closer, See-through, Labels, Follow, and **Control room**: a schematic that animates what the
+  control plane does for every operation (the API server pipeline, etcd's Raft group with a leader and term, the
+  controllers' informer / queue / reconcile loops, the scheduler cycle, the kubelet sync loop). On a phone it opens in
+  **yard mode**: the whole screen, nothing scrolls, a toolbar at the thumb. It loads three r186 from `figure/vendor/`
+  (no build, works offline).
 - `figure/longshore.html` — the same yard on the original Colorfigures SVG engine (the old engine), kept as a fallback.
 - `src/` — the source: `sim.js` is the cluster model both figures share (state, controllers, scheduler, crane, pods,
-  traffic, bootstrap, snapshots, button handlers); `yard3d.js` draws it in three.js and `room.js` is the control room
+  traffic, bootstrap, snapshots, button handlers); `yard3d.js` draws it in three.js (scene, camera, gestures, labels),
+  `chrome.js` is the page around it (toolbar, sheets, cards, chapter sheet) and `room.js` is the control room
   (`longshore3d.html` is their page); `longshore.html` + `core.js` are the SVG figure. `./build.sh` inlines the scripts
   into both `figure/` files.
 - `tools/longshore.py` — point the figure at a real cluster (read-only; it only runs `kubectl get`).
@@ -50,13 +53,42 @@ In live mode the yard only watches: the operation buttons show the kubectl comma
 crane, deleted pods fade, a cordon puts the striped tape up, probe changes switch the lamps. System pods (kube-system,
 DaemonSets) are hidden until `Cluster ▸ show system pods`.
 
+## Moving around the yard
+
+The camera is a point of interest, a yaw, a pitch and a zoom, and every move is a short flight to a new one. One finger
+(or the mouse) orbits; a flick keeps turning and snaps onto the nearest of the four corner views; two fingers pinch to
+zoom about the pinch and pan; double-tap zooms in there, a two-finger tap zooms out; ctrl/cmd+wheel (a trackpad pinch)
+zooms anywhere, and in yard mode a mouse wheel zooms and a trackpad's two fingers pan. Arrow keys orbit, `+` `-` `0`
+zoom and reset, `f` is the front view. **Overview** frames the whole yard again; the compass in the corner shows where
+the gate (G), the tower (T) and the registry (R) are and turns with the camera (tap it for the front view).
+
+Tap a container, a slab or its booth, the tower, the kiosk, the gate, the registry or a row on the Deployments board:
+the camera flies to frame it and a card opens with its name, state and the actions that make sense there (a pod: delete,
+crash, fail its probe, its containers, restarts, node and volume; a node: drain or uncordon, capacity and GPUs; the kiosk:
+its endpoints and a request to send; a board row: that app's pods, scale and roll out). **Follow** keeps the camera on
+whatever the operation is doing: the crane's load, a landing gang, the request bead, a crashing pod; any gesture
+releases it. The camera is remembered for the tab, so the guide's figures do not snap back to the front view.
+
+Text is a function of zoom, drawn as screen-sized labels over the geometry: at the overview only the node names and the
+board's counts; from about two times closer every container's app and version and its GPU band; from about four times
+the pod name plates and the board's full rows. They fade between levels and never overlap. With **Labels** on, the
+see-through callouts (CONTAINER, POD NETWORK, ETCD, SCHEDULER, ...) are chips you can tap for a short explanation.
+
+**Yard mode** (`?yard=1`, or any top-level window narrower than about 900 px, or the `Yard mode` switch) gives the canvas
+the whole viewport: the page never scrolls, a slim strip on top carries the counts, the actions sit in a thumb-height
+toolbar at the bottom and open as sheets, the switches sit in a corner, and the control room and the chapter's prose
+slide up as sheets over the yard. In the guide, every chapter's `Open in yard mode` button opens the figure full screen
+with that chapter's parameters, and on a phone the figures open that way instead of embedding.
+
 ## Figure URL parameters
 
-Both figures take the same parameters. `?xr=1` see-through, `?labels=1` labels, `?yaw=45&pitch=35` camera,
-`?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`), `?boot=1` bootstrap on load,
-`?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` starting state, `?cluster=URL&poll=5` watch a
-snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the crane and tower colour. The three.js figure also
-takes `?room=1` to open the control room.
+Both figures take the same parameters. `?xr=1` see-through, `?labels=1` the callout chips, `?text=0` no name labels,
+`?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
+`?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` starting state,
+`?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the crane and tower
+colour. The three.js figure also takes `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
+`?chapter=scale` to load that guide chapter's prose into the chapter sheet and play its camera move (frame the thing it
+is about, or follow the operation it presses).
 
 ## The control room
 
