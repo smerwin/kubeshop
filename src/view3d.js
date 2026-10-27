@@ -99,7 +99,7 @@ function invalidate(){ dirty = true; drive(); }
 ui = { st, render: invalidate, invalidate, animate: step => { if (!steps.size && !driving) lastT = performance.now(); steps.add(step); drive(); },
   flash: (text, ms = 1600) => { const t = document.getElementById('toast'); t.textContent = text[0].toUpperCase() + text.slice(1); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), ms); } };
 window.ui = ui; window.__st = st;
-window.__proj = p => toScreen(p); window.__cam = cam; window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
+window.__proj = p => toScreen(p); window.__cam = cam; window.__advance = dt => { lastT = performance.now() - dt*1000; driving = true; frameFn(); };   // one frame, dt seconds on, whatever the tab's clock does window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
 
 /* ---------- gestures ---------- */
 const P = new Map(); let ges = null, lastTap = null, tapT = 0, spin = false;
