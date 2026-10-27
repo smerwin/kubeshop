@@ -1908,6 +1908,16 @@ function tex(key, w, h, draw, ppu = 8){ if (key && texCache.has(key)) return tex
   const c = document.createElement('canvas'); c.width = Math.max(2, Math.ceil(w*ppu)); c.height = Math.max(2, Math.ceil(h*ppu)); const g = c.getContext('2d'); g.scale(c.width/w, c.height/h); g.lineCap = 'round'; g.lineJoin = 'round'; draw(g, w, h);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; if (key) texCache.set(key, t); return t; }
 const txt = (g, s, x, y, size, col = WHITE, weight = 800, align = 'center') => { g.font = `${weight} ${size}px ${FONT}`; g.fillStyle = col; g.textAlign = align; g.textBaseline = 'middle'; g.fillText(s, x, y); };
+// text that never leaves its face: shrink the font until the line fits the width (down to a floor), and split a long name onto two
+// lines at a hyphen, dot or underscore before shrinking it, so a live cluster's app names (cert-manager, synctrack-frontend) read whole
+function fitTxt(g, s, x, y, size, maxW, col = WHITE, weight = 800, align = 'center', min = .22){ g.font = `${weight} ${size}px ${FONT}`; const w = g.measureText(s).width; if (w > maxW) size = Math.max(min, size*maxW/w); txt(g, s, x, y, size, col, weight, align); return size; }
+function nameLines(g, s, size, maxW, weight = 800){ g.font = `${weight} ${size}px ${FONT}`; if (g.measureText(s).width <= maxW) return [s];
+  const cut = Math.max(s.lastIndexOf('-', s.length - 2), s.lastIndexOf('.', s.length - 2), s.lastIndexOf('_', s.length - 2)); let i = cut > 1 ? cut + 1 : Math.ceil(s.length/2);
+  if (cut > 1 && s.length - cut - 1 < 2) i = Math.ceil(s.length/2); return [s.slice(0, i), s.slice(i)]; }
+// a name and a version line centred on a face of w × h: one line when the name fits, two when it does not, both fitted to the width
+function nameBlock(g, w, h, name, ver, o = {}){ const nz = o.size || Math.min(1.9, h*.34), vz = o.vsize || nz*.7, maxW = w - (o.pad == null ? .6 : o.pad), lines = nameLines(g, name.toUpperCase(), nz, maxW);
+  if (lines.length === 1){ fitTxt(g, lines[0], w/2, h*(o.y1 || .36), nz, maxW); fitTxt(g, ver, w/2, h*(o.yv || .7), vz, o.vmax || maxW, WHITE, 700); }
+  else { fitTxt(g, lines[0], w/2, h*.22, nz*.8, maxW); fitTxt(g, lines[1], w/2, h*.46, nz*.8, maxW); fitTxt(g, ver, w/2, h*(o.yv2 || .76), vz*.9, o.vmax || maxW, WHITE, 700); } }
 const rect = (g, x, y, w, h, fill, stroke, lw = .4) => { if (fill){ g.fillStyle = fill; g.fillRect(x, y, w, h); } if (stroke){ g.strokeStyle = stroke; g.lineWidth = lw; g.strokeRect(x, y, w, h); } };
 const line = (g, pts, col, lw, dash) => { g.strokeStyle = col; g.lineWidth = lw; g.setLineDash(dash || []); g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); g.setLineDash([]); };
 // a round seal: gold with a tick while the certificate is good, red with a cross when it has expired
@@ -2074,10 +2084,13 @@ function mkDnsBoard(){ const d = DNSBOARD(), g = new THREE.Group(), out = { g },
   out.lamp = lamp(d.x1 + .5, d.y1 + .2, d.z1 + 1, LAMP.green, .45); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 8, 18)); return out; }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5);
   return deps.map(d => { const live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length;
-    return { col: palOf(d.app).l, text: `${d.name.slice(0, 7)}  x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, bad: rd < d.replicas }; }); }
+    return { col: palOf(d.app).l, name: d.name, stats: `x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, text: `${d.name}  x${d.replicas}  ${d.kind === 'Job' ? (rd === d.replicas ? 'done' : 'job') : d.version.slice(0, 5)}  running ${rd}`, bad: rd < d.replicas }; }); }
 function boardTex(){ const rows = boardRows(), key = 'board|' + JSON.stringify(rows);
   return tex(key, 26, 11, (g, w, h) => { rect(g, 0, 0, w, 2.2, '#1d1f22'); txt(g, 'ORDERS · DEPLOYMENTS', w/2, 1.1, 1.3, WHITE, 800);
-    rows.forEach((r, i) => { const y = 3.6 + i*1.7; rect(g, 1, y - .6, 1.4, 1.2, r.col, '#1d1f22', .15); txt(g, r.text, 3.2, y, 1.1, r.bad ? '#b3261e' : '#1d1f22', 700, 'left'); });
+    // a row fits the board: the font shrinks a little for a long name, and past that the name is shortened with an ellipsis so the counts stay readable
+    rows.forEach((r, i) => { const y = 3.6 + i*1.7, maxW = w - 3.8, col = r.bad ? '#b3261e' : '#1d1f22'; rect(g, 1, y - .6, 1.4, 1.2, r.col, '#1d1f22', .15);
+      g.font = `700 .85px ${FONT}`; let name = r.name; while (name.length > 4 && g.measureText(`${name}  ${r.stats}`).width > maxW) name = name.slice(0, name.length - 2).replace(/…$/, '') + '…';
+      fitTxt(g, `${name}  ${r.stats}`, 3.2, y, 1.1, maxW, col, 700, 'left', .85); });
     if (!rows.length) txt(g, 'no orders posted', w/2, 6, 1.3, '#857d6e', 700); }, 24); }
 /* the tool crib: a caged store with shelves of crates per app */
 function mkCrib(){ const c = CRIB(), g = new THREE.Group(), out = { g, stacks: new THREE.Group(), key: '' }, m = m0();
@@ -2090,8 +2103,10 @@ function mkCrib(){ const c = CRIB(), g = new THREE.Group(), out = { g, stacks: n
   for (const z of [1.2, 7.4, 13.6]) g.add(box(c.x0 + 2, c.y0 + 2, z, c.x1 - 2, c.y1 - 2, z + .5, M(STEEL, { r: .4, m: .5 }), { r: 0 }));
   g.add(out.stacks); g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 10, c.y1 - c.y0 + 10)); return out; }
 function crate(x0, y0, z0, pm, app, ver, w = 7, d = 7, h = 5){ const g = new THREE.Group(); g.add(box(x0, y0, z0, x0 + w, y0 + d, z0 + h, M(pm.l, { r: .55 }), { r: .3 }));
-  g.add(decal([x0 + w + .02, y0 + d/2, z0 + h/2], [1, 0, 0], [0, -1, 0], d - 1, h - 1, tex(`crate|${app}|${ver}`, d - 1, h - 1, (g, ww, hh) => { txt(g, app.slice(0, 7).toUpperCase(), ww/2, hh*.38, 1.4, WHITE); txt(g, ver, ww/2, hh*.72, 1.1, WHITE, 700);
-    g.fillStyle = '#b3261e'; g.beginPath(); g.arc(ww - .75, .75, .55, 0, Math.PI*2); g.fill(); txt(g, '✓', ww - .75, .8, .6, WHITE); }, 24))); return g; }   // the tamper seal: the image's signature
+  // the label fits its face whatever the name's length; the tamper seal (the image's signature) sits in the bottom corner beside the version
+  g.add(decal([x0 + w + .02, y0 + d/2, z0 + h/2], [1, 0, 0], [0, -1, 0], d - 1, h - 1, tex(`crate|${app}|${ver}|${d}|${h}`, d - 1, h - 1, (g, ww, hh) => { const r = Math.min(.5, hh*.14);
+    nameBlock(g, ww, hh, app, ver, { size: Math.min(1.4, hh*.36), vsize: Math.min(1.1, hh*.28), pad: .5, vmax: ww - 2*r - 1.2, yv: .74, yv2: .8 });
+    g.fillStyle = '#b3261e'; g.beginPath(); g.arc(ww - r - .2, hh - r - .2, r, 0, Math.PI*2); g.fill(); txt(g, '✓', ww - r - .2, hh - r - .15, r*1.1, WHITE); }, 24))); return g; }
 function syncCrib(){ const R = Y.crib, key = st.regApps.map(a => a + ':' + (depOf(a) ? depOf(a).version : 'img') + ':' + palOf(a).l).join(','); if (key === R.key) return; R.key = key;
   dispose(R.stacks); R.stacks = new THREE.Group(); R.g.add(R.stacks); const c = CRIB();
   st.regApps.forEach((app, i) => { const pm = palOf(app), dep = depOf(app), y0 = c.y0 + 4 + (i % 4)*REG_GAP; for (let z = 0; z < 3; z++) R.stacks.add(crate(c.x0 + 4 + z*8, y0, 1.7 + (z % 2)*6.2, pm, app, dep ? dep.version : 'img', 6, 8, 5)); }); }
@@ -2231,7 +2246,7 @@ function syncNodes(dt){
   for (const [name, N] of Y.nodes) if (!seen.has(name)){ dispose(N.g); Y.nodes.delete(name); N.g.traverse(o => { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); }); }
 }
 /* machines */
-function verTex(pm, app, ver, gpu, sys){ return tex(`ver|${app}|${ver}|${gpu || 0}|${sys ? 1 : 0}`, ML - 2, MH - 2.4, (g, w, h) => { txt(g, app.slice(0, 8).toUpperCase(), w/2, h*.36, 1.9, WHITE); txt(g, ver, w/2, h*.7, 1.3, WHITE, 700); if (gpu){ rect(g, w/2 - 2.6, h - 1.3, 5.2, 1.1, YEL); txt(g, `GPU x${gpu}`, w/2, h - .75, .8, '#1d1f22'); }
+function verTex(pm, app, ver, gpu, sys){ return tex(`ver|${app}|${ver}|${gpu || 0}|${sys ? 1 : 0}`, ML - 2, MH - 2.4, (g, w, h) => { nameBlock(g, w, h, app, ver, { size: 1.9, vsize: 1.3, y1: sys ? .4 : .36, yv: gpu ? .64 : .7, yv2: gpu ? .68 : .76 }); if (gpu){ rect(g, w/2 - 2.6, h - 1.3, 5.2, 1.1, YEL); txt(g, `GPU x${gpu}`, w/2, h - .75, .8, '#1d1f22'); }
   if (sys){ rect(g, 0, 0, w, 1, '#2b3a66'); txt(g, 'kube-system', w/2, .5, .62, WHITE, 800); } }, 24); }   // a system pod wears its namespace as a band
 function mkPod(p){
   const g = new THREE.Group(), pm = palOf(p.app), out = { g, key: '', pm, machine: new THREE.Group(), card: null, fire: null };
