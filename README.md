@@ -8,7 +8,10 @@ cache) and AGV (the pull), the scheduler is the dispatcher in the planning offic
 pneumatic tube to the cell (the watch stream), a Service is the sorting station on the conveyor and the Ingress is the
 receiving dock. Every button is a real operation played out one true step at a time: bootstrap, apply, scale, roll out,
 delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU scheduling, gang scheduling (a
-Volcano-style PodGroup that starts in sync), drain, send a request. Scheduling is instant; what takes time is each cell
+Volcano-style PodGroup that starts in sync), drain, send a request, and the cluster's security: the CA as a seal press
+that stamps a badge for every component and every cell (mutual TLS, kubelet CSRs and rotation), a NetworkPolicy as
+gates on the spurs into a job's machines, an inspector at the counter (Pod Security Admission), a forged job card refused
+at authentication, Secrets in a locked drawer, signed crates, the logbook as the audit log. Scheduling is instant; what takes time is each cell
 pulling its image, one at a time per cell and in parallel across cells, slow from the crib and fast from its own rack.
 
 [![Scaling web to 8: job cards through the tube, the cells' AGVs fetching images, machines coming up](docs/scale.gif)](https://smerwin.github.io/kubeshop/?press=Scale>8@900)
@@ -19,7 +22,7 @@ screen by itself, `?yard=1` forces it). A README can only show pictures of it; c
 To run it locally, serve the folder with any static web server (`python3 -m http.server`) and open `index.html` (the
 figure) or `guide.html`.
 
-- `index.html` — the figure, so the site opens on it; `guide.html` — the guide: sixteen chapters, each with prose, the
+- `index.html` — the figure, so the site opens on it; `guide.html` — the guide: seventeen chapters, each with prose, the
   kubectl commands and the figure preset to that scene.
 - `figure/shopfloor.html` — the same figure beside the earlier drafts: the job shop in three.js with real materials and light (an environment map,
   ACES tone mapping, soft shadows, emissive andon lamps with a bloom pass, a vignette; bloom and resolution step down on
@@ -105,7 +108,9 @@ with that chapter's parameters, and on a phone the figures open that way instead
 
 All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the callout chips, `?text=0` no name labels,
 `?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
-`?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` starting state,
+`?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` / `?netpol=1` (the
+db-from-api NetworkPolicy in force) starting state, `?press=Break>forge@800` / `Break>apply a privileged@800` /
+`Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks,
 `?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the trim colour (the office,
 the crib and the dock; the crane and tower in the yard). The three.js figures also take `?room=1` to open the control room, `?yard=1` (or `?yard=0`) for yard mode, and
 `?chapter=scale` to load that guide chapter's prose into the chapter sheet and play its camera move (frame the thing it
@@ -120,4 +125,7 @@ acknowledges, commit, apply; the watch streams fan out from the applied log; the
 (informer cache, work queue, reconcile, a write back: Deployment, then ReplicaSet, then Pod), the scheduler cycle
 (filter: room, GPU, cordon, gang; score: spread; bind) and the kubelet on the bound node (watch, CRI pull and start,
 probes, status). `Break ▸ stop an etcd follower` changes nothing (the quorum holds); `Break ▸ stop the etcd leader` runs an
-election: the term goes up, writes wait at the API server, then go through once a new leader is elected.
+election: the term goes up, writes wait at the API server, then go through once a new leader is elected. Every bead wears a
+TLS tag (mutual TLS between components); the controller manager's CA box signs each kubelet's CSR at join and at rotation;
+a forged request dies in red at authentication and a privileged pod at validating admission (Pod Security); the log panel
+is labelled as the audit log.
