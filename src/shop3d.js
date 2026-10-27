@@ -169,9 +169,9 @@ function mkOffice(){
   out.sign = new THREE.Group(); out.sign.add(rod([ip.x + 1.5, ip.y, z + 2.6], [ip.x + 1.5, ip.y, z + 6.4], .18, M(DARKM))); out.sign.add(box(ip.x + 1.2, ip.y - 1.8, z + 6.4, ip.x + 1.8, ip.y + 1.8, z + 8.6, M('#e2483d', { r: .5 }), { r: .3 }));
   out.sign.add(decal([ip.x + 1.82, ip.y, z + 7.5], [1, 0, 0], [0, -1, 0], 3.4, 2, tex('stop', 3.4, 2, (g, w, h) => { txt(g, 'STOP', w/2, .68, .72, WHITE); txt(g, 'ADMISSION', w/2, 1.45, .5, WHITE, 700); }, 48))); out.signY = out.sign.position.y; ins.add(out.sign);
   g.add(ins); out.insides.push(ins);
-  // the order board on the outside wall facing the floor
-  out.board = box(o.x1 + .4, o.y0 + 6, o.z0 + 4, o.x1 + 1.2, o.y1 - 6, o.z1 - 3, M(WHITE, { r: .5 }), { r: .2 }); out.board.userData.act = { type: 'board' }; pickables.push(out.board); g.add(out.board);
-  out.boardDecal = decal([o.x1 + 1.25, (o.y0 + o.y1)/2, (o.z0 + 4 + o.z1 - 3)/2], [1, 0, 0], [0, -1, 0], o.y1 - o.y0 - 12, o.z1 - o.z0 - 7, boardTex()); g.add(out.boardDecal);
+  // the order board on the outside wall toward the crib (the side face), so the counter and the inspector stay in view through the front glass
+  out.board = box(o.x0 + 6, o.y1 + .4, o.z0 + 4, o.x1 - 6, o.y1 + 1.2, o.z1 - 3, M(WHITE, { r: .5 }), { r: .2 }); out.board.userData.act = { type: 'board' }; pickables.push(out.board); g.add(out.board);
+  out.boardDecal = decal([(o.x0 + o.x1)/2, o.y1 + 1.25, (o.z0 + 4 + o.z1 - 3)/2], [0, 1, 0], [1, 0, 0], o.x1 - o.x0 - 12, o.z1 - o.z0 - 7, boardTex()); g.add(out.boardDecal);
   g.add(ao(o.x0 + 12, o.y0 + 20, 80, 60));
   return out;
 }
@@ -436,7 +436,7 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
   if (p && p.pos) return [[p.pos[0] - 1, p.pos[1] - 1, p.pos[2]], [p.pos[0] + MW + 1, p.pos[1] + ML + 1, p.pos[2] + MH + 5]];
   if (n){ const c = cellBox(n); return [[c.x0 - 12, c.y0, 0], [c.x1, c.y1, 18]]; }
   if (a.type === 'tower') return [[OFF.x0, OFF.y0, 0], [OFF.x1 + 2, OFF.y1, OFF.z1 + 4]];
-  if (a.type === 'board') return [[OFF.x1, OFF.y0 + 6, OFF.z0 + 4], [OFF.x1 + 2, OFF.y1 - 6, OFF.z1 - 3]];
+  if (a.type === 'board') return [[OFF.x0 + 6, OFF.y1, OFF.z0 + 4], [OFF.x1 - 6, OFF.y1 + 2, OFF.z1 - 3]];
   if (a.type === 'registry'){ const c = CRIB(); return [[c.x0, c.y0, 0], [c.x1, c.y1, c.h + 3]]; }
   if (a.type === 'kiosk'){ const s = STATION(); return [[s.x0, s.y0, 0], [s.x1 + 2, s.y1, 20]]; }
   if (a.type === 'gate'){ const d = DOCK(); return [[d.x0 - 1, d.y0 - 1, 0], [d.x1 + 1, d.y1 + 1, 25]]; }
@@ -459,7 +459,7 @@ function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML
 function labelItems({ L1, L2 }){ const items = [];
   for (const n of st.nodes){ if (n.joined < 1) continue; const c = cellBox(n); items.push({ key: 'n:' + n.name, cls: 'node', text: esc(n.name) + (n.gpus ? ` · GPU x${n.gpus}` : ''), at: [c.x1 + 4, (c.y0 + c.y1)/2, 0], pri: 8, act: { type:'node', node: n.name } }); }
   const rows = boardRows(); if (rows.length){ const full = L2 || L1 && rows.length <= 2;
-    items.push({ key: 'board', cls: 'board', lines: full ? rows.length : 1, text: full ? rows.map(r => `<i style="background:${r.col}"></i>${r.bad ? '<span style="color:#b3261e">' : ''}${esc(r.text)}${r.bad ? '</span>' : ''}`).join('<br>') : rows.map(r => `<i style="background:${r.col}"></i>${esc(r.text.split(/\s+/)[1] || '')} ${esc((r.text.match(/running (\d+)/) || [])[1] || '')}`).join(' '), at: [OFF.x1 + 2, OFF.y0 + 20, OFF.z1 - 1], pri: 7, act: { type:'board' } }); }
+    items.push({ key: 'board', cls: 'board', lines: full ? rows.length : 1, text: full ? rows.map(r => `<i style="background:${r.col}"></i>${r.bad ? '<span style="color:#b3261e">' : ''}${esc(r.text)}${r.bad ? '</span>' : ''}`).join('<br>') : rows.map(r => `<i style="background:${r.col}"></i>${esc(r.text.split(/\s+/)[1] || '')} ${esc((r.text.match(/running (\d+)/) || [])[1] || '')}`).join(' '), at: [(OFF.x0 + OFF.x1)/2, OFF.y1 + 2, OFF.z1 - 1], pri: 7, act: { type:'board' } }); }
   if (L1) for (const p of st.pods){ if (!p.pos || NOPOS.has(p.phase) || p.sys && !st.showSys || p.alpha < .5) continue;
     items.push({ key: 'p:' + p.id, cls: 'pod', col: palOf(p.app).l, text: `${esc(p.app)} ${esc(p.ver)}` + (p.gpu ? `<b>GPU x${p.gpu}</b>` : ''), sub: L2 ? p.name : '', at: [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 5.5], up: true, pri: 6, act: { type:'pod', id: p.id } }); }
   return items; }
@@ -479,13 +479,13 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = s
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
-    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[o.x1 + 1.3, o.y0 + 20, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
+    items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[(o.x0 + o.x1)/2, o.y1 + 1.3, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
       { at:[s.x1, (s.y0 + s.y1)/2, 16], text:'STATION', on: st.parcels.length > 0 }, { at:[(d.x0 + d.x1)/2, d.y1, 24], text: ing ? 'DOCK' : 'DOCK', on: st.boom > .5 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   return items; }
 function pickAct(h){ const a = h.object.userData.act; if (a && a.type === 'board'){ const rows = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5), zTop = OFF.z1 - 3 - 1.9, i = Math.floor((zTop - h.point.y)/1.7); if (rows[i] && i >= 0) return { type:'app', app: rows[i].app }; } return a; }
 
 /* ---------- mount ---------- */
 const view = View3D(THREE, { key: 'shop', scene, camera, pickables, render, syncAll, bboxOf, followTarget, labelItems, calloutItems, pickAct,
-  faceViews: { board: [12, 45], kiosk: [30, 60], gate: [75, 60], registry: [20, 50], tower: [20, 70] },
+  faceViews: { board: [100, 45], kiosk: [30, 60], gate: [75, 60], registry: [20, 50], tower: [20, 70] },
   compassPoints: () => ({ G: [W - 20, 19], T: [19, 21], R: [17, REG_Y0 + 40] }), onResize: () => { sizeKey = ''; }, stats: () => ({ calls: renderer.info.render.calls, scale: window.__scale, bloom: bloomOK }) });
 view.mount();
