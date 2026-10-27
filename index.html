@@ -1693,7 +1693,7 @@ function mkNode(n){
   const g = new THREE.Group(), out = { g, cases: [], insides: [], key: '', crates: new THREE.Group(), crateKey: '' }, c = cellBox(n), cb = cabinet(n), rk = rackOf(n), m = m0();
   out.rise = new THREE.Group(); g.add(out.rise);
   const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
-  out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, 1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => { g.translate(w, 0); g.scale(-1, 1); txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'); }, 12)));   // a decal lying flat reads mirrored from above unless flipped
+  out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'), 12)));   // reads left to right from the front, tops toward the back of the hall
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
   const edges = [[[c.x0, c.y0], [c.x1, c.y0]], [[c.x1, c.y0], [c.x1, c.y1 - 9]], [[c.x1, c.y1 - 1], [c.x1, c.y1]], [[c.x1, c.y1], [c.x0, c.y1]]];   // the gap at y1-9..y1-1 is the parts' way in
