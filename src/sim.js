@@ -372,11 +372,11 @@ function applyCache(){ if (st.mode === 'live') return liveNote('kubectl apply -f
   say('apply', 'kubectl apply -f cache.yaml: Deployment cache created, ReplicaSet wants 2'); run(); }
 function deleteDep(app){ if (st.mode === 'live') return liveNote(`kubectl delete deploy/${app}`); if (!depOf(app)) return say('nodep', `${app} is not deployed`); st.deploys = st.deploys.filter(d => d.app !== app); say('del', `kubectl delete deploy/${app}: its ReplicaSet and Pods go with it`); run(); }
 function pickPod(app){ const c = st.pods.filter(p => p.app === app && isReady(p) && p.pos); return c.length ? c[Math.floor(rnd()*c.length)] : null; }
-function deletePod(app = 'web'){ if (st.mode === 'live') return liveNote('kubectl delete pod <name>'); const p = pickPod(app); if (!p) return say('nopod', `No Ready ${app} Pod to delete right now`);
+function deletePod(app = 'web', pod){ if (st.mode === 'live') return liveNote('kubectl delete pod <name>'); const p = pod || pickPod(app); if (!p) return say('nopod', `No Ready ${app} Pod to delete right now`);
   p.phase = 'crash'; p.phaseT = .4; p.fire = 1; p.ready = false; p.doomed = true; setTimeout(() => { terminate(p); run(); }, 700); say('delpod', `kubectl delete pod ${p.name}: the ReplicaSet will replace it`); run(); }
-function crashPod(){ if (st.mode === 'live') return liveNote('kubectl exec <pod> -- kill 1'); const p = pickPod('api') || pickPod('web'); if (!p) return say('nopod', 'No Ready Pod to crash right now');
+function crashPod(pod){ if (st.mode === 'live') return liveNote('kubectl exec <pod> -- kill 1'); const p = pod || pickPod('api') || pickPod('web'); if (!p) return say('nopod', 'No Ready Pod to crash right now');
   p.phase = 'crash'; p.phaseT = 0; p.fire = 1; p.ready = false; say('crash', `Crash: ${p.name} container exited; the kubelet restarts it in place (the Pod keeps its name and node)`); run(); }
-function unreadyPod(){ if (st.mode === 'live') return liveNote('(make a readiness probe fail: e.g. stop the health endpoint)'); const p = pickPod('web'); if (!p) return say('nopod', 'No Ready web Pod right now');
+function unreadyPod(pod){ if (st.mode === 'live') return liveNote('(make a readiness probe fail: e.g. stop the health endpoint)'); const p = pod || pickPod('web'); if (!p) return say('nopod', 'No Ready web Pod right now');
   p.phase = 'unready'; p.phaseT = 0; p.ready = false; say('unready', `Probe: ${p.name} readiness failing, so the Service stops sending it traffic (the Pod is not restarted)`); run(); }
 function drain(n){ if (st.mode === 'live') return liveNote(`kubectl drain ${n.name} --ignore-daemonsets`); n.cordoned = true; const ev = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); ev.forEach(terminate);
   say('drain', `kubectl drain ${n.name}: cordoned, ${ev.length} Pod${ev.length === 1 ? '' : 's'} evicted; ReplicaSets recreate them elsewhere`); run(); }

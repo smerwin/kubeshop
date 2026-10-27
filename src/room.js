@@ -289,5 +289,5 @@ function mount(host, c){ cfg = c; el = host;
   svg = el.querySelector('svg'); svg.innerHTML = staticSvg(); dyn = svg.querySelector('#dyn'); logEl = el.querySelector('.log');
   R.lastT = performance.now(); render(); logLine('Idle. Press a yard button and watch the messages.');
 }
-window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v) render(); }, stopFollower, stopLeader, R };
+window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v => { shown = v; if (v && svg) render(); }, stopFollower, stopLeader, R };
 })();

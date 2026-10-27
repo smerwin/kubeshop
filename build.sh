@@ -11,7 +11,7 @@ def inline(page):
         attrs, name = m.group(1), m.group(2)
         body = open(os.path.join('src', name), encoding='utf-8').read()
         return '<script' + (' type="module"' if 'module' in attrs else '') + '>\n' + body + '\n</script>'
-    return re.sub(r'<script((?:\s+type="module")?)\s+src="((?:sim|room|yard3d)\.js)"\s*>\s*</script>', rep, page)
+    return re.sub(r'<script((?:\s+type="module")?)\s+src="((?:sim|room|chrome|yard3d)\.js)"\s*>\s*</script>', rep, page)
 for src, out in [('figure/longshore.html', 'figure/longshore.html'), ('src/longshore3d.html', 'figure/longshore3d.html')]:
     page = inline(open(src, encoding='utf-8').read())
     if 'src="sim.js"' in page: raise SystemExit('sim.js not inlined in ' + src)

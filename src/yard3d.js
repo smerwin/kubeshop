@@ -13,9 +13,8 @@ THREE.ColorManagement.enabled = false;            // every colour here is an sRG
 const Q = new URLSearchParams(location.search);
 if (!st.pal) st.pal = PALS[Q.get('pal')] ? Q.get('pal') : 'mustard';
 const V3 = (x, y, z) => new THREE.Vector3(x, z, y);
-const PHONE = () => innerWidth <= 560;
 const COARSE = matchMedia('(pointer:coarse)').matches;
-const DPR = () => Math.min(devicePixelRatio || 1, COARSE ? 1.5 : 2);
+const DPR = () => Math.min(devicePixelRatio || 1, 2);
 const CHANNEL = hex => new THREE.Color(hex);
 
 /* ---------- lights, fixed in view space: the sun from over the viewer's right shoulder, a softer one for insides ---------- */
@@ -241,7 +240,7 @@ function mkTower(m){
   const baseTex = faceTex(`towerpx|${m.l}`, 24, 30, (gg, w, h) => { txt(gg, 'CONTROL', w - 10, h - 16.4, 3.3, tc); txt(gg, 'PLANE', w - 10, h - 12.4, 3.3, tc);
     rect(gg, w - 15, h - 9, 6, 9, mix(m.d, '#000000', .3), INK, .8); for (const z of [20, 25]) glassPane(gg, w - 22.5, h - z - 2.6, 4, 2.6, false); }, 10);
   const baseSide = faceTex(`towerpy|${m.l}`, 24, 30, (gg, w, h) => { for (const z of [12, 18, 24]) glassPane(gg, 4, h - z - 2.6, 4, 2.6, false); }, 10);
-  const base = mkBox(6, 6, 0, 30, 30, 30, m, { shade: 'tone', faces: { px: baseTex, py: baseSide }, palKey: 1 }); g.add(base); out.cases.push(base);
+  const base = mkBox(6, 6, 0, 30, 30, 30, m, { shade: 'tone', faces: { px: baseTex, py: baseSide }, palKey: 1 }); base.userData.act = { type: 'tower' }; pickables.push(base); g.add(base); out.cases.push(base);
   const ins = new THREE.Group();
   const etcdTex = faceTex('etcd', 12, 12, (gg, w, h) => { for (const z of [3, 6.5, 10]) lineTo(gg, [[1.5, h - z], [w - 1.5, h - z]], INK, .5); txt(gg, 'etcd', w/2, h - 1.9, 1.9, PAPER, 800); }, 12);
   ins.add(mkBox(9, 9, 0, 21, 21, 12, LOCK, { faces: { px: etcdTex } }));
@@ -251,7 +250,7 @@ function mkTower(m){
   ins.add(mkBox(7, 7, 29, 29, 29, 30, CONC));
   // the cab: glass on all four sides with mullions and a streak
   const glassTex = (w, h, key) => faceTex(`cab|${key}|${m.l}`, w, h, (gg, ww, hh) => { glassPane(gg, 1, 2, ww - 2, 7); for (const u of [11, 18, 25]) lineTo(gg, [[u - 3, 2], [u - 3, 9]], INK, .6); }, 8);
-  const cab = mkBox(3, 3, 30, 33, 33, 42, m, { shade: 'tone', faces: { px: glassTex(30, 12, 'px'), nx: glassTex(30, 12, 'nx'), py: glassTex(30, 12, 'py'), ny: glassTex(30, 12, 'ny') }, palKey: 1 }); g.add(cab); out.cases.push(cab);
+  const cab = mkBox(3, 3, 30, 33, 33, 42, m, { shade: 'tone', faces: { px: glassTex(30, 12, 'px'), nx: glassTex(30, 12, 'nx'), py: glassTex(30, 12, 'py'), ny: glassTex(30, 12, 'ny') }, palKey: 1 }); cab.userData.act = { type: 'tower' }; pickables.push(cab); g.add(cab); out.cases.push(cab);
   const ins2 = new THREE.Group();
   const deskTex = faceTex('scrn', 9, 5, (gg, w, h) => { for (const i of [1, 2, 3]) lineTo(gg, [[1, h - 1 - i], [w - 1, h - 1 - i]], INK, .35); rect(gg, 3, h - 1.9, 3, .7, PALS.cobalt.l); }, 14);
   ins2.add(mkBox(6, 20, 30, 16, 31, 35, WOOD), mkBox(6.5, 21, 35, 7.3, 30, 40, CERAMIC, { faces: { px: deskTex } }));
@@ -270,7 +269,7 @@ function mkTower(m){
 function mkBoard(){
   const g = new THREE.Group(), Y0 = 40, Y1 = 72, out = { g, key: '' };
   g.add(mkRod([37, Y0 + 2, 0], [37, Y0 + 2, 22], .7, METAL), mkRod([37, Y1 - 2, 0], [37, Y1 - 2, 22], .7, METAL));
-  out.face = mkBox(36, Y0, 6, 38, Y1, 26, CERAMIC, { faces: { px: boardTex(out) } }); g.add(out.face); return out;
+  out.face = mkBox(36, Y0, 6, 38, Y1, 26, CERAMIC, { faces: { px: boardTex(out) } }); out.face.userData.act = { type: 'board' }; pickables.push(out.face); g.add(out.face); return out;
 }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 4);
   return deps.map(d => { const live = podsOf(d.app), rd = d.kind === 'Job' ? (d.spawned && !live.length ? d.replicas : live.filter(p => p.phase === 'done').length) : live.filter(isReady).length;
@@ -282,7 +281,7 @@ function boardTex(out){ const rows = boardRows(); out.key = JSON.stringify(rows)
 /* the image registry shelf */
 function mkRegistry(m){
   const g = new THREE.Group(), y1 = REG_Y0 + REG_MAX*REG_GAP, out = { g, stacks: new THREE.Group(), key: '' };
-  g.add(mkBox(4, REG_Y0, 0, 6, y1, 18, m, { shade: 'tone', faces: { px: faceTex(`reg|${m.l}`, y1 - REG_Y0, 18, (gg, w, h) => txt(gg, 'IMAGE REGISTRY', w/2, h - 12, 4.6, mix(m.d, '#000000', .2)), 8) }, palKey: 1 }));
+  const wall = mkBox(4, REG_Y0, 0, 6, y1, 18, m, { shade: 'tone', faces: { px: faceTex(`reg|${m.l}`, y1 - REG_Y0, 18, (gg, w, h) => txt(gg, 'IMAGE REGISTRY', w/2, h - 12, 4.6, mix(m.d, '#000000', .2)), 8) }, palKey: 1 }); wall.userData.act = { type: 'registry' }; pickables.push(wall); g.add(wall);
   g.add(mkBox(6, REG_Y0, 0, 28, y1, 2, CONC, { shade: 'tone', receive: true })); g.add(out.stacks); return out;
 }
 function syncRegistry(){ const R = Y.registry, key = st.regApps.map(a => a + ':' + (depOf(a) ? depOf(a).version : 'img') + ':' + palOf(a).l).join(',');
@@ -297,7 +296,7 @@ function mkCrane(m){
     g.add(mkBox(x - 2, -16.4, TZ, x + 2, 16.4, TZ + 3.5, m, { shade: 'tone', palKey: 1 })); }
   const truss = faceTex('truss', XR1 + 2.5 - XB0, 4.5, (gg, w, h) => { gg.strokeStyle = 'rgba(35,30,22,.5)'; gg.lineWidth = .4; gg.beginPath(); for (let x = 2; x < w - 4; x += 7){ gg.moveTo(x, h - .5); gg.lineTo(x + 3.5, h - 4); gg.lineTo(x + 7, h - .5); } gg.stroke(); }, 8);
   const trussR = faceTex('trussR', XR1 + 2.5 - XB0, 4.5, (gg, w, h) => { gg.strokeStyle = 'rgba(35,30,22,.5)'; gg.lineWidth = .4; gg.beginPath(); for (let x = 2; x < w - 4; x += 7){ gg.moveTo(w - x, h - .5); gg.lineTo(w - x - 3.5, h - 4); gg.lineTo(w - x - 7, h - .5); } gg.stroke(); }, 8);
-  g.add(mkBox(XB0, -2.2, BZ, XR1 + 2.5, 2.2, BZ + 4.5, m, { shade: 'tone', palKey: 1, faces: { py: truss, ny: trussR, px: faceTex(`sched|${m.l}`, 4.4, 4.5, (gg, w, h) => txt(gg, 'SCHED', w/2, h - 3.2, 1.6, mix(m.d, '#000000', .2)), 20) } }));
+  const girder = mkBox(XB0, -2.2, BZ, XR1 + 2.5, 2.2, BZ + 4.5, m, { shade: 'tone', palKey: 1, faces: { py: truss, ny: trussR, px: faceTex(`sched|${m.l}`, 4.4, 4.5, (gg, w, h) => txt(gg, 'SCHED', w/2, h - 3.2, 1.6, mix(m.d, '#000000', .2)), 20) } }); girder.userData.act = { type: 'crane' }; pickables.push(girder); g.add(girder);
   const cy0 = 16.5, cy1 = 22.5, cz0 = TZ - 3.5, cz1 = TZ + 3.5;
   const cabG = (w, h, key) => faceTex(`ccab|${key}`, w, h, (gg, ww, hh) => glassPane(gg, .8, .8, ww - 1.6, hh - 1.8, false), 10);
   g.add(mkBox(XR1 - 2, cy0, cz0, XR1 + 4, cy1, cz1, m, { shade: 'tone', palKey: 1, faces: { px: cabG(6, 7, 'px'), py: cabG(6, 7, 'py') } }));
@@ -354,7 +353,7 @@ tapeTex.wrapS = THREE.RepeatWrapping;
 function mkNode(n){
   const g = new THREE.Group(), out = { g, cases: [], insides: [], key: '' }, x0 = n.x0, y0 = n.y0, x1 = x0 + SLD, y1 = y0 + SLW;
   out.rise = new THREE.Group(); g.add(out.rise);   // scales up from the ground while the node joins
-  out.slab = mkBox(x0, y0, 0, x1, y1, SLH, CONC, { shade: 'tone', receive: true, faces: { top: slabTex(n) } }); out.rise.add(out.slab);
+  out.slab = mkBox(x0, y0, 0, x1, y1, SLH, CONC, { shade: 'tone', receive: true, faces: { top: slabTex(n) } }); out.slab.userData.act = { type: 'node', node: n.name }; pickables.push(out.slab); out.rise.add(out.slab);
   out.gpus = []; for (let i = 0; i < (n.gpus || 0); i++){ const gy0 = y0 + 8 + i*11, gx0 = x0 + 1;
     const unit = mkBox(gx0, gy0, SLH, gx0 + 4, gy0 + 8, SLH + 5, LOCK, { faces: { px: faceTex('gpuface', 8, 5, (gg, w, h) => { rect(gg, .4, h - 4.6, w - .8, 1, GOLD); txt(gg, 'GPU', w/2, h - 1.2, 1.7, GOLD); }, 16), top: faceTex('gputop', 4, 8, (gg, w, h) => { gg.strokeStyle = 'rgba(35,30,22,.6)'; gg.lineWidth = .3; for (let fy = 1; fy < 8; fy += 1){ gg.beginPath(); gg.moveTo(.5, fy); gg.lineTo(3.5, fy); gg.stroke(); } }, 16) } });
     const led = mkLamp(gx0 + 2, gy0 + 6.6, SLH + 5, LAMPC.green, .6); g.add(unit, led); out.gpus.push(led); }
@@ -362,7 +361,7 @@ function mkNode(n){
   const bx0 = x0 - 18, bx1 = x0 - 8, by0 = y1 - 16, by1 = y1 - 4, bz = 12;
   const boothFront = faceTex('booth', 12, 12, (gg, w, h) => { glassPane(gg, 3, h - 9.4, 6, 4.4); txt(gg, 'KUBELET', w/2, h - 11.2, 1.8, '#6b6559'); }, 12);
   const boothDoor = faceTex('bdoor', 10, 12, (gg, w, h) => { rect(gg, 2.5, h - 8.4, 4, 8.4, null, INK, .7); dot(gg, 5.8, h - 4.4, .4, INK); }, 12);
-  const booth = mkBox(bx0, by0, 0, bx1, by1, bz, CONC, { shade: 'tone', faces: { px: boothFront, py: boothDoor } }); booth.userData.act = { type: 'booth', node: n.name }; pickables.push(booth);
+  const booth = mkBox(bx0, by0, 0, bx1, by1, bz, CONC, { shade: 'tone', faces: { px: boothFront, py: boothDoor } }); booth.userData.act = { type: 'node', node: n.name }; pickables.push(booth);
   out.rise.add(booth); out.cases.push(booth);
   out.roof = mkBox(bx0 - .8, by0 - .8, bz, bx1 + .8, by1 + .8, bz + 1.5, m0(), { shade: 'tone', palKey: 1 }); out.rise.add(out.roof);
   out.mast = new THREE.Group(); out.mast.add(mkRod([bx0 + 3, by1 - 3, bz + 1.5], [bx0 + 3, by1 - 3, bz + 8], .35, METAL)); out.lamp = mkLamp(bx0 + 3, by1 - 3, bz + 8, LAMPC.green, .9); out.mast.add(out.lamp); g.add(out.mast);
@@ -406,7 +405,7 @@ function syncNodes(){
         for (let i = 0; i < pts.length - 1; i++) N.trunks.add(mkRod(pts[i], pts[i + 1], .45, matOf(BLUE))); } }
     N.trunks.visible = k > 0; if (k > 0) setAlpha(N.trunks, k);
   }
-  for (const [name, N] of Y.nodes) if (!seen.has(name)){ dispose(N.g); Y.nodes.delete(name); }
+  for (const [name, N] of Y.nodes) if (!seen.has(name)){ dispose(N.g); Y.nodes.delete(name); N.g.traverse(o => { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); }); }
 }
 /* pods */
 function mkPod(p){
@@ -461,32 +460,108 @@ function syncStatics(){
     for (const i of O.insides){ i.visible = k > 0; if (k > 0) setAlpha(i, k); } }
 }
 function syncAll(){ if (staticKey() !== Y.key) rebuildStatic(); syncNodes(); syncPods(); syncRegistry(); syncCrane(); syncStatics(); syncParcels(); }
-
-/* ---------- renderer, camera, framing ---------- */
-const canvas = document.getElementById('gl'), zwrap = document.getElementById('zwrap'), ov = document.getElementById('ov');
+/* ---------- renderer, camera, framing ----------
+   The camera is a map: a focus point (what sits at the centre of the screen), a yaw and a pitch around it, and a
+   zoom (1 = the whole yard framed). Every move is a flight to a new one of those, eased out exponentially. */
+const html = document.documentElement;
+const canvas = document.getElementById('gl'), zwrap = document.getElementById('zwrap'), ov = document.getElementById('ov'), lblEl = document.getElementById('lbls');
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false, premultipliedAlpha: true, powerPreference: 'high-performance' });
 renderer.setClearColor(0x000000, 0); renderer.autoClear = true;
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2400);
-const YAW0 = 45, PITCH0 = Math.atan(1/Math.SQRT2)*180/Math.PI;
-let YAW = YAW0, PITCH = PITCH0, target = new THREE.Vector3(), frame = { w: 1, h: 1, top: 0, bw: 1, bh: 1 }, zoomK = 1, pan = [0, 0];
-const setCam = (y, p) => { YAW = y; PITCH = Math.max(6, Math.min(78, p)); };
+const YAW0 = 45, PITCH0 = Math.atan(1/Math.SQRT2)*180/Math.PI, ZMIN = .6, ZMAX = 8;
+const cam = { yaw: YAW0, pitch: PITCH0, focus: new THREE.Vector3(), zoom: 1, custom: false };
+let frame = { w: 1, h: 1, ymid: 0 }, box = { w: 1, h: 1, left: 0, top: 0 };   // frame: world units across the view at zoom 1; box: the canvas in css px
+const YARD_MODE = () => html.classList.contains('yard');
+const clampP = p => Math.max(6, Math.min(78, p));
 const viewDir = (yaw, pitch) => { const t = yaw*Math.PI/180, p = pitch*Math.PI/180; return new THREE.Vector3(Math.cos(p)*Math.cos(t), Math.sin(p), Math.cos(p)*Math.sin(t)); };
-function reframe(){   // the whole yard fills ~64% of the width / ~88% of the height of the frame, sitting a little high (shadows fall downward)
-  layout(st);
-  const b0 = viewDir(YAW0, PITCH0), R = new THREE.Vector3(Math.sin(YAW0*Math.PI/180), 0, -Math.cos(YAW0*Math.PI/180)), U = new THREE.Vector3().crossVectors(b0, R).normalize();
-  if (U.y < 0) U.negate();
-  target = V3(W/2, D/2, HTOP/2); let xs = [], ys = [];
-  for (const x of [0, W]) for (const y of [0, D]) for (const z of [0, HTOP]){ const q = V3(x, y, z).sub(target); xs.push(q.dot(R)); ys.push(q.dot(U)); }
-  const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys), A = PHONE() ? 1.1 : .75;
-  const vbW = Math.max(bw/(PHONE() ? .74 : .64), bh/.88/A), vbH = vbW*A;
-  // the yard's centre sits a little above the frame's centre (shadows fall downward), and stays in frame at every pitch
-  const f = PHONE() ? .44 : .42; frame = { w: vbW, h: vbH, bw, bh, top: (Math.max(...ys) + Math.min(...ys))/2 + f*vbH };
-  applyFrame(); placeCamera(); invalidate();
+// the screen's right and up directions in world (three) space for a view
+const basis = (yaw, pitch) => { const d = viewDir(yaw, pitch), R = new THREE.Vector3(Math.sin(yaw*Math.PI/180), 0, -Math.cos(yaw*Math.PI/180)), U = new THREE.Vector3().crossVectors(d, R).normalize(); return { d, R, U }; };
+const measure = () => { const r = zwrap.getBoundingClientRect(); box = { w: Math.max(1, r.width), h: Math.max(1, r.height), left: r.left, top: r.top }; };
+function reframe(){   // zoom 1 frames the whole yard as seen from the front view, at any yaw after that
+  layout(st); measure();
+  const { R, U } = basis(YAW0, PITCH0), c = V3(W/2, D/2, HTOP/2), xs = [], ys = [];
+  for (const x of [0, W]) for (const y of [0, D]) for (const z of [0, HTOP]){ const q = V3(x, y, z).sub(c); xs.push(q.dot(R)); ys.push(q.dot(U)); }
+  const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys), A = box.h/box.w, yard = YARD_MODE(), phone = box.w < 560;
+  const fw = yard ? .9 : phone ? .74 : .64, fh = yard ? .6 : .88;
+  const vbW = Math.max(bw/fw, bh/fh/A); frame = { w: vbW, h: vbW*A, ymid: (Math.max(...ys) + Math.min(...ys))/2 };
+  if (!cam.custom) cam.focus.copy(overviewFocus());
+  applyFrame(); invalidate();
 }
 window.reframe = reframe;
-function applyFrame(){ const w = frame.w/zoomK, h = frame.h/zoomK, cx = pan[0], cy = frame.top - frame.h/2 + pan[1];
-  camera.left = cx - w/2; camera.right = cx + w/2; camera.top = cy + h/2; camera.bottom = cy - h/2; camera.updateProjectionMatrix(); }
-function placeCamera(){ camera.position.copy(target).add(viewDir(YAW, PITCH).multiplyScalar(1000)); camera.up.set(0, 1, 0); camera.lookAt(target); camera.updateMatrixWorld(); }
+// the whole yard, a little above the middle of the frame (shadows fall downward); only ever offset straight up, so orbiting keeps it centred
+function overviewFocus(){ const f = YARD_MODE() ? .5 : box.w < 560 ? .44 : .42; return V3(W/2, D/2, HTOP/2).add(new THREE.Vector3(0, (frame.ymid + (f - .5)*frame.h)/Math.cos(PITCH0*Math.PI/180), 0)); }
+function applyFrame(){ const w = frame.w/cam.zoom, h = frame.h/cam.zoom;
+  cam.focus.x = Math.max(-40, Math.min(W + 40, cam.focus.x)); cam.focus.z = Math.max(-40, Math.min(D + 40, cam.focus.z)); cam.focus.y = Math.max(-90, Math.min(HTOP + 90, cam.focus.y));
+  camera.left = -w/2; camera.right = w/2; camera.top = h/2; camera.bottom = -h/2; camera.updateProjectionMatrix();
+  camera.position.copy(cam.focus).add(viewDir(cam.yaw, cam.pitch).multiplyScalar(1000)); camera.up.set(0, 1, 0); camera.lookAt(cam.focus); camera.updateMatrixWorld(); }
+const toScreen = p => { const v = V3(...p).project(camera); return [(v.x + 1)/2*box.w, (1 - v.y)/2*box.h, v.z]; };
+const ppu = () => box.w/(frame.w/cam.zoom);                      // screen pixels per world unit
+const zoomFor = px => Math.min(ZMAX, Math.max(ZMIN, px*frame.w/box.w));
+const touched = () => { cam.custom = true; applyFrame(); invalidate(); saveCam(); };
+// zoom toward a screen point (the thing under the finger stays put), and pan by a screen offset
+function zoomAt(k, px, py, ms){ const z2 = Math.min(ZMAX, Math.max(ZMIN, cam.zoom*k)); k = z2/cam.zoom; if (Math.abs(k - 1) < 1e-4) return;
+  const { R, U } = basis(cam.yaw, cam.pitch), w = frame.w/cam.zoom, h = frame.h/cam.zoom, u = (px/box.w - .5)*w, v = (.5 - py/box.h)*h;
+  const f = cam.focus.clone().addScaledVector(R, u*(1 - 1/k)).addScaledVector(U, v*(1 - 1/k));
+  if (ms){ cam.custom = true; flyTo({ focus: f, zoom: z2 }, ms); } else { cam.focus.copy(f); cam.zoom = z2; touched(); } }
+function panBy(dx, dy){ const { R, U } = basis(cam.yaw, cam.pitch), w = frame.w/cam.zoom, h = frame.h/cam.zoom; cam.focus.addScaledVector(R, -dx*w/box.w).addScaledVector(U, dy*h/box.h); touched(); }
+// flights: every camera move is one of these, expo-out, short
+let camAnim = 0; const eo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10*t);
+function flyTo(to, ms = 500, done){ const id = ++camAnim, y0 = cam.yaw, p0 = cam.pitch, f0 = cam.focus.clone(), z0 = cam.zoom;
+  const y1 = to.yaw == null ? y0 : y0 + (((to.yaw - y0 + 540) % 360) - 180), p1 = to.pitch == null ? p0 : clampP(to.pitch), f1 = to.focus ? to.focus.clone() : f0, z1 = Math.min(ZMAX, Math.max(ZMIN, to.zoom == null ? z0 : to.zoom)); let t = 0;
+  const end = () => { cam.yaw = ((y1 % 360) + 360) % 360; cam.pitch = p1; cam.focus.copy(f1); cam.zoom = z1; applyFrame(); invalidate(); saveCam(); if (done) done(); };
+  if (ms <= 0) return end();
+  ui.animate(dt => { if (id !== camAnim) return false; t += dt*1000; if (t >= ms){ end(); return false; } const e = eo(t/ms);
+    cam.yaw = y0 + (y1 - y0)*e; cam.pitch = p0 + (p1 - p0)*e; cam.focus.lerpVectors(f0, f1, e); cam.zoom = z0*Math.pow(z1/z0, e); applyFrame(); invalidate(); return true; }); }
+// frame a world box [[x0,y0,z0],[x1,y1,z1]]: it fills `fill` of the view, centred in the part of the screen a card leaves free
+function frameBox(b, o = {}){ const yaw = o.yaw == null ? cam.yaw : o.yaw, pitch = o.pitch == null ? cam.pitch : o.pitch, { R, U } = basis(yaw, pitch);
+  const c = V3((b[0][0] + b[1][0])/2, (b[0][1] + b[1][1])/2, (b[0][2] + b[1][2])/2), xs = [], ys = [];
+  for (const x of [b[0][0], b[1][0]]) for (const y of [b[0][1], b[1][1]]) for (const z of [b[0][2], b[1][2]]){ const q = V3(x, y, z).sub(c); xs.push(q.dot(R)); ys.push(q.dot(U)); }
+  const bw = Math.max(1, Math.max(...xs) - Math.min(...xs)), bh = Math.max(1, Math.max(...ys) - Math.min(...ys)), fill = o.fill || .4, below = o.below || 0;
+  const zoom = Math.min(o.maxZoom || ZMAX, Math.max(ZMIN, Math.min(frame.w*fill/bw, frame.h*(1 - below)*fill/bh)));
+  const focus = c.addScaledVector(U, (Math.max(...ys) + Math.min(...ys))/2 - below/2*frame.h/zoom);
+  cam.custom = true; flyTo({ yaw, pitch, focus, zoom }, o.ms == null ? 500 : o.ms, o.done); }
+const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
+// where things are, and the view that shows them best (a face to read turns the camera toward it; a box keeps the viewer's yaw)
+function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.id), n = a.type === 'node' && st.nodes.find(n => n.name === a.node);
+  if (p && p.pos) return [[p.pos[0], p.pos[1] - (p.pvc ? 6 : 0), p.pos[2]], [p.pos[0] + PW, p.pos[1] + PL, p.pos[2] + PH]];
+  if (n) return [[n.x0 - 18, n.y0, 0], [n.x0 + SLD, n.y0 + SLW, 20]];
+  if (a.type === 'tower') return [[2, 2, 0], [34, 34, 58]];
+  if (a.type === 'board') return [[36, 40, 0], [38, 72, 26]];
+  if (a.type === 'registry') return [[4, REG_Y0, 0], [28, REG_Y0 + REG_MAX*REG_GAP, 24]];
+  if (a.type === 'kiosk') return [[W - 42, 36, 0], [W - 30, 54, 20]];
+  if (a.type === 'gate') return [[W - 37, 17, 0], [W - 5, 22.5, 22.5]];
+  if (a.type === 'crane'){ const c = st.crane; return [[c.x - 8, c.y - 14, c.z - 2], [c.x + 8, c.y + 14, BZ + 6]]; }
+  if (a.type === 'app'){ const ps = st.pods.filter(p => p.app === a.app && p.pos); if (!ps.length) return null; const b = [[1e9, 1e9, 1e9], [-1e9, -1e9, -1e9]];
+    for (const p of ps) for (let i = 0; i < 3; i++){ b[0][i] = Math.min(b[0][i], p.pos[i]); b[1][i] = Math.max(b[1][i], p.pos[i] + [PW, PL, PH][i]); } return b; }
+  return null; }
+function frameAct(a, o = {}){ const b = bboxOf(a); if (!b) return; const view = {};
+  const face = { board: [12, 45], kiosk: [30, 60], gate: [75, 60], registry: [20, 50] }[a.type];   // [best yaw, tolerance]
+  if (face && Math.abs(angDiff(cam.yaw, face[0])) > face[1]) view.yaw = face[0];
+  view.pitch = a.type === 'app' ? Math.max(28, Math.min(55, cam.pitch)) : a.type === 'node' ? Math.max(30, Math.min(60, cam.pitch)) : Math.max(16, Math.min(44, cam.pitch));
+  const fill = o.fill || (a.type === 'pod' ? .36 : a.type === 'app' ? .5 : .42), maxZoom = a.type === 'pod' ? zoomFor(7) : a.type === 'app' || a.type === 'node' ? zoomFor(4.5) : zoomFor(5);
+  frameBox(b, { ...view, fill, maxZoom, below: o.below || 0, ms: o.ms, done: o.done }); }
+function overview(ms = 500){ cam.custom = false; flyTo({ focus: overviewFocus(), zoom: 1 }, ms, () => { cam.custom = false; saveCam(); }); }
+function front(){ spinOff(); flyTo({ yaw: YAW0, pitch: PITCH0 }, 600); }
+
+/* follow: the camera tracks whatever the operation is doing: the crane's load, a landing gang, the request bead, a crashing pod */
+const follow = { on: false };
+function followTarget(){ const c = st.crane, mid = p => [p.pos[0] + PW/2, p.pos[1] + PL/2, p.pos[2] + PH/2];
+  if (c.carry && c.carry.pos) return { p: mid(c.carry), z: zoomFor(3.6) };
+  const dr = st.pods.find(p => p.drop && p.pos); if (dr) return { p: mid(dr), z: zoomFor(2.2) };
+  if (st.parcels.length){ const pc = st.parcels[0]; return { p: parcelAt(pc, pc.t), z: zoomFor(4) }; }
+  const cr = st.pods.find(p => (p.fire > 0 || p.phase === 'crash') && p.pos); if (cr) return { p: mid(cr), z: zoomFor(4) };
+  if (c.job) return { p: [c.x, c.y, c.z + PH/2], z: zoomFor(3.2) };
+  const cr2 = st.pods.find(p => p.phase === 'creating' && p.pos); if (cr2) return { p: mid(cr2), z: zoomFor(4) };
+  const un = st.pods.find(p => p.phase === 'unready' && p.phaseT > -1e8 && p.pos); if (un) return { p: mid(un), z: zoomFor(3.6) };
+  const bt = st.nodes.find(n => n.joined > 0 && n.joined < 1); if (bt) return { p: [bt.x0 + SLD/2 - 8, bt.y0 + SLW/2, 8], z: zoomFor(2.2) };
+  return null; }
+function followTick(dt){ const t = followTarget(); if (!t) return; const k = 1 - Math.exp(-dt*6); cam.focus.lerp(V3(...t.p), k); cam.zoom += (t.z - cam.zoom)*k*.7; cam.custom = true; applyFrame(); dirty = true; }
+function setFollow(on){ follow.on = !!on; if (on) camAnim++; Chrome.syncSw(); if (on) invalidate(); }
+// the camera is remembered for this tab, so the guide's figures do not snap back to the front view
+const CAMKEY = 'longshore.cam'; let saveT = 0;
+function saveCam(){ clearTimeout(saveT); saveT = setTimeout(() => { try { sessionStorage.setItem(CAMKEY, JSON.stringify({ yaw: cam.yaw, pitch: cam.pitch, f: cam.focus.toArray(), zoom: cam.zoom, custom: cam.custom, W, D, yard: YARD_MODE() })); } catch {} }, 300); }
+function loadCam(){ try { const s = JSON.parse(sessionStorage.getItem(CAMKEY)); if (!s || s.W !== W || s.D !== D) return false; cam.yaw = s.yaw; cam.pitch = s.pitch;
+  if (s.custom && s.yard === YARD_MODE()){ cam.custom = true; cam.focus.fromArray(s.f); cam.zoom = s.zoom; } applyFrame(); return true; } catch { return false; } }
 
 /* ---------- the post pass: ink from depth and normals, wobble, grain ---------- */
 let colRT, edgeRT, ghostRT, shadowRT, shadowRT2, sizeKey = '';
@@ -522,21 +597,22 @@ const POST = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, tra
     gl_FragColor = vec4(rgb, a);
   }` });
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), POST));
+let fastMode = false;   // while a finger moves the view: pixel ratio 1 and no ink pass, restored at rest
 function ensureTargets(){
-  const r = zwrap.getBoundingClientRect(), dpr = fastMode ? 1 : DPR(), w = Math.max(2, Math.round(r.width*dpr)), h = Math.max(2, Math.round(r.height*dpr)), key = w + 'x' + h;
+  const dpr = fastMode ? 1 : DPR(), w = Math.max(2, Math.round(box.w*dpr)), h = Math.max(2, Math.round(box.h*dpr)), key = w + 'x' + h + (fastMode ? 'f' : '');
   if (key === sizeKey) return; sizeKey = key;
   renderer.setPixelRatio(1); renderer.setSize(w, h, false);
-  for (const t of [colRT, edgeRT, ghostRT]) if (t) t.dispose();
-  colRT = new THREE.WebGLRenderTarget(w, h, { samples: COARSE ? 2 : 4, depthBuffer: true });
-  const mkEdge = () => { const t = new THREE.WebGLRenderTarget(w, h); t.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType); t.depthTexture.format = THREE.DepthFormat; return t; };
-  edgeRT = mkEdge(); ghostRT = mkEdge();
+  for (const t of [colRT, edgeRT, ghostRT]) if (t) t.dispose(); colRT = edgeRT = ghostRT = null;
+  if (!fastMode){ colRT = new THREE.WebGLRenderTarget(w, h, { samples: COARSE ? 2 : 4, depthBuffer: true });
+    const mkEdge = () => { const t = new THREE.WebGLRenderTarget(w, h); t.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType); t.depthTexture.format = THREE.DepthFormat; return t; };
+    edgeRT = mkEdge(); ghostRT = mkEdge();
+    POST.uniforms.res.value.set(w, h); POST.uniforms.dpr.value = dpr; POST.uniforms.zRange.value = camera.far - camera.near;
+    POST.uniforms.tCol.value = colRT.texture; POST.uniforms.tN.value = edgeRT.texture; POST.uniforms.tD.value = edgeRT.depthTexture; POST.uniforms.tN2.value = ghostRT.texture; POST.uniforms.tD2.value = ghostRT.depthTexture; }
   if (!shadowRT){ const S = COARSE ? 1024 : 2048; shadowRT = new THREE.WebGLRenderTarget(S, S); shadowRT2 = new THREE.WebGLRenderTarget(S/2, S/2); shared.shadowMap.value = shadowRT.texture; shared.shadowMap2.value = shadowRT2.texture; shared.shadowTexel.value = 1/S; }
-  POST.uniforms.res.value.set(w, h); POST.uniforms.dpr.value = dpr; POST.uniforms.zRange.value = camera.far - camera.near;
-  POST.uniforms.tCol.value = colRT.texture; POST.uniforms.tN.value = edgeRT.texture; POST.uniforms.tD.value = edgeRT.depthTexture; POST.uniforms.tN2.value = ghostRT.texture; POST.uniforms.tD2.value = ghostRT.depthTexture;
 }
 // the shadow light: toward the lower left of the screen, turning with the viewer's yaw only (never with the pitch)
 function placeShadowCam(){
-  const a = 105*Math.PI/180, t = (YAW - YAW0)*Math.PI/180, lx = -.45*Math.cos(a), ly = -.45*Math.sin(a);
+  const a = 105*Math.PI/180, t = (cam.yaw - YAW0)*Math.PI/180, lx = -.45*Math.cos(a), ly = -.45*Math.sin(a);
   const dir = V3(lx*Math.cos(t) - ly*Math.sin(t), lx*Math.sin(t) + ly*Math.cos(t), 1).normalize();
   const c = V3(W/2, D/2, HTOP/2); shadowCam.position.copy(c).add(dir.clone().multiplyScalar(800)); shadowCam.up.set(0, 1, 0); shadowCam.lookAt(c); shadowCam.updateMatrixWorld();
   const inv = shadowCam.matrixWorldInverse; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
@@ -544,14 +620,16 @@ function placeShadowCam(){
   shadowCam.left = x0; shadowCam.right = x1; shadowCam.top = y1; shadowCam.bottom = y0; shadowCam.near = Math.max(1, z0 - 10); shadowCam.far = z1 + 10; shadowCam.updateProjectionMatrix();
   shared.shadowVP.value.multiplyMatrices(shadowCam.projectionMatrix, shadowCam.matrixWorldInverse);
 }
-let fastMode = false;
+let shadowYaw = null;
 function render(){
-  ensureTargets(); placeCamera(); placeShadowCam();
+  ensureTargets(); applyFrame();
   const k = ease(st.xr || 0);
-  // shadows: everything solid into one map, the crane into a lighter one
+  // shadows: everything solid into one map, the crane into a lighter one (they only change with the yaw and the scene)
   scene.overrideMaterial = DEPTH_MAT;
+  placeShadowCam();
   shadowCam.layers.set(0); shadowCam.layers.enable(1); renderer.setRenderTarget(shadowRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, shadowCam);
   shadowCam.layers.set(2); renderer.setRenderTarget(shadowRT2); renderer.clear(); renderer.render(scene, shadowCam);
+  if (fastMode){ scene.overrideMaterial = null; camera.layers.enableAll(); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, camera); return; }
   // normals + ink weight (and depth) of the inked things; the ghost cases apart
   scene.overrideMaterial = EDGE_MAT; renderer.setClearColor(0x000000, 0);
   camera.layers.set(0); camera.layers.enable(2); renderer.setRenderTarget(edgeRT); renderer.clear(); renderer.render(scene, camera);
@@ -568,132 +646,131 @@ const steps = new Set(); let driving = false, lastT = 0, dirty = true, fbT = 0;
 const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT);
   const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - lastT)/1000)); lastT = now;
   for (const s of [...steps]) if (s(dt) === false) steps.delete(s);
-  if (steps.size || dirty){ dirty = false; const t0 = performance.now(); syncAll(); const t1 = performance.now(); render(); const t2 = performance.now(); drawStats(); drawCallouts(); if (window.ControlRoom) ControlRoom.observe(); window.__ft = { sync: t1 - t0, render: t2 - t1, calls: renderer.info.render.calls, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures, frames: (window.__ft ? window.__ft.frames : 0) + 1 }; }
+  if (follow.on && steps.size) followTick(dt);
+  if (steps.size || dirty){ dirty = false; const t0 = performance.now(); syncAll(); const t1 = performance.now(); render(); const t2 = performance.now();
+    Chrome.tick(); drawLabels(); drawCompass(); if (window.ControlRoom) ControlRoom.observe();
+    window.__ft = { sync: t1 - t0, render: t2 - t1, post: performance.now() - t2, calls: renderer.info.render.calls, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures, frames: (window.__ft ? window.__ft.frames : 0) + 1 }; }
   if (steps.size) drive(); };
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
 ui = { st, render: invalidate, invalidate, animate: step => { if (!steps.size && !driving) lastT = performance.now(); steps.add(step); drive(); },
   flash: (text, ms = 1600) => { const t = document.getElementById('toast'); t.textContent = text[0].toUpperCase() + text.slice(1); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), ms); } };
 window.ui = ui; window.__st = st;
-// for the browser checks: where a world point lands on the canvas (CSS px), and a zoom toward it
-window.__proj = p => toScreen(p, zwrap.getBoundingClientRect()); window.__zoomTo = (p, k) => { zoomK = 1; pan = [0, 0]; applyFrame(); placeCamera(); const [x, y] = window.__proj(p); zoomAt(k, x, y); };
-// the figure's own run() (sim.js) animates through ui.animate; camera moves are steps too
-let camAnim = 0;
-const camTo = (y, p, ms = 700) => { const y0 = YAW, p0 = PITCH, dy = ((y - y0 + 540) % 360) - 180, id = ++camAnim; let t = 0;
-  ui.animate(dt => { if (id !== camAnim) return false; t += dt*1000; const k = Math.min(1, t/ms), e = ease(k); setCam(y0 + dy*e, p0 + (p - p0)*e); return k < 1; }); };
+// for the browser checks: where a world point lands on the canvas (CSS px), the camera, and a zoom toward a point
+window.__proj = p => toScreen(p); window.__cam = cam; window.__labels = () => labelItems().map(it => ({ key: it.key, at: toScreen(it.at), pri: it.pri })); window.__zoomTo = (p, k) => { overview(0); const [x, y] = toScreen(p); zoomAt(k, x, y); };
 
-/* ---------- orbit, zoom, picking ---------- */
-let drag = null, spin = false; const pts = new Map(); let pinch = null; const vsp = document.getElementById('vspin');
+/* ---------- gestures: one finger orbits, two pinch and pan, taps pick, flicks glide and snap ---------- */
+const P = new Map(); let ges = null, lastTap = null, tapT = 0, spin = false;
+const buzz = ms => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch {} };
+const two = () => { const [a, b] = [...P.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x)/2, y: (a.y + b.y)/2 }; };
+const evPos = e => [e.clientX - box.left, e.clientY - box.top];
 const raycaster = new THREE.Raycaster();
-function pick(ev){ const r = zwrap.getBoundingClientRect(); const x = ((ev.clientX - r.left)/r.width)*2 - 1, y = -((ev.clientY - r.top)/r.height)*2 + 1; raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
-  raycaster.layers.enableAll(); const hits = raycaster.intersectObjects(pickables, false); return hits.length ? hits[0].object.userData.act : null; }
-zwrap.addEventListener('pointerdown', e => { if (e.button) return; if (e.target.closest('.zchip')) return;
-  if (e.pointerType === 'touch'){ pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.size === 2){ pinch = two(); drag = null; return; } }
-  camAnim++; drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, yaw: YAW, pitch: PITCH, t: performance.now(), moved: false }; zwrap.classList.add('drag'); try { zwrap.setPointerCapture(e.pointerId); } catch {} });
+function pick(e){ const [px, py] = evPos(e); raycaster.setFromCamera(new THREE.Vector2((px/box.w)*2 - 1, -(py/box.h)*2 + 1), camera);
+  raycaster.layers.enableAll(); const hits = raycaster.intersectObjects(pickables, false); if (!hits.length) return null; const h = hits[0], a = h.object.userData.act;
+  if (a && a.type === 'board'){ const i = Math.round((20.1 - h.point.y)/3.6), rows = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 4); if (rows[i] && Math.abs(h.point.y - (20.1 - i*3.6)) < 1.7) return { type:'app', app: rows[i].app }; }
+  return a; }
+const release = () => { if (follow.on) setFollow(false); spinOff(); camAnim++; };
+function spinOff(){ if (spin){ spin = false; Chrome.spinOff(); } }
+function fast(on){ if (!COARSE) return; if (fastMode === on) return; fastMode = on; sizeKey = ''; invalidate(); }
+zwrap.addEventListener('contextmenu', e => e.preventDefault());
+zwrap.addEventListener('pointerdown', e => { if (e.target.closest('.zchip, .lb, .card, .compass, .toast')) return; if (e.button > 2) return;
+  measure(); P.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { zwrap.setPointerCapture(e.pointerId); } catch {}
+  camAnim++; spinOff();
+  if (P.size === 2){ const t = two(); ges = { type:'pinch', x: t.x, y: t.y, d: t.d, t0: performance.now(), moved: false }; return; }
+  if (P.size > 2){ ges = null; return; }
+  ges = { type: e.button === 0 && !e.shiftKey ? 'orbit' : 'pan', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: false, s: [] }; });
 zwrap.addEventListener('pointermove', e => {
-  if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pinch && pts.size === 2){ e.preventDefault(); const n = two(), r = zwrap.getBoundingClientRect(); pan[0] -= (n.x - pinch.x)*frame.w/r.width/zoomK; pan[1] += (n.y - pinch.y)*frame.h/r.height/zoomK; zoomAt(n.d/pinch.d, n.x - r.left, n.y - r.top); pinch = n; return; }
-  if (!drag) return; const k = 300/zwrap.getBoundingClientRect().width; if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 4) drag.moved = true;
-  if (drag.moved){ setCam(drag.yaw + (e.clientX - drag.x)*.55*k, drag.pitch + (e.clientY - drag.y)*.35*k); fastMode = COARSE; invalidate(); } });
-const endDrag = e => { if (pts.has(e.pointerId)) pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
-  if (drag && !drag.moved && performance.now() - drag.t < 600){ const a = pick(e); if (a) act(a); }
-  drag = null; zwrap.classList.remove('drag'); if (fastMode){ fastMode = false; sizeKey = ''; invalidate(); } };
-zwrap.addEventListener('pointerup', endDrag); zwrap.addEventListener('pointercancel', endDrag);
-zwrap.addEventListener('dblclick', e => { if (e.target.closest('.zchip')) return; spin = false; vsp.setAttribute('aria-pressed', false); zoomK = 1; pan = [0, 0]; applyFrame(); camTo(YAW0, PITCH0); document.querySelector('.zchip .zp').textContent = '100%'; });
-zwrap.addEventListener('pointermove', e => { if (drag || e.pointerType === 'touch') return; zwrap.classList.toggle('pick', !!pick(e)); });
-addEventListener('keydown', e => { const k = { ArrowLeft:[-15, 0], ArrowRight:[15, 0], ArrowUp:[0, 8], ArrowDown:[0, -8] }[e.key]; if (!k || /input|textarea/i.test(e.target.tagName)) return; e.preventDefault(); camTo(YAW + k[0], PITCH + k[1], 260); });
-const two = () => { const [a, b] = [...pts.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x)/2, y: (a.y + b.y)/2 }; };
-function act(a){ if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (p) podInfo(p); } else if (a.type === 'booth'){ const n = st.nodes.find(n => n.name === a.node); if (n) n.cordoned ? uncordon(n) : drain(n); } else { request(); run(); } invalidate(); }
-// zoom: ctrl/cmd + wheel (a trackpad pinch arrives the same way), two fingers, the chip; the view zooms toward the cursor
-function zoomAt(k, px, py){ const r = zwrap.getBoundingClientRect(), z2 = Math.min(5, Math.max(1, zoomK*k));
-  const ux = (px/r.width - .5)*frame.w, uy = (.5 - py/r.height)*frame.h;   // the cursor in frame units from the centre
-  pan[0] += ux*(1/zoomK - 1/z2); pan[1] += uy*(1/zoomK - 1/z2); zoomK = z2; clampPan(); applyFrame(); invalidate();
-  document.querySelector('.zchip .zp').textContent = Math.round(zoomK*100) + '%'; }
-function clampPan(){ if (zoomK <= 1.001){ zoomK = 1; pan = [0, 0]; return; } const mx = frame.w*(1 - 1/zoomK)/2, my = frame.h*(1 - 1/zoomK)/2; pan[0] = Math.max(-mx, Math.min(mx, pan[0])); pan[1] = Math.max(-my, Math.min(my, pan[1])); }
-zwrap.addEventListener('wheel', e => { const r = zwrap.getBoundingClientRect();
-  if (e.ctrlKey || e.metaKey){ e.preventDefault(); zoomAt(Math.exp(-Math.max(-50, Math.min(50, e.deltaY))*.006), e.clientX - r.left, e.clientY - r.top); }
-  else if (zoomK > 1){ e.preventDefault(); pan[0] += e.deltaX*frame.w/r.width/zoomK; pan[1] -= e.deltaY*frame.h/r.height/zoomK; clampPan(); applyFrame(); invalidate(); } }, { passive: false });
-document.querySelector('.zchip .zi').onclick = () => { const r = zwrap.getBoundingClientRect(); zoomAt(1.5, r.width/2, r.height/2); };
-document.querySelector('.zchip .zm').onclick = () => { const r = zwrap.getBoundingClientRect(); zoomAt(1/1.5, r.width/2, r.height/2); };
-document.querySelector('.zchip .zp').onclick = () => { zoomK = 1; pan = [0, 0]; applyFrame(); invalidate(); document.querySelector('.zchip .zp').textContent = '100%'; };
+  if (!P.has(e.pointerId)){ if (e.pointerType !== 'touch') zwrap.classList.toggle('pick', !!pick(e)); return; }
+  P.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (!ges) return;
+  if (ges.type === 'pinch'){ if (P.size < 2) return; const t = two();
+    if (!ges.moved){ if (Math.hypot(t.x - ges.x, t.y - ges.y) < 6 && Math.abs(t.d - ges.d) < 6) return; ges.moved = true; release(); }
+    panBy(t.x - ges.x, t.y - ges.y); zoomAt(t.d/Math.max(1, ges.d), t.x - box.left, t.y - box.top); ges.x = t.x; ges.y = t.y; ges.d = t.d; fast(true); return; }
+  if (!ges.moved){ if (Math.hypot(e.clientX - ges.x0, e.clientY - ges.y0) < 5) return; ges.moved = true; release(); zwrap.classList.add('drag'); }
+  const dx = e.clientX - ges.x, dy = e.clientY - ges.y;
+  if (ges.type === 'pan') panBy(dx, dy);
+  else { const k = 300/box.w; cam.yaw += dx*.55*k; cam.pitch = clampP(cam.pitch + dy*.35*k); ges.s.push({ t: performance.now(), yaw: cam.yaw, pitch: cam.pitch }); if (ges.s.length > 10) ges.s.shift(); touched(); }
+  ges.x = e.clientX; ges.y = e.clientY; fast(true); });
+const endPointer = e => { if (!P.has(e.pointerId)) return; P.delete(e.pointerId); zwrap.classList.remove('drag');
+  if (ges && ges.type === 'pinch'){
+    if (P.size === 1){ if (!ges.moved && performance.now() - ges.t0 < 350) ges = { type:'tap2' }; else { const [r] = P.values(); ges = { type:'orbit', x: r.x, y: r.y, x0: r.x, y0: r.y, t0: performance.now(), moved: true, s: [] }; } }
+    else if (!P.size){ ges = null; rest(); } return; }
+  if (ges && ges.type === 'tap2'){ if (!P.size){ ges = null; zoomAt(.5, box.w/2, box.h/2, 420); buzz(6); } return; }
+  const g = ges; ges = null; if (!g) return;
+  if (!g.moved){ if (performance.now() - g.t0 < 500) tap(e); rest(); return; }
+  if (g.type === 'orbit') glide(g.s); else rest(); };
+zwrap.addEventListener('pointerup', endPointer); zwrap.addEventListener('pointercancel', endPointer);
+function rest(){ cam.yaw = ((cam.yaw % 360) + 360) % 360; fast(false); saveCam(); }
+const CARD = () => [0, 90, 180, 270].map(a => YAW0 + a);
+const nearestCardinal = y => CARD().reduce((best, c) => Math.abs(angDiff(c, y)) < Math.abs(angDiff(best, y)) ? c : best, CARD()[0]);
+// a flick keeps turning and slows quickly; one that would come to rest near a cardinal view snaps onto it
+function glide(s){ const now = performance.now(), a = s.find(x => now - x.t < 110) || s[s.length - 1], b = s[s.length - 1], dt = b && a ? (b.t - a.t)/1000 : 0;
+  let vy = dt > 0 ? (b.yaw - a.yaw)/dt : 0, vp = dt > 0 ? (b.pitch - a.pitch)/dt : 0; vy = Math.max(-900, Math.min(900, vy)); vp = Math.max(-400, Math.min(400, vp));
+  const TAU = .14, restYaw = cam.yaw + vy*TAU, near = nearestCardinal(restYaw), off = angDiff(near, restYaw);
+  if ((Math.abs(vy) > 80 && Math.abs(off) < 16) || Math.abs(off) < 4){ flyTo({ yaw: near, pitch: cam.pitch + vp*TAU }, 340, () => { buzz(8); const c = document.getElementById('compass'); c.classList.remove('snap'); void c.offsetWidth; c.classList.add('snap'); rest(); }); return; }
+  if (Math.abs(vy) < 40 && Math.abs(vp) < 40){ rest(); return; }
+  const id = ++camAnim; ui.animate(dt => { if (id !== camAnim) return false; const k = Math.exp(-dt/TAU); cam.yaw += vy*TAU*(1 - k); cam.pitch = clampP(cam.pitch + vp*TAU*(1 - k)); vy *= k; vp *= k; applyFrame(); invalidate();
+    if (Math.abs(vy) < 5 && Math.abs(vp) < 5){ rest(); return false; } return true; }); }
+// a tap picks; a second tap on the same spot zooms in there instead
+function tap(e){ const now = performance.now(), [x, y] = evPos(e);
+  if (lastTap && now - lastTap.t < 320 && Math.hypot(x - lastTap.x, y - lastTap.y) < 26){ clearTimeout(tapT); lastTap = null; release(); zoomAt(2, x, y, 420); return; }
+  lastTap = { t: now, x, y }; const a = pick(e); clearTimeout(tapT);
+  tapT = setTimeout(() => { if (a) act(a); else Chrome.hideCard(); }, e.pointerType === 'mouse' ? 0 : 240); }
+function act(a){ release(); Chrome.open(a); invalidate(); }
+// wheel: ctrl/cmd (a trackpad pinch) zooms anywhere; in yard mode a mouse wheel zooms and a trackpad's two fingers pan; on a page a plain wheel scrolls it
+let wheelT = 0, wheelMouse = false;
+zwrap.addEventListener('wheel', e => { measure(); const [x, y] = evPos(e), now = performance.now();
+  if (e.ctrlKey || e.metaKey){ e.preventDefault(); release(); zoomAt(Math.exp(-Math.max(-50, Math.min(50, e.deltaY))*.01), x, y); return; }
+  if (YARD_MODE()){ e.preventDefault(); release();
+    const burst = now - wheelT < 60; wheelT = now;
+    const trackpad = e.shiftKey || e.deltaMode === 0 && (e.deltaX !== 0 || (Math.abs(e.deltaY) < 40 && (burst || !Number.isInteger(e.deltaY)))) && !(wheelMouse && burst);
+    wheelMouse = !trackpad;
+    if (trackpad) panBy(-e.deltaX, -e.deltaY); else zoomAt(Math.exp(-Math.sign(e.deltaY)*.18), x, y, 160); return; }
+  if (cam.zoom > 1.001){ e.preventDefault(); release(); panBy(-e.deltaX, -e.deltaY); } }, { passive: false });
+addEventListener('keydown', e => { if (/input|textarea/i.test(e.target.tagName)) return; const k = { ArrowLeft:[-15, 0], ArrowRight:[15, 0], ArrowUp:[0, 8], ArrowDown:[0, -8] }[e.key];
+  if (k){ e.preventDefault(); release(); flyTo({ yaw: cam.yaw + k[0], pitch: cam.pitch + k[1] }, 300); return; }
+  if (e.key === '+' || e.key === '='){ release(); zoomAt(1.5, box.w/2, box.h/2, 300); } else if (e.key === '-'){ release(); zoomAt(1/1.5, box.w/2, box.h/2, 300); } else if (e.key === '0'){ release(); overview(); } else if (e.key === 'f'){ release(); front(); } });
+const zpEl = document.querySelector('.zchip .zp');
+document.querySelector('.zchip .zi').onclick = () => { release(); zoomAt(1.5, box.w/2, box.h/2, 300); };
+document.querySelector('.zchip .zm').onclick = () => { release(); zoomAt(1/1.5, box.w/2, box.h/2, 300); };
+zpEl.onclick = () => { release(); overview(); };
+function spinToggle(){ spin = !spin; camAnim++; if (spin){ setFollow(false); ui.animate(dt => { if (!spin) return false; if (!ges) cam.yaw += dt*18; applyFrame(); invalidate(); return true; }); } return spin; }
 
-/* ---------- page chrome: buttons, stats, switches, swatches, view ---------- */
-const BUTTONS = [
-  { label:'Bootstrap', onClick: () => bootstrap() },
-  { label:'Apply', choices: st => [
-    { label:'cache x2 (new app)', current: !!depOf('cache') && st.mode === 'demo', onClick: () => applyCache() },
-    { label:'delete cache', disabled: !depOf('cache'), why:'cache is not deployed', onClick: () => deleteDep('cache') },
-    { label:'train x3 (1 GPU each)', current: !!depOf('train') && st.mode === 'demo', onClick: () => applyTrain() },
-    { label:'delete train', disabled: !depOf('train'), why:'train is not deployed', onClick: () => deleteDep('train') },
-    { label:'spark x4 (gang, Volcano)', current: !!depOf('spark') && st.mode === 'demo', onClick: () => applySpark() },
-    { label:'delete spark', disabled: !depOf('spark'), why:'spark is not deployed', onClick: () => deleteDep('spark') },
-    { label:'reset the demo', onClick: () => { startDemo(); say('reset', 'Demo cluster reset: web x3, api x2, db x1'); } } ] },
-  { label:'Scale web', choices: st => [1, 2, 3, 5, 8].map(n => ({ label:`${n} replica${n === 1 ? '' : 's'}`, current: st.mode === 'demo' && !!depOf('web') && depOf('web').replicas === n, onClick: () => scaleTo('web', n) })) },
-  { label:'Roll out', choices: st => { const w = depOf('web'), a = depOf('api'); return [
-    { label:'web v2 (rolling)', current: !!w && w.version === 'v2', onClick: () => rollout('web', 'v2') },
-    { label:'web back to v1', current: !!w && w.version === 'v1', onClick: () => rollout('web', 'v1') },
-    { label:'api v2', current: !!a && a.version === 'v2', onClick: () => rollout('api', 'v2') } ]; } },
-  { label:'Break', choices: st => [
-    { label:'delete a web pod', onClick: () => deletePod() },
-    { label:'delete the db pod', onClick: () => deletePod('db') },
-    { label:'crash a container', onClick: () => crashPod() },
-    { label:'fail a readiness probe', onClick: () => unreadyPod() },
-    { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
-    { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
-  { label:'Drain', choices: st => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
-  { label:'Send a request', onClick: () => { request(); run(); } },
-  { label:'Cluster', choices: st => [
-    { label:'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
-    { label:'open a kubectl JSON file', onClick: () => loadFile() },
-    { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
-    { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ];
-const btns = document.getElementById('btns');
-const closeChips = () => document.querySelectorAll('.stepwrap.open').forEach(w => w.classList.remove('open'));
-for (const b of BUTTONS){ const wrap = document.createElement('div'); wrap.className = 'stepwrap'; const el = document.createElement('button'); el.className = 'act'; el.innerHTML = `${b.label}${b.choices ? '<span class="car">▾</span>' : ''}`; wrap.appendChild(el); btns.appendChild(wrap);
-  if (!b.choices){ el.onclick = () => { closeChips(); b.onClick(st, ui); invalidate(); }; continue; }
-  const chips = document.createElement('div'); chips.className = 'chips'; wrap.appendChild(chips);
-  el.onclick = e => { e.stopPropagation(); const open = !wrap.classList.contains('open'); closeChips(); if (!open) return; chips.innerHTML = '';
-    for (const c of b.choices(st)){ const ch = document.createElement('button'); ch.className = 'chip' + (c.current ? ' current' : c.disabled ? ' off' : ''); ch.textContent = c.label; if (c.current) ch.setAttribute('aria-pressed', 'true');
-      ch.onclick = ev => { ev.stopPropagation(); closeChips(); if (c.current) return ui.flash(`${c.label} — already set`); if (c.disabled) return ui.flash(c.why || `${c.label} isn't possible right now`); c.onClick(st, ui); invalidate(); }; chips.appendChild(ch); }
-    wrap.classList.add('open'); }; }
-document.addEventListener('click', closeChips);
-const statsEl = document.getElementById('stats'), prevStats = {};
-function drawStats(){ const shown = st.pods.filter(p => !(p.sys && !st.showSys) && p.phase !== 'terminating');
-  const list = [ { label:'Pods ready', value:`${shown.filter(isReady).length}/${shown.length}` },
-    { label:'Nodes', value: st.nodes.every(n => n.ready) ? String(st.nodes.length) : `${st.nodes.filter(n => n.ready).length}/${st.nodes.length}`, small:true },
-    st.nodes.some(n => n.gpus) ? { label:'GPUs', value:`${st.nodes.reduce((a, n) => a + gpuUsed(n), 0)}/${st.nodes.reduce((a, n) => a + (n.gpus || 0), 0)}`, small:true } : null,
-    st.mode === 'live' ? { label: st.live.status === 'error' ? 'Live: error' : st.live.status === 'file' ? 'From file' : 'Live', value: st.live.poll ? `${st.live.poll}s` : '', small:true } : null ].filter(Boolean);
-  const html = list.map(x => `<div class="stat${x.small ? ' small' : ''}"><div class="k">${x.label}</div><div class="v" data-k="${x.label}">${x.value}</div></div>`).join('');
-  if (statsEl._html !== html){ statsEl._html = html; statsEl.innerHTML = html; statsEl.querySelectorAll('.v').forEach(v => { if (prevStats[v.dataset.k] != null && prevStats[v.dataset.k] !== v.textContent) v.classList.add('bump'); prevStats[v.dataset.k] = v.textContent; }); } }
-// switches: See-through (the cases fade over ~.7 s), Labels, Control room
-const html = document.documentElement, xrb = document.getElementById('xrb'), lblb = document.getElementById('lblb'), roomb = document.getElementById('roomb');
-st.xr = 0; st.xrT = 0; if (Q.get('xr') === '1') st.xr = st.xrT = 1;
-const syncSw = () => { xrb.setAttribute('aria-pressed', !!st.xrT); lblb.setAttribute('aria-pressed', !html.classList.contains('nolabels')); roomb.setAttribute('aria-pressed', html.classList.contains('room')); };
-xrb.onclick = () => { st.xrT = st.xrT ? 0 : 1; syncSw(); ui.animate(dt => { const g = Math.sign(st.xrT - st.xr); st.xr = Math.min(1, Math.max(0, st.xr + g*dt/.7)); return st.xr !== st.xrT; }); };
-lblb.onclick = () => { html.classList.toggle('nolabels'); syncSw(); invalidate(); };
-roomb.onclick = () => { html.classList.toggle('room'); syncSw(); if (window.ControlRoom) ControlRoom.shown(html.classList.contains('room')); };
-if (Q.get('labels') === '1') html.classList.remove('nolabels');
-if (Q.get('room') === '1') html.classList.add('room');
-syncSw();
-// colour swatches recolour the crane, the tower, the roofs, the registry wall and the gate
-const palsEl = document.getElementById('pals');
-if (PALS[Q.get('pal')]) st.pal = Q.get('pal');
-for (const [k, p] of Object.entries(PALS)){ const b = document.createElement('button'); b.className = 'sw'; b.title = k; b.style.background = p.l; b.setAttribute('aria-pressed', k === st.pal);
-  b.onclick = () => { st.pal = k; [...palsEl.children].forEach(c => c.setAttribute('aria-pressed', c === b)); html.style.setProperty('--accent', p.l); invalidate(); }; palsEl.appendChild(b); }
-html.style.setProperty('--accent', PALS[st.pal].l);
-document.getElementById('vreset').onclick = () => { spin = false; vsp.setAttribute('aria-pressed', false); camTo(YAW0, PITCH0); };
-vsp.onclick = () => { spin = !spin; vsp.setAttribute('aria-pressed', spin); camAnim++; if (spin) ui.animate(dt => { if (!spin) return false; if (!drag) setCam(YAW + dt*18, PITCH); return true; }); };
-if (Q.has('yaw') || Q.has('pitch')) setCam(+(Q.get('yaw') ?? YAW0), +(Q.get('pitch') ?? PITCH0));
-// testing: ?press=Label@ms,Label>Choice@ms clicks the buttons after load; unknown labels are recorded on <html data-errors>
-const noteErr = m => { html.dataset.errors = (html.dataset.errors || '') + ' ' + m + ';'; };
-const starts = (el, t) => el.textContent.trim().toLowerCase().startsWith(t.trim().toLowerCase());
-if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>');
-  setTimeout(() => { const b = [...btns.querySelectorAll('.act')].find(b => starts(b, label)); if (!b) return noteErr(`no button "${label}"`); b.click(); if (choice == null) return;
-    const c = [...b.parentElement.querySelectorAll('.chip')].find(c => starts(c, choice)); if (c && !c.disabled) c.click(); else noteErr(`no choice "${choice}" in "${label}"`); }, +ms || 0); });
-
-/* ---------- labels: pills in two columns either side of the yard, leaders never crossing; numbered badges on a phone ---------- */
-const NS = 'http://www.w3.org/2000/svg';
-const lblNum = new Map(); let lblSel = 0;
+/* ---------- labels: screen-sized text placed by projection, more of it the closer you are ----------
+   overview: node names and the board's counts; from ~2x: app and version on every container, GPU bands;
+   from ~4x: pod name plates and the board's full rows. Nothing overlaps: the lower priority drops out. */
+const LB = new Map(); let selKey = null;
+const estW = it => { const main = it.text.replace(/<[^>]+>/g, ''), fs = it.cls === 'callout' ? 10 : it.cls === 'node' ? 10.5 : 11, sw = (it.text.match(/<i /g) || []).length*14;
+  return Math.max(main.length*fs*.62 + sw, (it.sub || '').length*9*.62) + 18; };
+const estH = it => (it.lines ? it.lines*14 : 11) + (it.sub ? 13 : 0) + 10;
+function labelItems(){ const items = [], z = ppu(), L1 = z >= 2.2, L2 = z >= 4.4, facing = viewDir(cam.yaw, cam.pitch).x >= 0 ? 1 : -1, notext = html.classList.contains('notext');
+  if (!notext){
+    for (const n of st.nodes){ if (n.joined < 1) continue; items.push({ key: 'n:' + n.name, cls: 'node', text: esc(n.name) + (n.gpus ? ` · GPU x${n.gpus}` : ''), at: [n.x0 + SLD + 5, n.y0 + SLW/2, 0], pri: 8, act: { type:'node', node: n.name } }); }
+    const rows = boardRows(); if (rows.length){ const full = L2 || z >= 3.2 && rows.length <= 2;
+      items.push({ key: 'board', cls: 'board', lines: full ? rows.length : 1, text: full ? rows.map(r => `<i style="background:${r.col}"></i>${r.bad ? '<span style="color:#b3261e">' : ''}${esc(r.text)}${r.bad ? '</span>' : ''}`).join('<br>') : rows.map(r => `<i style="background:${r.col}"></i>${esc(r.text.split(' ')[1] || '')}`).join(' '), at: [38, 56, 27.5], pri: 7, act: { type:'board' } }); }
+    if (L1) for (const p of st.pods){ if (!p.pos || p.sys && !st.showSys || p.alpha < .5 || p.phase === 'scheduled') continue; const n = st.nodes.find(n => n.name === p.node);
+      const covered = n && p.slot && st.crane.carry !== p && !p.drop && n.used.has(slotKey({ c: p.slot.c, r: p.slot.r, t: p.slot.t + 1 }));
+      const at = covered ? [p.pos[0] + (facing > 0 ? PW + .2 : -.2), p.pos[1] + PL/2, p.pos[2] + PH*.62] : [p.pos[0] + PW/2, p.pos[1] + PL/2, p.pos[2] + PH + .4];
+      items.push({ key: 'p:' + p.id, cls: 'pod', col: palOf(p.app).l, text: `${esc(p.app)} ${esc(p.ver)}` + (p.gpu ? `<b>GPU x${p.gpu}</b>` : ''), sub: L2 ? p.name : '', at, up: !covered, pri: covered ? 5 : 6, act: { type:'pod', id: p.id } }); } }
+  if (!html.classList.contains('nolabels')) for (const c of calloutItems()) items.push({ key: 'c:' + c.text, cls: 'callout', text: esc(c.text), at: c.at, on: c.on, lead: true, pri: (st.xr || 0) > .6 ? 6.5 : 4, act: { type:'explain', text: c.text } });   // inside a see-through pod the part names matter more than its own
+  return items; }
+function drawLabels(){ const items = labelItems(), placed = [], want = new Set(), writes = []; let leaders = '';
+  for (const it of items){ const s = toScreen(it.at); it.x = s[0]; it.y = s[1]; it.depth = s[2]; }
+  items.sort((a, b) => b.pri - a.pri || a.depth - b.depth);
+  for (const it of items){ const w = estW(it), h = estH(it); let x = it.x, y = it.y; if (it.lead) y -= 30; else if (it.up) y -= h/2 + 3; else if (it.cls === 'node') y += h/2 + 2; else if (it.cls === 'board') y -= h/2 + 4;
+    x = Math.max(w/2 + 3, Math.min(box.w - w/2 - 3, x)); if (it.x < -40 || it.x > box.w + 40 || it.y < -40 || it.y > box.h + 40) continue;
+    const yard = YARD_MODE(), y0 = h/2 + 3 + (yard ? 46 : 0), y1 = box.h - h/2 - 3 - (yard ? 66 : 0);   // the strip and the toolbar cover the canvas in yard mode
+    if (it.lead) y = Math.max(y0, Math.min(y1, y)); else if (y < y0 - h || y > y1 + h) continue;
+    const r = [x - w/2 - 3, y - h/2 - 3, x + w/2 + 3, y + h/2 + 3]; if (placed.some(q => q[0] < r[2] && q[2] > r[0] && q[1] < r[3] && q[3] > r[1])) continue; placed.push(r); want.add(it.key);
+    let L = LB.get(it.key); if (!L){ const el = document.createElement('button'); el.className = 'lb ' + it.cls; el.type = 'button'; L = { el, html: '', col: '' }; LB.set(it.key, L); lblEl.appendChild(el); requestAnimationFrame(() => el.classList.add('in')); }
+    const hh = it.text + (it.sub ? `<small>${esc(it.sub)}</small>` : ''); L.act = it.act; const el = L.el;
+    writes.push(() => { if (L.html !== hh){ L.html = hh; el.innerHTML = hh; } if (it.col && L.col !== it.col){ L.col = it.col; el.style.setProperty('--c', it.col); }
+      el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`; el.classList.toggle('on', !!it.on); el.classList.toggle('sel', selKey === it.key); if (L.outT){ clearTimeout(L.outT); L.outT = 0; el.classList.remove('out'); } });
+    if (it.lead) leaders += `<path d="M${it.x.toFixed(1)} ${it.y.toFixed(1)}L${x.toFixed(1)} ${(y + h/2).toFixed(1)}"/><circle cx="${it.x.toFixed(1)}" cy="${it.y.toFixed(1)}" r="1.7"/>`; }
+  for (const [key, L] of LB) if (!want.has(key) && !L.outT){ L.el.classList.add('out'); L.outT = setTimeout(() => { L.el.remove(); LB.delete(key); }, 280); }
+  for (const w of writes) w();
+  if (ov._h !== leaders){ ov._h = leaders; ov.innerHTML = leaders; } }
+lblEl.addEventListener('click', e => { const el = e.target.closest('.lb'); if (!el) return; for (const [key, L] of LB) if (L.el === el){ selKey = L.act.type === 'explain' ? key : null; act(L.act); break; } });
+// the see-through callouts, and the plain ones, as before: a world point and a word
 function calloutItems(){ const k = ease(st.xr || 0), c = st.crane, items = [];
   if (k > .6){ const web = st.pods.find(p => p.pos && p.configMap) || st.pods.find(p => p.pos), sec = st.pods.find(p => p.pos && p.secret), pv = st.pods.find(p => p.pos && p.pvc), n0 = st.nodes[0];
     if (web){ const [x, y, z] = web.pos; items.push({ at:[x + 5, y + 5, z + 6], text:'CONTAINER', on: isReady(web) }, { at:[x + 2, y + PL - 2, z + 2.4], text:'POD NETWORK', on: isReady(web) }, { at:[x + 5, y + .6, z + 6], text:'CONFIGMAP', on:false }); }
@@ -703,46 +780,21 @@ function calloutItems(){ const k = ease(st.xr || 0), c = st.crane, items = [];
     items.push({ at:[21, 15, 8], text:'ETCD', on:false }, { at:[26, 17, 19], text:'API SERVER', on: !!c.job || st.pods.some(p => p.phase === 'pending') }, { at:[30, 11, 35], text:'CONTROLLERS', on: st.pods.some(p => p.phase === 'pending' || p.phase === 'terminating') },
       { at:[W - 40, 45, 6], text:'ENDPOINTS', on: st.parcels.length > 0 }, { at:[c.x, c.y, BZ + 2], text:'SCHEDULER', on: !!c.job }); }
   else { const n0 = st.nodes[0], ing = st.ingresses[0], pv = st.pods.find(p => p.pos && p.pvc), p0 = st.pods.find(p => p.pos && p.slot && p.slot.t === 0);
-    if (n0 && n0.joined >= 1) items.push({ at:[n0.x0 + SLD - 3, n0.y0 + SLW/2, SLH], text:'NODE', on:false }, { at:[n0.x0 - 13, n0.y0 + SLW - 10, 13.5], text:'KUBELET', on:false }, { at:[n0.x0 - 2.5, n0.y0 + 3, 15.5], text:'CAPACITY', on:false });
+    if (n0 && n0.joined >= 1) items.push({ at:[n0.x0 + SLD - 3, n0.y0 + 8, SLH], text:'NODE', on:false }, { at:[n0.x0 - 13, n0.y0 + SLW - 10, 13.5], text:'KUBELET', on:false }, { at:[n0.x0 - 2.5, n0.y0 + 3, 15.5], text:'CAPACITY', on:false });
     if (p0) items.push({ at:[p0.pos[0] + PW, p0.pos[1] + PL/2, p0.pos[2] + 5], text:'POD', on: isReady(p0) }, { at:[p0.pos[0] + PW - 2, p0.pos[1] + PL - 2.6, p0.pos[2] + PH + 1], text:'READY LAMP', on: isReady(p0) });
     if (pv) items.push({ at:[pv.pos[0] + 5, pv.pos[1] - 3.2, pv.pos[2] + 9.4], text:'VOLUME', on:false });
     const gn = st.nodes.find(n => n.gpus && n.joined >= 1); if (gn) items.push({ at:[gn.x0 + 3, gn.y0 + 12, SLH + 5], text:'GPU', on: gpuUsed(gn) > 0 });
-    items.push({ at:[18, 18, 56], text:'CONTROL', on:false }, { at:[38, 56, 24], text:'DEPLOYMENTS', on:false }, { at:[14, REG_Y0 + 16, 22], text:'REGISTRY', on: !!c.job }, { at:[c.x, c.y, BZ + 4.5], text:'SCHEDULER', on: !!c.job },
+    items.push({ at:[18, 18, 56], text:'CONTROL', on:false }, { at:[38, 44, 24], text:'DEPLOYMENTS', on:false }, { at:[14, REG_Y0 + 16, 22], text:'REGISTRY', on: !!c.job }, { at:[c.x, c.y, BZ + 4.5], text:'SCHEDULER', on: !!c.job },
       { at:[W - 33, 45, 19], text:'SERVICE', on: st.parcels.length > 0 }, { at:[W - 22, 20, 22.5], text: ing ? 'INGRESS' : 'GATE', on: st.boom > .5 }); }
   return items; }
-const toScreen = (p, r) => { const v = V3(...p).project(camera); return [(v.x + 1)/2*r.width, (1 - v.y)/2*r.height]; };
-let lgdSig = '';
-function drawCallouts(){
-  if (html.classList.contains('nolabels')){ if (ov.childNodes.length) ov.innerHTML = ''; return; }
-  const r = zwrap.getBoundingClientRect(), items = calloutItems(), phone = PHONE();
-  const corners = []; for (const x of [0, W]) for (const y of [0, D]) for (const z of [0, HTOP]) corners.push(toScreen([x, y, z], r));
-  const xmin = Math.min(...corners.map(p => p[0])), xmax = Math.max(...corners.map(p => p[0])), cx = (xmin + xmax)/2;
-  const fs = phone ? 10 : 10, hgt = phone ? 17 : fs*1.8, gap = hgt + 3;
-  const wOf = it => phone ? hgt*(lblNum.get(it.text) > 9 ? 1.3 : 1) : it.text.length*fs*.62 + fs*1.5;
-  for (const it of items) if (!lblNum.has(it.text)) lblNum.set(it.text, lblNum.size + 1);
-  const wMax = Math.max(...items.map(wOf)) + 12, roomL = xmin >= wMax, roomR = r.width - xmax >= wMax;
-  const Lc = [], Rc = [];
-  for (const it of items){ const [X, Y] = toScreen(it.at, r); ((X < cx && roomL) || !roomR ? Lc : Rc).push({ ...it, X, Y }); }
-  // the columns start under the buttons (left) and the stats + switches (right)
-  // the columns start under the buttons (left) and the stats + switches (right); a pill level with the buttons moves right of them
-  const top = { [-1]: fs, [1]: fs }, keep = { [-1]: null, [1]: null }; if (!phone) for (const [sel, side] of [['#btns', -1], ['#stats', 1], ['.vset', 1]]){ const el = document.querySelector(sel); if (!el) continue; const b = el.getBoundingClientRect(), y = b.bottom - r.top + 10;
-    if (y > r.height*.5){ keep[side] = { bottom: y, edge: side < 0 ? b.right - r.left : b.left - r.left }; continue; } if (y > top[side]) top[side] = y + hgt/2; }
-  let s = '';
-  for (const [col, side] of [[Lc, -1], [Rc, 1]]){ col.sort((a, b) => a.Y - b.Y); let y = -1e9; for (const c of col){ c.py = Math.max(c.Y, y + gap, top[side]); y = c.py; }
-    const shift = col.length ? Math.max(0, col.reduce((a, c) => a + c.py - c.Y, 0)/col.length) : 0, room = col.length ? col[0].py - top[side] : 0; for (const c of col) c.py -= Math.min(shift, room);
-    for (const c of col){ const n = lblNum.get(c.text), w = wOf(c); let px = side < 0 ? xmin - 10 - w/2 : xmax + 10 + w/2; px = Math.max(w/2 + 2, Math.min(r.width - w/2 - 2, px));
-      const kp = keep[side]; if (kp && c.py < kp.bottom) px = side < 0 ? Math.max(px, kp.edge + 8 + w/2) : Math.min(px, kp.edge - 8 - w/2);
-      const ex = px - side*w/2;
-      s += `<g class="tag${c.on ? ' on' : ''}${lblSel === n ? ' sel' : ''}" data-n="${n}" data-t="${c.text}"><path d="M${c.X.toFixed(1)} ${c.Y.toFixed(1)}L${(ex - side*4).toFixed(1)} ${c.py.toFixed(1)}L${ex.toFixed(1)} ${c.py.toFixed(1)}" fill="none" stroke="${INK}" stroke-width="${lblSel === n ? 2.4 : 1}"/>`
-        + `<circle cx="${c.X.toFixed(1)}" cy="${c.Y.toFixed(1)}" r="1.4" fill="${INK}"/><rect x="${(px - w/2).toFixed(1)}" y="${(c.py - hgt/2).toFixed(1)}" width="${w.toFixed(1)}" height="${hgt}" rx="${hgt/2}" stroke="${INK}" stroke-width="1.2"${lblSel === n ? ` style="fill:${INK}"` : ''}/>`
-        + `<text x="${px.toFixed(1)}" y="${(c.py + fs*.36).toFixed(1)}" text-anchor="middle"${lblSel === n ? ' style="fill:#fff4d6"' : ''}>${phone ? n : c.text}</text></g>`; } }
-  ov.innerHTML = s;
-  // the legend under the figure on a phone
-  const lg = document.getElementById('lgd'); const sig = phone ? JSON.stringify(items.map(it => [lblNum.get(it.text), it.text, it.on])) + lblSel : '';
-  if (sig !== lgdSig){ lgdSig = sig; lg.classList.toggle('has', phone && items.length > 0);
-    lg.innerHTML = phone ? items.map(it => { const n = lblNum.get(it.text); return `<button data-n="${n}" class="${it.on ? 'on' : ''}${lblSel === n ? ' sel' : ''}"><b>${n}</b><span>${it.text}</span></button>`; }).join('') : ''; }
-}
-document.getElementById('lgd').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; lblSel = lblSel === +b.dataset.n ? 0 : +b.dataset.n; invalidate(); });
+
+/* ---------- the compass: the gate, the tower and the registry around the yard's middle, turning with the camera ---------- */
+const cmp = { N: document.getElementById('cN'), G: document.getElementById('cG'), T: document.getElementById('cT'), R: document.getElementById('cR'), key: '' };
+function drawCompass(){ const { R, U } = basis(cam.yaw, cam.pitch), c = [W/2, D/2];
+  const place = (el, wx, wy, rad) => { const v = V3(wx - c[0], wy - c[1], 0), sx = v.dot(R), sy = -v.dot(U), L = Math.hypot(sx, sy) || 1; el.style.transform = `translate(${(sx/L*rad).toFixed(1)}px,${(sy/L*rad).toFixed(1)}px)`; };
+  const key = cam.yaw.toFixed(1) + '|' + cam.pitch.toFixed(1) + '|' + W + '|' + D; if (key === cmp.key) return; cmp.key = key;
+  place(cmp.G, W - 22, 20, 19.5); place(cmp.T, 18, 18, 19.5); place(cmp.R, 16, REG_Y0 + 40, 19.5);
+  const f = viewDir(YAW0, 0); cmp.N.style.transform = `rotate(${(Math.atan2(-V3(f.x, f.z, 0).dot(U), V3(f.x, f.z, 0).dot(R))*180/Math.PI + 90).toFixed(1)}deg)`; }
 
 /* ---------- mount ---------- */
 const params = q => {
@@ -754,10 +806,15 @@ const params = q => {
   if (q.get('train') === '1') applyTrain();
   if (q.get('spark') === '1') applySpark();
   if (q.has('cordon')){ const n = st.nodes.find(n => n.name === q.get('cordon')); if (n){ n.cordoned = true; n.tape = 1; } } };
+window.yard = { cam, flyTo, frameBox, frameAct, overview, front, follow: setFollow, following: () => follow.on, invalidate, relayout: () => { sizeKey = ''; cam.custom = false; reframe(); }, spin: spinToggle, select: a => { selKey = a && a.type === 'explain' ? 'c:' + a.text : null; invalidate(); }, toScreen, isYard: YARD_MODE, box: () => box };
+Chrome.init(window.yard);
 startDemo(); params(Q); reframe();
+const camParams = Q.has('yaw') || Q.has('pitch');
+if (camParams){ cam.yaw = +(Q.get('yaw') ?? YAW0); cam.pitch = clampP(+(Q.get('pitch') ?? PITCH0)); applyFrame(); } else loadCam();
 if (Q.has('cluster')) watchUrl(Q.get('cluster'), +(Q.get('poll') || 0));
 else if (Q.has('web') || Q.get('v2') === '1' || Q.get('cache') === '1' || Q.get('train') === '1' || Q.get('spark') === '1') run();
 if (window.ControlRoom) ControlRoom.mount(document.getElementById('room'), { st, ui, speed: () => SPEED, run, say });
+if (Q.has('chapter')) setTimeout(() => Chrome.applyChapter(Q.get('chapter'), camParams), 350);
 addEventListener('resize', () => { sizeKey = ''; reframe(); });
-new ResizeObserver(() => { sizeKey = ''; invalidate(); }).observe(zwrap);
+new ResizeObserver(() => { sizeKey = ''; measure(); invalidate(); }).observe(zwrap);
 invalidate();
