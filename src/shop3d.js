@@ -242,7 +242,9 @@ function mkNode(n){
   // the cell's PodCIDR (where its machines' addresses come from) and the routes to the other cells' ranges, painted under the name
   const ni = Math.max(0, st.nodes.indexOf(n)), cidr = k => `10.200.${k}.0/24`, others = st.nodes.filter(m => m !== n).slice(0, 3);
   out.rise.add(decal([c.x1 - 7.1, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2.4, tex(`cidr|${ni}`, 40, 2.4, (g, w, h) => txt(g, `PodCIDR ${cidr(ni)}`, w/2, h/2, 1.7, '#5e5a52'), 12)));
-  if (others.length) out.rise.add(decal([c.x1 - 9.6, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2, tex(`routes|${ni}|${others.map(m => m.name).join(',')}`, 40, 2, (g, w, h) => txt(g, 'ROUTES  ' + others.map(m => `${cidr(st.nodes.indexOf(m))} via ${m.name}`).join('   '), w/2, h/2, 1.15, '#6f6a60', 800), 12)));
+  // the host's routes to the other cells' ranges, one per line, painted on the free strip in front of the fence (the lanes start there)
+  if (others.length){ const lh = 1.6, rh = 1.3 + lh*(others.length + 1); out.rise.add(decal([c.x1 + 1.2 + rh/2, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 36, rh, tex(`routes|${ni}|${others.map(m => m.name).join(',')}`, 36, rh, (g, w, h) => {
+    txt(g, `ROUTES FROM ${n.name.toUpperCase()}`, w/2, .9, 1.2, '#5e5a52'); others.forEach((m, k) => txt(g, `${cidr(st.nodes.indexOf(m))}  via  ${m.name}`, w/2, 2.1 + lh*k + .5, 1.25, '#6f6a60', 800)); }, 12))); }
   const nx = st.nodes[ni + 1]; if (nx && nx.row === n.row) out.rise.add(decal([c.x1 - 9, c.y1 + NGAP/2, .2], [0, 0, 1], [0, -1, 0], 14, 2.6, tex('route', 14, 2.6, (g, w, h) => txt(g, 'ROUTE', w/2, h/2, 2, '#e3c766'), 12)));   // the lane between two cells is the route between their ranges
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
