@@ -954,6 +954,7 @@ window.ControlRoom = { mount, observe: () => { if (cfg) observe(); }, shown: v =
 window.Chrome = (() => {
 const html = document.documentElement, $ = s => document.querySelector(s), esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const Q = new URLSearchParams(location.search);
+const GUIDE = /\/figure\//.test(location.pathname) ? '../guide.html' : 'guide.html';   // the guide sits beside the root figure, one level up from figure/
 let yard = null;
 const isYard = () => html.classList.contains('yard');
 const buzz = ms => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch {} };
@@ -1024,9 +1025,9 @@ function openChapter(){ sheet.classList.remove('open'); chap.classList.add('open
 chapb.onclick = () => chap.classList.contains('open') ? closeSheets() : openChapter();
 // the chapter's prose comes out of the guide itself, so there is one text to keep right
 async function loadChapter(id){ try {
-  const r = await fetch('../index.html', { cache: 'force-cache' }); if (!r.ok) return; const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+  const r = await fetch(GUIDE, { cache: 'force-cache' }); if (!r.ok) return; const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
   const sec = doc.getElementById(id); if (!sec) return; const col = sec.querySelector(':scope > div'); if (!col) return;
-  chap.querySelector('.prose').innerHTML = col.innerHTML + `<a class="more" href="../index.html#${encodeURIComponent(id)}">Back to the guide ↗</a>`; chapb.hidden = false; } catch {} }
+  chap.querySelector('.prose').innerHTML = col.innerHTML + `<a class="more" href="${GUIDE}#${encodeURIComponent(id)}">Back to the guide ↗</a>`; chapb.hidden = false; } catch {} }
 // a camera intent per chapter: frame the thing the chapter is about, or follow the operation it presses
 const CHAPTER = {
   boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 },

@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubeshop: Kubernetes as a job shop</title>
+<meta name="description" content="An interactive guide to Kubernetes drawn as a job shop: pods are machines, nodes are work cells with their own controller, the scheduler is the dispatcher and a binding is a job card through a tube. Point it at your own cluster.">
+<style>
+  :root{--paper:#f2efe7;--ink:#231e16;--muted:#857d6e;--rule:#ddd6c8;--accent:#f4b829;--cream:#fff4d6;--blue:#5a82c6;--mint:#71b693;--tomato:#cf5038}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background-color:var(--paper);color:var(--ink);font:17px/1.6 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .42  0 0 0 0 .39  0 0 0 0 .33  .16 0 0 0 0'/></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>")}
+  code,kbd,.mono,h1,h2,h3,nav,.key,.cap,.chip,.num{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  a{color:inherit}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+  header.hero{padding:56px 0 18px}
+  .hero h1{font-size:clamp(30px,5vw,54px);line-height:1.05;margin:0 0 14px;letter-spacing:-.01em}
+  .hero h1 span{display:inline-block;background:var(--accent);padding:0 .25em;border:2px solid var(--ink);box-shadow:4px 4px 0 var(--ink);transform:rotate(-1.2deg)}
+  .hero p.lead{font-size:clamp(18px,2.2vw,22px);max-width:60ch;margin:0 0 20px}
+  nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 8px;font-size:12.5px}
+  nav.toc a{text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:4px 11px;background:var(--paper)}
+  nav.toc a:hover{background:var(--cream)}
+  .figwrap{position:relative;border:2px solid var(--ink);border-radius:14px;box-shadow:5px 5px 0 var(--ink);background:var(--paper);overflow:hidden}
+  .figwrap iframe{display:block;width:100%;height:720px;border:0;background:var(--paper)}
+  .figwrap.tall iframe{height:1180px}
+  .figwrap .open{position:absolute;right:10px;top:10px;z-index:4;font-size:11.5px;text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:3px 10px;background:var(--cream)}
+  .figwrap .open:hover{background:var(--accent)}
+  .figwrap .poster{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:var(--paper);cursor:pointer;z-index:3}
+  .figwrap .poster b{font:700 15px ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;border:2px solid var(--ink);border-radius:999px;padding:9px 18px;background:var(--accent);box-shadow:3px 3px 0 var(--ink)}
+  .figwrap .poster span{font-size:13px;color:var(--muted)}
+  .figwrap.loaded .poster{display:none}
+  section.ch{display:grid;grid-template-columns:minmax(280px,38fr) minmax(0,62fr);gap:28px;align-items:start;padding:40px 0;border-top:1px solid var(--rule)}
+  section.ch.wide{grid-template-columns:1fr}
+  section.ch > div{min-width:0}
+  .num{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  h2{font-size:clamp(22px,2.6vw,30px);line-height:1.15;margin:0 0 10px;letter-spacing:-.01em}
+  h3{font-size:14px;letter-spacing:.1em;text-transform:uppercase;margin:22px 0 6px;color:var(--muted)}
+  p{margin:0 0 12px}
+  .yard{background:var(--cream);border:1.5px solid var(--ink);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:15.5px}
+  .yard b{font-family:ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;display:block;color:var(--muted);margin-bottom:2px}
+  pre{background:#2b2622;color:#f3ecd8;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;overflow:auto;margin:8px 0 14px;border:1.5px solid var(--ink);box-shadow:3px 3px 0 var(--ink)}
+  pre .c{color:#a8a08f}
+  .try{font-size:14px;color:var(--muted)}
+  .try kbd{font-size:12px;border:1.5px solid var(--ink);border-radius:999px;padding:1px 8px;background:var(--paper);color:var(--ink)}
+  table.key{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0 0}
+  table.key td,table.key th{border-bottom:1px solid var(--rule);padding:7px 8px;text-align:left;vertical-align:top}
+  table.key th{font:700 11.5px ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  table.key td:first-child{font-family:ui-monospace,Menlo,monospace;font-size:13.5px;white-space:nowrap}
+  .sw{display:inline-block;width:12px;height:12px;border:1.5px solid var(--ink);border-radius:3px;vertical-align:-1px;margin-right:6px}
+  footer{padding:36px 0 60px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--muted)}
+  @media (max-width:860px){section.ch{grid-template-columns:1fr;gap:16px;padding:28px 0}.figwrap iframe{height:860px}.figwrap.tall iframe{height:1500px}header.hero{padding:34px 0 10px}}
+</style></head><body>
+<div class="wrap">
+<header class="hero">
+  <h1>Kubernetes, <span>as a job shop</span><br>on a factory floor</h1>
+  <p class="lead">Every Kubernetes idea is drawn here as something you could walk up to: pods are machines running a program, nodes are fenced work cells with their own controller cabinet, the scheduler is the dispatcher in the planning office, and a binding is a job card blown through a pneumatic tube to the cell. Press the buttons and watch the real operations happen, one true step at a time, from bootstrapping an empty shop to a rolling update. Turn it, zoom in, switch on See-through, open the control room to watch the messages behind each move. Then point it at your own cluster.</p>
+  <nav class="toc">
+    <a href="#yard">0 The floor</a><a href="#boot">1 Bootstrap</a><a href="#pods">2 Pods</a><a href="#nodes">3 Nodes</a><a href="#control">4 Control plane</a><a href="#room">5 Control room</a><a href="#apply">6 Apply</a><a href="#scale">7 Scale</a><a href="#rollout">8 Roll out</a><a href="#heal">9 Self-healing</a><a href="#probes">10 Probes</a><a href="#gpu">11 GPUs</a><a href="#gang">12 Gang scheduling</a><a href="#drain">13 Drain</a><a href="#traffic">14 Traffic</a><a href="#live">15 Your cluster</a>
+  </nav>
+</header>
+
+<section class="ch wide" id="yard">
+  <div>
+    <div class="num">Fig. 0 · the whole thing</div>
+    <h2>A cluster is a job shop</h2>
+    <p>Kubernetes borrowed its words from this floor: jobs, scheduling, workers, queues. So nothing has to stretch. It moves like a map: drag to turn it round, pinch or ctrl+wheel to zoom, double-tap to zoom in, two-finger tap to zoom out. Tap a machine, a cell, the office, the crib, the dock, the sorting station or a line on the order board and the camera flies to it and a card opens with its state and the actions that make sense there. <strong>Labels</strong> names the parts as you get closer; <strong>See-through</strong> opens the machines, the cabinets and the office; <strong>Follow</strong> keeps the camera on whatever the job card, the AGV or a part is doing; <strong>Control room</strong> opens the schematic of the control plane. On a phone, <em>Open full screen</em> gives the figure the whole screen with the chapter's text a tap away.</p>
+  </div>
+  <div class="figwrap" data-ch="yard" data-src="figure/shopfloor.html?chapter=yard"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=yard">Open full screen ↗</a><div class="poster"><b>Load the floor</b><span>interactive · real light · turns all the way round</span></div></div>
+  <div>
+    <table class="key">
+      <tr><th>On the floor</th><th>In Kubernetes</th><th>Why it fits</th></tr>
+      <tr><td>A machine running a program</td><td>Pod</td><td>The unit that gets placed and moved as one thing; everything in it (programs, data port, pallet) travels together.</td></tr>
+      <tr><td>Program cartridges in it</td><td>Containers in the pod</td><td>One main cartridge, smaller sidecars beside it, sharing the machine's data port (one IP) and its fixture pallet (volumes).</td></tr>
+      <tr><td>Fenced work cell + controller cabinet</td><td>Node + kubelet</td><td>A machine with room for N jobs and a local controller that starts and watches them; the runtime is its drive unit, kube-proxy its network switch.</td></tr>
+      <tr><td>Tool rack by the cabinet</td><td>The node's image cache</td><td>Crates of every image this cell has pulled before. A second pull of the same image is instant.</td></tr>
+      <tr><td>The cell's AGV</td><td>An image pull</td><td>One trip per pull, one at a time per cell, to the crib or just to the rack. Cells fetch in parallel.</td></tr>
+      <tr><td>Dispatcher's desk in the office</td><td>Scheduler</td><td>Reads each job card without a cell, picks a cell with room, writes the cell's name on it. It never starts a machine; the cell does.</td></tr>
+      <tr><td>Pneumatic tube to every cell</td><td>The watch stream</td><td>Every write the API server commits is blown to every cell watching for it; a binding is a capsule arriving on the cell's job board.</td></tr>
+      <tr><td>Planning office</td><td>Control plane</td><td>The front counter (API server), the ledger cabinet (etcd, three drawers), the dispatcher, the order board (controllers).</td></tr>
+      <tr><td>Order board on the office wall</td><td>Deployments / ReplicaSets</td><td>The orders: web x3 rev1, running 3. The floor is reconciled to the board, never the other way round.</td></tr>
+      <tr><td>Tool crib</td><td>Image registry</td><td>Where images come from: the caged store at the back with a shelf of crates per app.</td></tr>
+      <tr><td>Sorting station on the conveyor</td><td>Service</td><td>A stable name that routes each incoming part to any green-andon machine of that job, round robin.</td></tr>
+      <tr><td>Receiving dock with a hostname sign</td><td>Ingress</td><td>Parts from outside come in by hostname and are sent to a Service.</td></tr>
+      <tr><td>Andon stack: green / amber / red / blue</td><td>Readiness, Pending, failure, completion</td><td>Only green machines get parts. Amber: starting or not ready. Red: crashed. Blue: a Job that finished. Off: terminating.</td></tr>
+      <tr><td>Tape and a MAINTENANCE sign</td><td>Cordon / drain</td><td>The dispatcher sends no new cards to a taped cell; draining also powers down what is in it.</td></tr>
+      <tr><td>Pallet with a tag</td><td>PersistentVolume (claim)</td><td>Storage attached to the machine, outliving any program in it.</td></tr>
+    </table>
+    <p style="margin-top:12px;font-size:14.5px;color:var(--muted)">Colour is the app: <span class="sw" style="background:#76a0e2"></span>web <span class="sw" style="background:#93d3b0"></span>api <span class="sw" style="background:#ef6a4c"></span>db <span class="sw" style="background:#f3a6bb"></span>cache. The swatches under the figure recolour the office, the crib and the dock trim.</p>
+  </div>
+</section>
+
+<section class="ch" id="boot">
+  <div>
+    <div class="num">Fig. 1 · operation</div>
+    <h2>Bootstrapping: an empty shop comes up in order</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Bootstrap</kbd>. The floor empties and the office goes dark. The lights come up in order: the <strong>ledger</strong> drawers first, then the <strong>counter</strong>, then the <strong>dispatcher</strong>'s screen, and the tube pressurises. Each cell then powers on as its controller cabinet joins and its lamp turns green when the cell reports Ready. Only then are the orders posted on the board, the dispatcher starts writing job cards, and the cells start pulling.</div>
+    <p>Nothing in Kubernetes can happen before the API server is serving, and the API server cannot serve before etcd is up: that is the order <code>kubeadm init</code> follows. The scheduler and controllers are just clients of the API server, so they start last and can restart any time.</p>
+    <p>A node joins by starting a kubelet that registers itself with the API server (<code>kubeadm join</code> hands it a bootstrap token and the CA). It is not schedulable until it is Ready, which needs a container runtime and a CNI network plugin running on it. Managed clusters (EKS, GKE, DOKS) do the office for you; the cell half is still this.</p>
+    <pre>kubeadm init --pod-network-cidr=10.244.0.0/16
+kubectl apply -f cni.yaml                     <span class="c"># nodes go Ready once this runs</span>
+kubeadm join 10.0.0.1:6443 --token ... --discovery-token-ca-cert-hash ...
+kubectl get nodes --watch                      <span class="c"># NotReady -> Ready</span>
+kubectl apply -f app/</pre>
+  </div>
+  <div class="figwrap" data-ch="boot" data-src="figure/shopfloor.html?chapter=boot&boot=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=boot&boot=1">Open full screen ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
+</section>
+
+<section class="ch" id="pods">
+  <div>
+    <div class="num">Fig. 2 · see-through</div>
+    <h2>A Pod is a machine, and a machine holds programs</h2>
+    <div class="yard"><b>On the floor</b>Switch on See-through and look inside any machine: one program cartridge per container (the main one large, sidecars small), the data port on the back wall patched to the cell's switch, a laminated setup sheet clipped to the side, a small locked tool cabinet on the floor beside it, and under the whole machine a fixture pallet with a named tag.</div>
+    <p>A Pod is the smallest thing Kubernetes schedules. It is one or more containers that always land on the same node, share one network namespace (one IP, one set of ports: the data port) and can share volumes (the pallet). A tiny pause container holds that namespace open while app containers come and go.</p>
+    <p>Config and secrets are not baked into the image; they are mounted in from ConfigMaps (the setup sheet) and Secrets (the lockbox), so the same image runs in every environment. A PersistentVolumeClaim gives a pod storage that outlives the container (the <code>db</code> machine stands on one).</p>
+    <pre><span class="c"># what is in a pod</span>
+kubectl get pod web-6b8fd-xk2p9 -o yaml
+kubectl describe pod web-6b8fd-xk2p9
+kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
+    <p class="try">Try: tap a machine for its name, cell, programs, restarts and pallet.</p>
+  </div>
+  <div class="figwrap" data-ch="pods" data-src="figure/shopfloor.html?chapter=pods&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=pods&xr=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
+</section>
+
+<section class="ch" id="nodes">
+  <div>
+    <div class="num">Fig. 3 · labels</div>
+    <h2>A Node is a work cell with its own controller</h2>
+    <div class="yard"><b>On the floor</b>Each cell has twelve machine bays and grows a row when it needs more; the gauge on the cabinet shows how full it is. The cabinet at the corner is the <strong>kubelet</strong>. See-through shows what is in it: the runtime <strong>drive unit</strong> and the <strong>kube-proxy switch</strong> with its patch cables to every machine's data port. Next to it the <strong>tool rack</strong> holds a crate for every image this cell has pulled, and the cell's <strong>AGV</strong> waits by the cabinet.</div>
+    <p>A node is a machine, virtual or real. The <strong>kubelet</strong> on it watches the API server for pods bound to it, asks the <strong>container runtime</strong> (containerd, CRI-O) to pull images and start containers, runs the probes, and reports status back. <strong>kube-proxy</strong> programs the node's networking so Service addresses reach pods.</p>
+    <p>Image pulls are the kubelet's, not the scheduler's. By default a kubelet pulls one image at a time (<code>serializeImagePulls</code>), from the registry the first time and from its local image cache after that, and every node does this on its own, so ten nodes pull in parallel while one node queues. Nodes have capacity, too: CPU, memory, pod count. The scheduler only places a pod where its requests fit, which is why the gauge matters and why a full floor leaves cards Pending.</p>
+    <pre>kubectl get nodes -o wide
+kubectl describe node node-a      <span class="c"># capacity, allocated, conditions, Images: (the cache)</span>
+kubectl top node                   <span class="c"># live usage (metrics-server)</span></pre>
+  </div>
+  <div class="figwrap" data-ch="nodes" data-src="figure/shopfloor.html?chapter=nodes&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=nodes&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
+</section>
+
+<section class="ch" id="control">
+  <div>
+    <div class="num">Fig. 4 · see-through, from the office side</div>
+    <h2>The control plane is the planning office</h2>
+    <div class="yard"><b>On the floor</b>The glazed office on the mezzanine. The <strong>counter</strong> by the tube's mouth is the API server. The <strong>ledger cabinet</strong> with three drawers is etcd, one drawer per Raft member. The <strong>dispatcher's desk</strong> is the scheduler. The <strong>order board</strong> on the outside wall lists the Deployments. Nothing on the floor talks to the ledger directly; everything goes over the counter.</div>
+    <p>Everything goes through the API server: <code>kubectl</code>, the kubelets, the controllers. It validates requests and stores the result in etcd, the only stateful part. Nothing else talks to etcd directly.</p>
+    <p>Controllers are loops: each watches one kind of object and nudges the world toward what the object says. The Deployment controller makes ReplicaSets; the ReplicaSet controller makes Pods; the scheduler picks a node for each Pod that has none and writes nothing but <code>spec.nodeName</code>. None of them call each other. They all just watch and write, which is why the cluster keeps working while any one of them restarts.</p>
+    <pre>kubectl get --raw /healthz
+kubectl get events --sort-by=.lastTimestamp
+kubectl get rs                      <span class="c"># the ReplicaSets a Deployment made</span></pre>
+  </div>
+  <div class="figwrap" data-ch="control" data-src="figure/shopfloor.html?chapter=control&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=control&xr=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the office</span></div></div>
+</section>
+
+<section class="ch" id="room">
+  <div>
+    <div class="num">Fig. 5 · the control room</div>
+    <h2>The control room: what the office actually does</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Control room</kbd> (or open the figure with <code>?room=1</code>). A schematic lights up and every floor operation plays through it: the request enters the <strong>API server</strong> pipeline, is written into <strong>etcd</strong> by its Raft leader, the <strong>watch</strong> fans the event out (the tube), and the <strong>controllers</strong>, the <strong>scheduler</strong> and the bound cell's <strong>kubelet</strong> each do their one job and write back. Press <kbd>Scale web ▸ 5 replicas</kbd> and read it top to bottom while the cells pull. Then <kbd>Break ▸ stop an etcd follower</kbd> (nothing changes) and <kbd>Break ▸ stop the etcd leader</kbd> (an election; writes wait, then resume).</div>
+    <p>The API server is a pipeline, and nothing reaches etcd by any other door: <strong>authentication</strong> (client certificates, tokens, OIDC), <strong>authorization</strong> (RBAC), <strong>mutating admission</strong> (defaults, sidecar injection), <strong>validating admission</strong> (policies), <strong>schema validation</strong> against the OpenAPI types, then the write. Every object stored gets a new <code>resourceVersion</code>, and every watcher sees the changes in that order.</p>
+    <p>etcd is a Raft group, usually three members. One is the <strong>leader</strong> for the current <strong>term</strong>. A write is appended to the leader's log, replicated to the followers, <strong>committed</strong> once a quorum (two of three) has acknowledged it, then <strong>applied</strong> to the key-value store, which is where watches stream from. Lose a follower and nothing changes: the leader still has its quorum. Lose the leader and the followers' election timers fire, one asks for votes, the term goes up by one, and for those seconds the API server can serve reads from its watch cache but cannot commit a write; the controllers simply retry.</p>
+    <p>Controllers never call each other. Each keeps an <strong>informer cache</strong> fed by a watch, puts the key of anything that changed on a <strong>work queue</strong>, and <strong>reconciles</strong>: compare what the object asks for with what exists, then write the difference back through the API server. The Deployment controller writes ReplicaSets, the ReplicaSet controller writes Pods, the EndpointSlice controller writes the list of Ready pod addresses that kube-proxy turns into rules. The scheduler is the same shape with a cycle per Pending pod: <strong>filter</strong> out nodes that cannot take it (room, GPUs, cordons and taints, and for a PodGroup the gang's admission), <strong>score</strong> the rest (spread), <strong>bind</strong> by writing <code>spec.nodeName</code>. The kubelet on that node sees the binding, asks the container runtime to pull and start, runs the probes, and writes the status back; nothing in the control plane ever starts a container itself.</p>
+    <pre>kubectl get --raw /healthz?verbose            <span class="c"># the API server's own checks</span>
+kubectl -v=8 scale deploy/web --replicas=5    <span class="c"># the request, the response, its resourceVersion</span>
+kubectl get leases -n kube-system             <span class="c"># controller-manager and scheduler leader election</span>
+kubectl get events --field-selector reason=Scheduled
+ETCDCTL_API=3 etcdctl endpoint status --cluster -w table   <span class="c"># leader, term, raft index per member</span>
+ETCDCTL_API=3 etcdctl member list</pre>
+    <p class="try">Try: scale to 8, then stop the etcd leader while the ReplicaSet is still creating pods, and watch the writes queue at the API server until the new leader is elected.</p>
+  </div>
+  <div class="figwrap tall" data-ch="room" data-src="figure/shopfloor.html?chapter=room&room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=room&room=1&press=Scale>5@900">Open full screen ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
+</section>
+
+<section class="ch" id="apply">
+  <div>
+    <div class="num">Fig. 6 · operation</div>
+    <h2>kubectl apply: posting an order</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Apply ▸ cache x2</kbd>. A new line appears on the order board (cache x2, running 0), two pink crates appear in the crib, and two job cards leave the counter at once through the tube. Each lands on a cell's job board; that cell's AGV drives to the crib (no cell has seen this image yet), comes back with a crate, and the machine powers up: amber andon, then green when the readiness probe passes.</div>
+    <p>You never tell Kubernetes to <em>start</em> a pod. You write down what should exist (a Deployment with two replicas of <code>redis:7</code>) and apply it. The API server stores it; from there it is controllers all the way down: Deployment to ReplicaSet to two Pending Pods, scheduler binds each to a node, and that node's kubelet pulls the image and starts it.</p>
+    <p>This is the reason <code>apply</code> is idempotent: applying the same file twice changes nothing, because the floor already matches the board.</p>
+    <pre><span class="c"># cache.yaml</span>
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cache }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: cache } }
+  template:
+    metadata: { labels: { app: cache } }
+    spec:
+      containers: [{ name: redis, image: redis:7 }]
+
+kubectl apply -f cache.yaml
+kubectl rollout status deploy/cache
+kubectl delete -f cache.yaml        <span class="c"># and the pods go with it</span></pre>
+  </div>
+  <div class="figwrap" data-ch="apply" data-src="figure/shopfloor.html?chapter=apply&press=Apply>cache@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=apply&press=Apply>cache@900">Open full screen ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
+</section>
+
+<section class="ch" id="scale">
+  <div>
+    <div class="num">Fig. 7 · operation</div>
+    <h2>Scale: change the number on the board</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Scale web ▸ 8 replicas</kbd>. The board says web x8, running 3; the ReplicaSet makes five Pending cards; the dispatcher binds all five in a moment, spreading them across cells, and five capsules are in the tube at once. Then the slow part belongs to the cells: each cell pulls one image at a time, but every cell already has <code>web:v1</code> on its rack, so each AGV only reaches to the rack and the machines come up in quick succession, in parallel across the three cells. Scale back to 1 and the newest machines power down, freeing their bays.</div>
+    <p>Scaling only edits <code>spec.replicas</code>. The ReplicaSet controller compares that number with the live pods it owns and creates or deletes the difference. Binding is cheap and fast; what takes time is each node pulling and starting, and that happens on every node independently. Which pods go first when scaling down is a rule, not chance: unscheduled ones, then not-ready ones, then the youngest.</p>
+    <p>A HorizontalPodAutoscaler is just something that edits the same number on your behalf, based on CPU or a custom metric. Node image caches are why a scale-up of a known image is seconds while the first rollout of a new one is minutes: the cache is per node, so every node pays the first pull once.</p>
+    <pre>kubectl scale deploy/web --replicas=8
+kubectl get pods -l app=web -o wide --watch     <span class="c"># Pending -> ContainerCreating -> Running, per node</span>
+kubectl describe node node-a | grep -A20 Images <span class="c"># what the node has cached</span>
+kubectl autoscale deploy/web --min=3 --max=10 --cpu-percent=70</pre>
+    <p class="try">Try: scale to 8, then <kbd>Drain</kbd> a cell and watch where the evicted cards land.</p>
+  </div>
+  <div class="figwrap" data-ch="scale" data-src="figure/shopfloor.html?chapter=scale&press=Scale>8@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=scale&press=Scale>8@900">Open full screen ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
+</section>
+
+<section class="ch" id="rollout">
+  <div>
+    <div class="num">Fig. 8 · operation</div>
+    <h2>Rolling update: one in, one out, and the first pull per cell</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Roll out ▸ web v2</kbd>. The board flips to v2. One card for a v2 machine goes out before any v1 machine stops; the cell that gets it has never pulled v2, so its AGV makes the long trip to the crib, and only when the new machine's andon is green does one v1 machine power down. The next v2 card that lands on a cell that already pulled v2 comes up fast from the rack. Repeat until every web machine is v2: slow on first contact with each cell, quick after.</div>
+    <p>Changing the pod template (a new image tag) makes the Deployment create a <em>second</em> ReplicaSet and shift replicas from old to new under two limits: <code>maxSurge</code> (how many extra pods may exist, here 1) and <code>maxUnavailable</code> (how many may be missing, here 0). The old ReplicaSet is kept at zero so a rollback is just the same dance in reverse. The pace of a rollout is set by the slowest kubelet pull plus the readiness probe, not by the control plane; pre-pulling an image on every node (a DaemonSet that references it) is the usual way to make the first contact free.</p>
+    <pre>kubectl set image deploy/web nginx=nginx:1.28
+kubectl rollout status deploy/web
+kubectl rollout history deploy/web
+kubectl rollout undo deploy/web      <span class="c"># back to the previous ReplicaSet (already cached on every node)</span></pre>
+    <p class="try">Try: <kbd>Roll out ▸ web back to v1</kbd> to watch the undo come up fast from every rack.</p>
+  </div>
+  <div class="figwrap" data-ch="rollout" data-src="figure/shopfloor.html?chapter=rollout&press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=rollout&press=Roll out>web v2@900">Open full screen ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
+</section>
+
+<section class="ch" id="heal">
+  <div>
+    <div class="num">Fig. 9 · operation</div>
+    <h2>Self-healing: the count is the contract</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Break ▸ delete a web pod</kbd>. One machine throws sparks and powers down. The board drops to running 2 for a moment, the ReplicaSet notices, a new card goes through the tube, and a replacement with a new name comes up from the cell's rack. Nobody restarted anything; a new machine was set up because the count was wrong.</div>
+    <p>Pods are cattle: a deleted pod is gone, with its IP and its name. What persists is the ReplicaSet's promise of <em>three</em>. This is why you almost never create bare pods, and why anything that must find pods (a Service, a DNS name) looks them up by label rather than by name.</p>
+    <pre>kubectl delete pod web-6b8fd-xk2p9
+kubectl get pods -l app=web          <span class="c"># a new name appears</span>
+kubectl get events | grep -i replicaset</pre>
+  </div>
+  <div class="figwrap" data-ch="heal" data-src="figure/shopfloor.html?chapter=heal&press=Break>delete@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=heal&press=Break>delete@900">Open full screen ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
+</section>
+
+<section class="ch" id="probes">
+  <div>
+    <div class="num">Fig. 10 · operation</div>
+    <h2>Crash versus not-ready: two different lamps</h2>
+    <div class="yard"><b>On the floor</b><kbd>Break ▸ crash a container</kbd>: sparks and smoke, the andon goes red then amber, and the <em>same</em> machine comes back green with restarts +1 on its card. The kubelet restarted the program in place; the machine kept its name, cell and data port. <kbd>Break ▸ fail a readiness probe</kbd>: the andon goes amber, nothing restarts, and the sorting station skips that machine until it passes again.</div>
+    <p>Probes also chain. In the demo <code>api</code>'s readiness check talks to <code>db</code> and <code>web</code>'s talks to <code>api</code>, so <kbd>Break ▸ delete the db pod</kbd> turns the api andons amber, then the web andons, and parts come back refused until the StatefulSet brings db back and the andons go green again in order. Nothing restarted: readiness just told the truth about who could serve.</p>
+    <p>A <strong>liveness</strong> probe failing means "restart this container". A <strong>readiness</strong> probe failing means "do not send me traffic", and the Service removes the pod from its endpoints until it passes. Mixing them up is the classic mistake: a liveness probe on a slow dependency turns a brownout into a restart storm.</p>
+    <pre>readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 5 }
+livenessProbe:  { httpGet: { path: /livez,   port: 8080 }, failureThreshold: 3 }
+
+kubectl get pods                      <span class="c"># READY 0/1 but STATUS Running: readiness</span>
+kubectl get pods                      <span class="c"># RESTARTS climbing: liveness or a crash</span></pre>
+  </div>
+  <div class="figwrap" data-ch="probes" data-src="figure/shopfloor.html?chapter=probes&press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=probes&press=Break>crash@900,Break>delete the db@3400">Open full screen ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one program, then deletes the db pod</span></div></div>
+</section>
+
+<section class="ch" id="gpu">
+  <div>
+    <div class="num">Fig. 11 · operation</div>
+    <h2>GPUs: resources are real things in real cells</h2>
+    <div class="yard"><b>On the floor</b>node-c has two hydraulic presses along its front margin (green lamps). Press <kbd>Apply ▸ train x3 (1 GPU each)</kbd>: every train machine wears a GPU tag, the dispatcher can only send their cards to node-c, two press lamps turn amber, and the third card stays Pending with the reason on the toast. Delete train and the lamps go green again.</div>
+    <p>A pod asks for resources (<code>requests</code>) and the scheduler only binds it where they fit: CPU and memory on every node, and extended resources such as <code>nvidia.com/gpu</code> only where a device plugin has advertised them. GPUs cannot be shared or overcommitted the way CPU can, so a GPU request is all-or-nothing per device. This is why "Pending" is usually a capacity question, not a bug.</p>
+    <pre>resources:
+  limits: { nvidia.com/gpu: 1 }          <span class="c"># requests == limits for extended resources</span>
+
+kubectl describe node node-c | grep -A3 Allocatable
+kubectl get pods -l app=train            <span class="c"># 2 Running, 1 Pending</span>
+kubectl describe pod train-...           <span class="c"># 0/3 nodes are available: 3 Insufficient nvidia.com/gpu</span></pre>
+  </div>
+  <div class="figwrap" data-ch="gpu" data-src="figure/shopfloor.html?chapter=gpu&train=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gpu&train=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
+</section>
+
+<section class="ch" id="gang">
+  <div>
+    <div class="num">Fig. 12 · operation</div>
+    <h2>Gang scheduling: all of us or none of us</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Apply ▸ spark x4 (gang, Volcano)</kbd>. Four violet cards go Pending together, and only when the dispatcher confirms four free bays at the same moment do four capsules leave the counter at once. Each cell pulls its image at its own pace, and the machines wait with their cards up until the last one has its crate; then a klaxon and the office strobe, and all four start in sync. They run, complete (blue andon), and are not replaced, because a Job is finished work, not a standing count.</div>
+    <p>The default scheduler places pods one at a time, which is wrong for a distributed training or Spark job whose workers wait on each other: three workers placed and one Pending waste three bays forever. A gang scheduler such as <strong>Volcano</strong> (or the scheduler plugins' coscheduling) adds a <code>PodGroup</code> with <code>minMember</code>: the group is admitted only when every member can be bound, then all are bound in one go. The pulls are still each node's own.</p>
+    <pre>apiVersion: scheduling.volcano.sh/v1beta1
+kind: PodGroup
+metadata: { name: spark }
+spec: { minMember: 4 }
+<span class="c"># in the Job's pod template:</span>
+schedulerName: volcano
+annotations: { scheduling.k8s.io/group-name: spark }
+
+kubectl get podgroup spark        <span class="c"># Pending -> Running once all 4 fit</span></pre>
+  </div>
+  <div class="figwrap" data-ch="gang" data-src="figure/shopfloor.html?chapter=gang&spark=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=gang&spark=1">Open full screen ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
+</section>
+
+<section class="ch" id="drain">
+  <div>
+    <div class="num">Fig. 13 · operation</div>
+    <h2>Drain a cell: tape it off and move everything</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Drain ▸ drain node-a</kbd>. Tape goes up around the cell with a MAINTENANCE sign; its machines power down (evicted); the ReplicaSets raise new cards and the dispatcher sends them to the other two cells only, whose racks already hold the images. <kbd>Drain ▸ uncordon node-a</kbd> takes the tape down; nothing moves back until something new is scheduled.</div>
+    <p>Drain is two steps: <em>cordon</em> (mark the node unschedulable) then <em>evict</em> every pod on it, respecting PodDisruptionBudgets so you cannot take out the last replica of something. It is how you patch a kernel or resize a node pool without an outage. DaemonSet pods are ignored because they belong on every node.</p>
+    <pre>kubectl cordon node-a
+kubectl drain node-a --ignore-daemonsets --delete-emptydir-data
+<span class="c"># ... reboot / replace the machine ...</span>
+kubectl uncordon node-a</pre>
+  </div>
+  <div class="figwrap" data-ch="drain" data-src="figure/shopfloor.html?chapter=drain&press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=drain&press=Drain>drain node-a@900">Open full screen ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
+</section>
+
+<section class="ch" id="traffic">
+  <div>
+    <div class="num">Fig. 14 · operation</div>
+    <h2>Services and Ingress: how a part finds a machine</h2>
+    <div class="yard"><b>On the floor</b>Press <kbd>Send a request</kbd>. A part comes in at the receiving dock (shop.example.com, the roller door lifts), rides the conveyor to the sorting station, is routed to one green-andon web machine, round robin, and the finished part comes back out green. Fail a probe first and that machine is skipped; drain everything and the station answers 503.</div>
+    <p>Pods come and go, so nothing talks to a pod's IP. A <strong>Service</strong> is a stable virtual IP and DNS name (<code>web.default.svc</code>) with a label selector; its endpoints are the Ready pods that match, kept current by a controller and wired into every node by kube-proxy. An <strong>Ingress</strong> (or Gateway) is the HTTP front door: hostnames and paths routed to Services, usually terminating TLS.</p>
+    <pre>kubectl get svc web                   <span class="c"># ClusterIP 10.96.0.12  80/TCP</span>
+kubectl get endpointslices -l kubernetes.io/service-name=web
+kubectl get ingress                   <span class="c"># shop.example.com -> web:80</span>
+kubectl port-forward svc/web 8080:80  <span class="c"># try it from your laptop</span></pre>
+  </div>
+  <div class="figwrap" data-ch="traffic" data-src="figure/shopfloor.html?chapter=traffic&press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=traffic&press=Send@900,Send@2400,Send@3900">Open full screen ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
+</section>
+
+<section class="ch" id="live">
+  <div>
+    <div class="num">Fig. 15 · your cluster</div>
+    <h2>Point it at a real cluster</h2>
+    <div class="yard"><b>On the floor</b>Under <kbd>Cluster</kbd> the figure can open a kubectl JSON file or watch a local URL. In that mode it only watches: the operation buttons show the kubectl command instead of acting. New pods arrive as job cards and come up from the rack or the crib, deleted ones power down, a cordon puts the tape up, probes change the andons. System pods (kube-system, DaemonSets) are hidden until you show them.</div>
+    <h3>One snapshot, no server</h3>
+    <pre>kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json > cluster.json
+<span class="c"># open figure/shopfloor.html, Cluster ▸ "open a kubectl JSON file"</span></pre>
+    <h3>Live, refreshed every few seconds</h3>
+    <pre>python3 tools/longshore.py serve --every 5      <span class="c"># opens localhost:8788</span>
+python3 tools/longshore.py serve -n shop --context prod
+<span class="c"># in another terminal:</span>
+kubectl scale deploy/web --replicas=5          <span class="c"># and watch the cards go out</span></pre>
+    <p>The helper only ever runs <code>kubectl get</code>. Each node gets a cell with twelve bays that grows a row at a time if it must; more than three nodes adds rows of cells behind. The app colour comes from the <code>app</code> or <code>app.kubernetes.io/name</code> label, or the ReplicaSet name.</p>
+  </div>
+  <div class="figwrap" data-ch="live" data-src="figure/shopfloor.html?chapter=live&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=live&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
+</section>
+
+<footer>
+  <p>Kubeshop. The figure is one HTML file (<a href="index.html">index.html</a>, also at <a href="figure/shopfloor.html">figure/shopfloor.html</a>) drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>. The earlier draft drew the same cluster as a container terminal: it is still here as <a href="figure/longshore3d.html">the yard</a> (and the <a href="figure/longshore.html">inked yard</a> on the original SVG engine). The source is in <code>src/</code> and builds with <code>./build.sh</code>. The Kubernetes behaviour shown follows the defaults: Deployment rolling updates with maxSurge 1 / maxUnavailable 0, readiness-gated endpoints, spread scheduling, serialised image pulls per node with a per-node image cache.</p>
+</footer>
+</div>
+<script>
+  // each figure loads on demand (they are full pages); the first one when it scrolls near
+  const wraps = [...document.querySelectorAll('.figwrap')], phone = matchMedia('(max-width:860px)').matches;
+  const load = w => { if (w.classList.contains('loaded')) return; const fr = document.createElement('iframe'); fr.src = w.dataset.src; fr.title = 'Longshore figure'; fr.loading = 'lazy'; w.appendChild(fr); w.classList.add('loaded'); };
+  // on a phone the figure gets the whole screen instead of a frame in the page; the chapter's text rides along
+  wraps.forEach(w => { const poster = w.querySelector('.poster'), open = w.querySelector('.open');
+    if (phone){ poster.querySelector('b').textContent = 'Open full screen'; poster.querySelector('span').textContent = 'full screen · tap things to fly to them · the chapter text is one tap away'; poster.addEventListener('click', () => { location.href = open.href; }); }
+    else poster.addEventListener('click', () => load(w)); });
+  if (!phone && 'IntersectionObserver' in window){ const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && wraps.indexOf(e.target) === 0){ load(e.target); io.unobserve(e.target); } }), { rootMargin: '200px' }); wraps.forEach(w => io.observe(w)); }
+</script>
+</body></html>

@@ -16,4 +16,10 @@ for src, out in [('figure/longshore.html', 'figure/longshore.html'), ('src/longs
     page = inline(open(src, encoding='utf-8').read())
     if 'src="sim.js"' in page: raise SystemExit('sim.js not inlined in ' + src)
     open(out, 'w', encoding='utf-8').write(page); print('wrote', out)
+# the root index.html is the shop floor itself, so the site opens on the figure: same page, paths one level up
+root = open('figure/shopfloor.html', encoding='utf-8').read()
+for a, b in [('"./vendor/three.module.js"', '"./figure/vendor/three.module.js"'), ('"./vendor/addons/"', '"./figure/vendor/addons/"'),
+             ('href="longshore3d.html"', 'href="figure/longshore3d.html"'), ('href="longshore.html"', 'href="figure/longshore.html"')]:
+    assert a in root, a; root = root.replace(a, b)
+open('index.html', 'w', encoding='utf-8').write(root); print('wrote index.html (the shop floor at the root)')
 PY

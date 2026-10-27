@@ -1,6 +1,6 @@
-# Longshore
+# Kubeshop
 
-[![The shop floor: a Kubernetes cluster drawn as a job shop](docs/shopfloor.png)](https://smerwin.github.io/longshore/figure/shopfloor.html)
+[![The shop floor: a Kubernetes cluster drawn as a job shop](docs/shopfloor.png)](https://smerwin.github.io/kubeshop/)
 
 An interactive guide to Kubernetes drawn as a job shop, the floor Kubernetes borrowed its words from: pods are machines
 running a program, nodes are fenced work cells with their own controller cabinet (the kubelet), tool rack (the image
@@ -11,15 +11,17 @@ delete / crash / fail a probe, a dependency cascade (web needs api needs db), GP
 Volcano-style PodGroup that starts in sync), drain, send a request. Scheduling is instant; what takes time is each cell
 pulling its image, one at a time per cell and in parallel across cells, slow from the crib and fast from its own rack.
 
-[![Scaling web to 8: job cards through the tube, the cells' AGVs fetching images, machines coming up](docs/scale.gif)](https://smerwin.github.io/longshore/figure/shopfloor.html?press=Scale>8@900)
+[![Scaling web to 8: job cards through the tube, the cells' AGVs fetching images, machines coming up](docs/scale.gif)](https://smerwin.github.io/kubeshop/?press=Scale>8@900)
 
-**Live:** the guide at <https://smerwin.github.io/longshore/> and the figure at
-<https://smerwin.github.io/longshore/figure/shopfloor.html> (GitHub Pages, built from `main`; on a phone add `?yard=1`
-for the full-screen mode). A README can only show pictures of it; click either image to open the real thing. To run
-it locally, serve the folder with any static web server (`python3 -m http.server`) and open `index.html`.
+**Live:** the figure at <https://smerwin.github.io/kubeshop/> and the guide at
+<https://smerwin.github.io/kubeshop/guide.html> (GitHub Pages, built from `main`; on a phone the figure opens full
+screen by itself, `?yard=1` forces it). A README can only show pictures of it; click either image to open the real thing.
+To run it locally, serve the folder with any static web server (`python3 -m http.server`) and open `index.html` (the
+figure) or `guide.html`.
 
-- `index.html` — the guide: sixteen chapters, each with prose, the kubectl commands and the figure preset to that scene.
-- `figure/shopfloor.html` — the figure: the job shop in three.js with real materials and light (an environment map,
+- `index.html` — the figure, so the site opens on it; `guide.html` — the guide: sixteen chapters, each with prose, the
+  kubectl commands and the figure preset to that scene.
+- `figure/shopfloor.html` — the same figure beside the earlier drafts: the job shop in three.js with real materials and light (an environment map,
   ACES tone mapping, soft shadows, emissive andon lamps with a bloom pass, a vignette; bloom and resolution step down on
   a device that cannot keep up). It moves like a map (see [Moving around](#moving-around-the-yard)): tap anything to fly
   to it and act on it, names appear as you get closer, See-through, Labels, Follow, and **Control room**: a schematic that
