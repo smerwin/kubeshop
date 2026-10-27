@@ -20,6 +20,7 @@
   nav.toc a:hover{background:var(--cream)}
   .figwrap{position:relative;border:2px solid var(--ink);border-radius:14px;box-shadow:5px 5px 0 var(--ink);background:var(--paper);overflow:hidden}
   .figwrap iframe{display:block;width:100%;height:720px;border:0;background:var(--paper)}
+  .figwrap.tall iframe{height:1180px}
   .figwrap .open{position:absolute;right:10px;top:10px;z-index:2;font-size:11.5px;text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:3px 10px;background:var(--cream)}
   .figwrap .poster{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:var(--paper);cursor:pointer;z-index:3}
   .figwrap .poster b{font:700 15px ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;border:2px solid var(--ink);border-radius:999px;padding:9px 18px;background:var(--accent);box-shadow:3px 3px 0 var(--ink)}
@@ -44,14 +45,14 @@
   table.key td:first-child{font-family:ui-monospace,Menlo,monospace;font-size:13.5px;white-space:nowrap}
   .sw{display:inline-block;width:12px;height:12px;border:1.5px solid var(--ink);border-radius:3px;vertical-align:-1px;margin-right:6px}
   footer{padding:36px 0 60px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--muted)}
-  @media (max-width:860px){section.ch{grid-template-columns:1fr;gap:16px;padding:28px 0}.figwrap iframe{height:860px}header.hero{padding:34px 0 10px}}
+  @media (max-width:860px){section.ch{grid-template-columns:1fr;gap:16px;padding:28px 0}.figwrap iframe{height:860px}.figwrap.tall iframe{height:1500px}header.hero{padding:34px 0 10px}}
 </style></head><body>
 <div class="wrap">
 <header class="hero">
   <h1>Kubernetes, <span>as a yard</span><br>of shipping containers</h1>
-  <p class="lead">Every Kubernetes idea is drawn here as something you could kick: pods are 20-foot containers, nodes are concrete docks, the scheduler is a gantry crane, the control plane is the harbour tower. Press the buttons and watch the real operations happen, one true step at a time, from bootstrapping an empty cluster to a rolling update. Turn it, zoom in, switch on See-through. Then point it at your own cluster.</p>
+  <p class="lead">Every Kubernetes idea is drawn here as something you could kick: pods are 20-foot containers, nodes are concrete docks, the scheduler is a gantry crane, the control plane is the harbour tower. Press the buttons and watch the real operations happen, one true step at a time, from bootstrapping an empty cluster to a rolling update. Turn it, zoom in, switch on See-through, open the control room to watch the messages behind each move. Then point it at your own cluster.</p>
   <nav class="toc">
-    <a href="#yard">0 The yard</a><a href="#boot">1 Bootstrap</a><a href="#pods">2 Pods</a><a href="#nodes">3 Nodes</a><a href="#control">4 Control plane</a><a href="#apply">5 Apply</a><a href="#scale">6 Scale</a><a href="#rollout">7 Roll out</a><a href="#heal">8 Self-healing</a><a href="#probes">9 Probes</a><a href="#gpu">10 GPUs</a><a href="#gang">11 Gang scheduling</a><a href="#drain">12 Drain</a><a href="#traffic">13 Traffic</a><a href="#live">14 Your cluster</a>
+    <a href="#yard">0 The yard</a><a href="#boot">1 Bootstrap</a><a href="#pods">2 Pods</a><a href="#nodes">3 Nodes</a><a href="#control">4 Control plane</a><a href="#room">5 Control room</a><a href="#apply">6 Apply</a><a href="#scale">7 Scale</a><a href="#rollout">8 Roll out</a><a href="#heal">9 Self-healing</a><a href="#probes">10 Probes</a><a href="#gpu">11 GPUs</a><a href="#gang">12 Gang scheduling</a><a href="#drain">13 Drain</a><a href="#traffic">14 Traffic</a><a href="#live">15 Your cluster</a>
   </nav>
 </header>
 
@@ -59,9 +60,9 @@
   <div>
     <div class="num">Fig. 0 · the whole thing</div>
     <h2>A cluster is a container terminal</h2>
-    <p>Drag to turn it round. Zoom with the wheel (ctrl/cmd) or pinch. <strong>See-through</strong> fades every case so you can see what is inside the containers, the booths and the tower; <strong>Labels</strong> names the parts. Click a container to read its name and status; click a booth to drain or uncordon its node; click the gate to send a request.</p>
+    <p>Drag to turn it round. Zoom with the wheel (ctrl/cmd) or pinch. <strong>See-through</strong> fades every case so you can see what is inside the containers, the booths and the tower; <strong>Labels</strong> names the parts; <strong>Control room</strong> opens the schematic of the control plane under the yard. Click a container to read its name and status; click a booth to drain or uncordon its node; click the gate to send a request.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html"><a class="open" target="_blank" href="figure/longshore.html">Open full size ↗</a><div class="poster"><b>Load the yard</b><span>interactive · hand-inked · turns all the way round</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html"><a class="open" target="_blank" href="figure/longshore3d.html">Open full size ↗</a><div class="poster"><b>Load the yard</b><span>interactive · hand-inked · turns all the way round</span></div></div>
   <div>
     <table class="key">
       <tr><th>In the yard</th><th>In Kubernetes</th><th>Why it fits</th></tr>
@@ -95,7 +96,7 @@ kubeadm join 10.0.0.1:6443 --token ... --discovery-token-ca-cert-hash ...
 kubectl get nodes --watch                      <span class="c"># NotReady -> Ready</span>
 kubectl apply -f app/</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?boot=1"><a class="open" target="_blank" href="figure/longshore.html?boot=1">Open ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?boot=1"><a class="open" target="_blank" href="figure/longshore3d.html?boot=1">Open ↗</a><div class="poster"><b>Load fig. 1</b><span>bootstraps the cluster when it opens</span></div></div>
 </section>
 
 <section class="ch" id="pods">
@@ -111,7 +112,7 @@ kubectl describe pod web-6b8fd-xk2p9
 kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
     <p class="try">Try: click a container for its name, node, container count and restarts.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?xr=1&labels=1&yaw=62&pitch=42"><a class="open" target="_blank" href="figure/longshore.html?xr=1&labels=1&yaw=62&pitch=42">Open ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?xr=1&labels=1&yaw=62&pitch=42"><a class="open" target="_blank" href="figure/longshore3d.html?xr=1&labels=1&yaw=62&pitch=42">Open ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
 </section>
 
 <section class="ch" id="nodes">
@@ -125,7 +126,7 @@ kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
 kubectl describe node node-a      <span class="c"># capacity, allocated, conditions</span>
 kubectl top node                   <span class="c"># live usage (metrics-server)</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?labels=1&yaw=58&pitch=38"><a class="open" target="_blank" href="figure/longshore.html?labels=1&yaw=58&pitch=38">Open ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?labels=1&yaw=58&pitch=38"><a class="open" target="_blank" href="figure/longshore3d.html?labels=1&yaw=58&pitch=38">Open ↗</a><div class="poster"><b>Load fig. 3</b><span>labels on</span></div></div>
 </section>
 
 <section class="ch" id="control">
@@ -139,12 +140,31 @@ kubectl top node                   <span class="c"># live usage (metrics-server)
 kubectl get events --sort-by=.lastTimestamp
 kubectl get rs                      <span class="c"># the ReplicaSets a Deployment made</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?xr=1&labels=1&yaw=18&pitch=36"><a class="open" target="_blank" href="figure/longshore.html?xr=1&labels=1&yaw=18&pitch=36">Open ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the tower</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?xr=1&labels=1&yaw=18&pitch=36"><a class="open" target="_blank" href="figure/longshore3d.html?xr=1&labels=1&yaw=18&pitch=36">Open ↗</a><div class="poster"><b>Load fig. 4</b><span>see-through, labels on, turned toward the tower</span></div></div>
+</section>
+
+<section class="ch" id="room">
+  <div>
+    <div class="num">Fig. 5 · the control room</div>
+    <h2>The control room: what the tower actually does</h2>
+    <div class="yard"><b>In the yard</b>Press <kbd>Control room</kbd> (or open the figure with <code>?room=1</code>). A schematic lights up under the yard and every yard operation plays through it: the request enters the <strong>API server</strong> pipeline, is written into <strong>etcd</strong> by its Raft leader, the <strong>watch</strong> fans the event out, and the <strong>controllers</strong>, the <strong>scheduler</strong> and the bound node's <strong>kubelet</strong> each do their one job and write back. Press <kbd>Scale web ▸ 5 replicas</kbd> and read it top to bottom while the crane works. Then <kbd>Break ▸ stop an etcd follower</kbd> (nothing changes) and <kbd>Break ▸ stop the etcd leader</kbd> (an election; writes wait, then resume).</div>
+    <p>The API server is a pipeline, and nothing reaches etcd by any other door: <strong>authentication</strong> (client certificates, tokens, OIDC), <strong>authorization</strong> (RBAC), <strong>mutating admission</strong> (defaults, sidecar injection), <strong>validating admission</strong> (policies), <strong>schema validation</strong> against the OpenAPI types, then the write. Every object stored gets a new <code>resourceVersion</code>, and every watcher sees the changes in that order.</p>
+    <p>etcd is a Raft group, usually three members. One is the <strong>leader</strong> for the current <strong>term</strong>. A write is appended to the leader's log, replicated to the followers, <strong>committed</strong> once a quorum (two of three) has acknowledged it, then <strong>applied</strong> to the key-value store, which is where watches stream from. Lose a follower and nothing changes: the leader still has its quorum. Lose the leader and the followers' election timers fire, one asks for votes, the term goes up by one, and for those seconds the API server can serve reads from its watch cache but cannot commit a write; the controllers simply retry.</p>
+    <p>Controllers never call each other. Each keeps an <strong>informer cache</strong> fed by a watch, puts the key of anything that changed on a <strong>work queue</strong>, and <strong>reconciles</strong>: compare what the object asks for with what exists, then write the difference back through the API server. The Deployment controller writes ReplicaSets, the ReplicaSet controller writes Pods, the EndpointSlice controller writes the list of Ready pod addresses that kube-proxy turns into rules. The scheduler is the same shape with a cycle per Pending pod: <strong>filter</strong> out nodes that cannot take it (room, GPUs, cordons and taints, and for a PodGroup the gang's admission), <strong>score</strong> the rest (spread), <strong>bind</strong> by writing <code>spec.nodeName</code>. The kubelet on that node sees the binding, asks the container runtime to pull and start, runs the probes, and writes the status back; nothing in the control plane ever starts a container itself.</p>
+    <pre>kubectl get --raw /healthz?verbose            <span class="c"># the API server's own checks</span>
+kubectl -v=8 scale deploy/web --replicas=5    <span class="c"># the request, the response, its resourceVersion</span>
+kubectl get leases -n kube-system             <span class="c"># controller-manager and scheduler leader election</span>
+kubectl get events --field-selector reason=Scheduled
+ETCDCTL_API=3 etcdctl endpoint status --cluster -w table   <span class="c"># leader, term, raft index per member</span>
+ETCDCTL_API=3 etcdctl member list</pre>
+    <p class="try">Try: scale to 8, then stop the etcd leader while the ReplicaSet is still creating pods, and watch the writes queue at the API server until the new leader is elected.</p>
+  </div>
+  <div class="figwrap tall" data-src="figure/longshore3d.html?room=1&press=Scale>5@900"><a class="open" target="_blank" href="figure/longshore3d.html?room=1&press=Scale>5@900">Open ↗</a><div class="poster"><b>Load fig. 5</b><span>control room open, scales web to 5 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="apply">
   <div>
-    <div class="num">Fig. 5 · operation</div>
+    <div class="num">Fig. 6 · operation</div>
     <h2>kubectl apply: wanting something</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Apply ▸ cache x2</kbd>. A new row appears on the board (cache 0/2), two pink containers appear on the registry shelf, and the crane carries them to the nodes with the most room. Amber lamp while the image pulls, green when the readiness probe passes.</div>
     <p>You never tell Kubernetes to <em>start</em> a pod. You write down what should exist (a Deployment with two replicas of <code>redis:7</code>) and apply it. The API server stores it; from there it is controllers all the way down: Deployment to ReplicaSet to two Pending Pods, scheduler binds each to a node, that node's kubelet pulls the image and starts it.</p>
@@ -165,12 +185,12 @@ kubectl apply -f cache.yaml
 kubectl rollout status deploy/cache
 kubectl delete -f cache.yaml        <span class="c"># and the pods go with it</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Apply>cache@900"><a class="open" target="_blank" href="figure/longshore.html?press=Apply>cache@900">Open ↗</a><div class="poster"><b>Load fig. 5</b><span>applies the cache Deployment when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Apply>cache@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Apply>cache@900">Open ↗</a><div class="poster"><b>Load fig. 6</b><span>applies the cache Deployment when it opens</span></div></div>
 </section>
 
 <section class="ch" id="scale">
   <div>
-    <div class="num">Fig. 6 · operation</div>
+    <div class="num">Fig. 7 · operation</div>
     <h2>Scale: change the number on the board</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Scale web ▸ 8 replicas</kbd>. The board says web 3/8; the ReplicaSet makes five Pending pods; the crane delivers them one at a time, spreading them across nodes and stacking when a slab's first tier is full. Scale back to 1 and the newest pods fade out, freeing their slots.</div>
     <p>Scaling only edits <code>spec.replicas</code>. The ReplicaSet controller compares that number with the live pods it owns and creates or deletes the difference. Which pods go first when scaling down is a rule, not chance: unscheduled ones, then not-ready ones, then the youngest.</p>
@@ -180,12 +200,12 @@ kubectl get pods -l app=web -o wide --watch
 kubectl autoscale deploy/web --min=3 --max=10 --cpu-percent=70</pre>
     <p class="try">Try: scale to 8, then <kbd>Drain</kbd> a node and watch where the evicted pods land.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Scale>8@900"><a class="open" target="_blank" href="figure/longshore.html?press=Scale>8@900">Open ↗</a><div class="poster"><b>Load fig. 6</b><span>scales web to 8 when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Scale>8@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Scale>8@900">Open ↗</a><div class="poster"><b>Load fig. 7</b><span>scales web to 8 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="rollout">
   <div>
-    <div class="num">Fig. 7 · operation</div>
+    <div class="num">Fig. 8 · operation</div>
     <h2>Rolling update: one in, one out</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Roll out ▸ web v2</kbd>. The board flips to v2. The crane brings one v2 container (the pale band) before any v1 leaves; only when its lamp is green does one v1 container fade. Repeat until every web box wears the band. The Service never had fewer than three green lamps.</div>
     <p>Changing the pod template (a new image tag) makes the Deployment create a <em>second</em> ReplicaSet and shift replicas from old to new under two limits: <code>maxSurge</code> (how many extra pods may exist, here 1) and <code>maxUnavailable</code> (how many may be missing, here 0). The old ReplicaSet is kept at zero so a rollback is just the same dance in reverse.</p>
@@ -195,12 +215,12 @@ kubectl rollout history deploy/web
 kubectl rollout undo deploy/web      <span class="c"># back to the previous ReplicaSet</span></pre>
     <p class="try">Try: <kbd>Roll out ▸ web back to v1</kbd> to watch the undo.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/longshore.html?press=Roll out>web v2@900">Open ↗</a><div class="poster"><b>Load fig. 7</b><span>rolls web out to v2 when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Roll out>web v2@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Roll out>web v2@900">Open ↗</a><div class="poster"><b>Load fig. 8</b><span>rolls web out to v2 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="heal">
   <div>
-    <div class="num">Fig. 8 · operation</div>
+    <div class="num">Fig. 9 · operation</div>
     <h2>Self-healing: the count is the contract</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Break ▸ delete a web pod</kbd>. One box catches fire and fades. The board drops to web 2/3 for a moment, the ReplicaSet notices, a Pending pod appears, and the crane brings a replacement with a new name. Nobody restarted anything; a new pod was made because the count was wrong.</div>
     <p>Pods are cattle: a deleted pod is gone, with its IP and its name. What persists is the ReplicaSet's promise of <em>three</em>. This is why you almost never create bare pods, and why anything that must find pods (a Service, a DNS name) looks them up by label rather than by name.</p>
@@ -208,12 +228,12 @@ kubectl rollout undo deploy/web      <span class="c"># back to the previous Repl
 kubectl get pods -l app=web          <span class="c"># a new name appears</span>
 kubectl get events | grep -i replicaset</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Break>delete@900"><a class="open" target="_blank" href="figure/longshore.html?press=Break>delete@900">Open ↗</a><div class="poster"><b>Load fig. 8</b><span>deletes a web pod when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Break>delete@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Break>delete@900">Open ↗</a><div class="poster"><b>Load fig. 9</b><span>deletes a web pod when it opens</span></div></div>
 </section>
 
 <section class="ch" id="probes">
   <div>
-    <div class="num">Fig. 9 · operation</div>
+    <div class="num">Fig. 10 · operation</div>
     <h2>Crash versus not-ready: two different lamps</h2>
     <div class="yard"><b>In the yard</b><kbd>Break ▸ crash a container</kbd>: the crate inside flares, the lamp goes red then amber, and the <em>same</em> box comes back green with restarts +1. The kubelet restarted the container in place; the pod kept its name, node and IP. <kbd>Break ▸ fail a readiness probe</kbd>: the lamp goes amber, nothing restarts, and requests skip that box until it passes again.</div>
     <p>Probes also chain. In the demo <code>api</code>'s readiness check talks to <code>db</code> and <code>web</code>'s talks to <code>api</code>, so <kbd>Break ▸ delete the db pod</kbd> turns the api lamps amber, then the web lamps, and requests get a 503 until the StatefulSet brings db back and the lamps go green again in order. Nothing restarted: readiness just told the truth about who could serve.</p>
@@ -224,12 +244,12 @@ livenessProbe:  { httpGet: { path: /livez,   port: 8080 }, failureThreshold: 3 }
 kubectl get pods                      <span class="c"># READY 0/1 but STATUS Running: readiness</span>
 kubectl get pods                      <span class="c"># RESTARTS climbing: liveness or a crash</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/longshore.html?press=Break>crash@900,Break>delete the db@3400">Open ↗</a><div class="poster"><b>Load fig. 9</b><span>crashes one container, then deletes the db pod</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Break>crash@900,Break>delete the db@3400"><a class="open" target="_blank" href="figure/longshore3d.html?press=Break>crash@900,Break>delete the db@3400">Open ↗</a><div class="poster"><b>Load fig. 10</b><span>crashes one container, then deletes the db pod</span></div></div>
 </section>
 
 <section class="ch" id="gpu">
   <div>
-    <div class="num">Fig. 10 · operation</div>
+    <div class="num">Fig. 11 · operation</div>
     <h2>GPUs: resources are real things on real slabs</h2>
     <div class="yard"><b>In the yard</b>node-c has two GPU units bolted to its back margin (green LEDs). Press <kbd>Apply ▸ train x3 (1 GPU each)</kbd>: every train container wears a gold GPU band, the crane can only put them on node-c, two LEDs turn amber, and the third replica stays Pending with the reason on the toast. Delete train and the LEDs go green again.</div>
     <p>A pod asks for resources (<code>requests</code>) and the scheduler only binds it where they fit: CPU and memory on every node, and extended resources such as <code>nvidia.com/gpu</code> only where a device plugin has advertised them. GPUs cannot be shared or overcommitted the way CPU can, so a GPU request is all-or-nothing per device. This is why "Pending" is usually a capacity question, not a bug.</p>
@@ -240,12 +260,12 @@ kubectl describe node node-c | grep -A3 Allocatable
 kubectl get pods -l app=train            <span class="c"># 2 Running, 1 Pending</span>
 kubectl describe pod train-...           <span class="c"># 0/3 nodes are available: 3 Insufficient nvidia.com/gpu</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?train=1&labels=1"><a class="open" target="_blank" href="figure/longshore.html?train=1&labels=1">Open ↗</a><div class="poster"><b>Load fig. 10</b><span>applies train x3 when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?train=1&labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?train=1&labels=1">Open ↗</a><div class="poster"><b>Load fig. 11</b><span>applies train x3 when it opens</span></div></div>
 </section>
 
 <section class="ch" id="gang">
   <div>
-    <div class="num">Fig. 11 · operation</div>
+    <div class="num">Fig. 12 · operation</div>
     <h2>Gang scheduling: all of us or none of us</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Apply ▸ spark x4 (gang, Volcano)</kbd>. Four violet pods go Pending together, and when four slots are free at the same moment they do not queue for the crane at all: the crane parks out of the way and the whole group drops in by parachute, landing at once. They run, complete (blue lamp), and are not replaced, because a Job is finished work, not a standing count.</div>
     <p>The default scheduler places pods one at a time, which is wrong for a distributed training or Spark job whose workers wait on each other: three workers placed and one Pending waste three slots forever. A gang scheduler such as <strong>Volcano</strong> (or the scheduler plugins' coscheduling) adds a <code>PodGroup</code> with <code>minMember</code>: the group is admitted only when every member can be bound, then all are bound in one go.</p>
@@ -259,12 +279,12 @@ annotations: { scheduling.k8s.io/group-name: spark }
 
 kubectl get podgroup spark        <span class="c"># Pending -> Running once all 4 fit</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?spark=1"><a class="open" target="_blank" href="figure/longshore.html?spark=1">Open ↗</a><div class="poster"><b>Load fig. 11</b><span>applies the spark PodGroup when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?spark=1"><a class="open" target="_blank" href="figure/longshore3d.html?spark=1">Open ↗</a><div class="poster"><b>Load fig. 12</b><span>applies the spark PodGroup when it opens</span></div></div>
 </section>
 
 <section class="ch" id="drain">
   <div>
-    <div class="num">Fig. 12 · operation</div>
+    <div class="num">Fig. 13 · operation</div>
     <h2>Drain a node: tape it off and move everything</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Drain ▸ drain node-a</kbd>. Striped tape goes up around the slab with a CORDONED sign; its containers fade (evicted); the ReplicaSets make replacements and the crane places them on the other two slabs only. <kbd>Drain ▸ uncordon node-a</kbd> takes the tape down; nothing moves back until something new is scheduled.</div>
     <p>Drain is two steps: <em>cordon</em> (mark the node unschedulable) then <em>evict</em> every pod on it, respecting PodDisruptionBudgets so you cannot take out the last replica of something. It is how you patch a kernel or resize a node pool without an outage. DaemonSet pods are ignored because they belong on every node.</p>
@@ -273,12 +293,12 @@ kubectl drain node-a --ignore-daemonsets --delete-emptydir-data
 <span class="c"># ... reboot / replace the machine ...</span>
 kubectl uncordon node-a</pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/longshore.html?press=Drain>drain node-a@900">Open ↗</a><div class="poster"><b>Load fig. 12</b><span>drains node-a when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Drain>drain node-a@900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Drain>drain node-a@900">Open ↗</a><div class="poster"><b>Load fig. 13</b><span>drains node-a when it opens</span></div></div>
 </section>
 
 <section class="ch" id="traffic">
   <div>
-    <div class="num">Fig. 13 · operation</div>
+    <div class="num">Fig. 14 · operation</div>
     <h2>Services and Ingress: how a request finds a pod</h2>
     <div class="yard"><b>In the yard</b>Press <kbd>Send a request</kbd>. A bead comes down the lane, the boom lifts at the INGRESS gate (shop.example.com), it stops at the SERVICE kiosk, then runs to one green-lamped web container, round robin, and the green reply comes back out. Fail a probe first and that box is skipped; drain everything and the kiosk answers 503.</div>
     <p>Pods come and go, so nothing talks to a pod's IP. A <strong>Service</strong> is a stable virtual IP and DNS name (<code>web.default.svc</code>) with a label selector; its endpoints are the Ready pods that match, kept current by a controller and wired into every node by kube-proxy. An <strong>Ingress</strong> (or Gateway) is the HTTP front door: hostnames and paths routed to Services, usually terminating TLS.</p>
@@ -287,17 +307,17 @@ kubectl get endpointslices -l kubernetes.io/service-name=web
 kubectl get ingress                   <span class="c"># shop.example.com -> web:80</span>
 kubectl port-forward svc/web 8080:80  <span class="c"># try it from your laptop</span></pre>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/longshore.html?press=Send@900,Send@2400,Send@3900">Open ↗</a><div class="poster"><b>Load fig. 13</b><span>sends three requests when it opens</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?press=Send@900,Send@2400,Send@3900"><a class="open" target="_blank" href="figure/longshore3d.html?press=Send@900,Send@2400,Send@3900">Open ↗</a><div class="poster"><b>Load fig. 14</b><span>sends three requests when it opens</span></div></div>
 </section>
 
 <section class="ch" id="live">
   <div>
-    <div class="num">Fig. 14 · your cluster</div>
+    <div class="num">Fig. 15 · your cluster</div>
     <h2>Point it at a real cluster</h2>
     <div class="yard"><b>In the yard</b>Under <kbd>Cluster</kbd> the figure can open a kubectl JSON file or watch a local URL. In that mode it only watches: the operation buttons show the kubectl command instead of acting. New pods arrive by crane, deleted ones fade, a cordon puts the tape up, probes change the lamps. System pods (kube-system, DaemonSets) are hidden until you show them.</div>
     <h3>One snapshot, no server</h3>
     <pre>kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json > cluster.json
-<span class="c"># open figure/longshore.html, Cluster ▸ "open a kubectl JSON file"</span></pre>
+<span class="c"># open figure/longshore3d.html, Cluster ▸ "open a kubectl JSON file"</span></pre>
     <h3>Live, refreshed every few seconds</h3>
     <pre>python3 tools/longshore.py serve --every 5      <span class="c"># opens localhost:8788</span>
 python3 tools/longshore.py serve -n shop --context prod
@@ -305,11 +325,11 @@ python3 tools/longshore.py serve -n shop --context prod
 kubectl scale deploy/web --replicas=5          <span class="c"># and watch the crane</span></pre>
     <p>The helper only ever runs <code>kubectl get</code>. Each node gets a slab with eighteen slots per three tiers and stacks higher if it must; more than three nodes adds rows of slabs behind. The app colour comes from the <code>app</code> or <code>app.kubernetes.io/name</code> label, or the ReplicaSet name. The newest version of an app wears the pale band.</p>
   </div>
-  <div class="figwrap" data-src="figure/longshore.html?labels=1"><a class="open" target="_blank" href="figure/longshore.html?labels=1">Open ↗</a><div class="poster"><b>Load fig. 14</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
+  <div class="figwrap" data-src="figure/longshore3d.html?labels=1"><a class="open" target="_blank" href="figure/longshore3d.html?labels=1">Open ↗</a><div class="poster"><b>Load fig. 15</b><span>then pick Cluster ▸ open a kubectl JSON file</span></div></div>
 </section>
 
 <footer>
-  <p>Longshore. The figure is one self-contained HTML file (<a href="figure/longshore.html">figure/longshore.html</a>); the source is in <code>src/</code> and builds with <code>./build.sh</code>. Drawn with <a href="https://april-zhu.com/colorfigures" target="_blank" rel="noopener">Colorfigures</a>. The Kubernetes behaviour shown follows the defaults: Deployment rolling updates with maxSurge 1 / maxUnavailable 0, readiness-gated endpoints, spread scheduling.</p>
+  <p>Longshore. The figure is one HTML file (<a href="figure/longshore3d.html">figure/longshore3d.html</a>) drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> in the hand-inked style of <a href="https://april-zhu.com/colorfigures" target="_blank" rel="noopener">Colorfigures</a>; the same yard on the original SVG engine is still here as the <a href="figure/longshore.html">old engine</a>. The source is in <code>src/</code> and builds with <code>./build.sh</code>. The Kubernetes behaviour shown follows the defaults: Deployment rolling updates with maxSurge 1 / maxUnavailable 0, readiness-gated endpoints, spread scheduling.</p>
 </footer>
 </div>
 <script>

@@ -604,15 +604,14 @@ zwrap.addEventListener('pointermove', e => { if (drag || e.pointerType === 'touc
 addEventListener('keydown', e => { const k = { ArrowLeft:[-15, 0], ArrowRight:[15, 0], ArrowUp:[0, 8], ArrowDown:[0, -8] }[e.key]; if (!k || /input|textarea/i.test(e.target.tagName)) return; e.preventDefault(); camTo(YAW + k[0], PITCH + k[1], 260); });
 const two = () => { const [a, b] = [...pts.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x)/2, y: (a.y + b.y)/2 }; };
 function act(a){ if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (p) podInfo(p); } else if (a.type === 'booth'){ const n = st.nodes.find(n => n.name === a.node); if (n) n.cordoned ? uncordon(n) : drain(n); } else { request(); run(); } invalidate(); }
-// zoom: ctrl/cmd + wheel (a plain wheel when the figure is the page), pinch, the chip; the view zooms toward the cursor
-const inFrame = window !== window.top;
+// zoom: ctrl/cmd + wheel (a trackpad pinch arrives the same way), two fingers, the chip; the view zooms toward the cursor
 function zoomAt(k, px, py){ const r = zwrap.getBoundingClientRect(), z2 = Math.min(5, Math.max(1, zoomK*k));
   const ux = (px/r.width - .5)*frame.w, uy = (.5 - py/r.height)*frame.h;   // the cursor in frame units from the centre
   pan[0] += ux*(1/zoomK - 1/z2); pan[1] += uy*(1/zoomK - 1/z2); zoomK = z2; clampPan(); applyFrame(); invalidate();
   document.querySelector('.zchip .zp').textContent = Math.round(zoomK*100) + '%'; }
 function clampPan(){ if (zoomK <= 1.001){ zoomK = 1; pan = [0, 0]; return; } const mx = frame.w*(1 - 1/zoomK)/2, my = frame.h*(1 - 1/zoomK)/2; pan[0] = Math.max(-mx, Math.min(mx, pan[0])); pan[1] = Math.max(-my, Math.min(my, pan[1])); }
 zwrap.addEventListener('wheel', e => { const r = zwrap.getBoundingClientRect();
-  if (e.ctrlKey || e.metaKey || !inFrame){ e.preventDefault(); zoomAt(Math.exp(-Math.max(-50, Math.min(50, e.deltaY))*.006), e.clientX - r.left, e.clientY - r.top); }
+  if (e.ctrlKey || e.metaKey){ e.preventDefault(); zoomAt(Math.exp(-Math.max(-50, Math.min(50, e.deltaY))*.006), e.clientX - r.left, e.clientY - r.top); }
   else if (zoomK > 1){ e.preventDefault(); pan[0] += e.deltaX*frame.w/r.width/zoomK; pan[1] -= e.deltaY*frame.h/r.height/zoomK; clampPan(); applyFrame(); invalidate(); } }, { passive: false });
 document.querySelector('.zchip .zi').onclick = () => { const r = zwrap.getBoundingClientRect(); zoomAt(1.5, r.width/2, r.height/2); };
 document.querySelector('.zchip .zm').onclick = () => { const r = zwrap.getBoundingClientRect(); zoomAt(1/1.5, r.width/2, r.height/2); };

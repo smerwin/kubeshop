@@ -2,12 +2,13 @@
 """Point the Longshore figure at a real cluster (read-only: it only ever runs `kubectl get`).
 
     python3 tools/longshore.py snapshot [-n NAMESPACE] [--context CTX] > cluster.json
-        Writes one snapshot in the yard's format. Open figure/longshore.html, press Cluster > "open a kubectl JSON
+        Writes one snapshot in the yard's format. Open figure/longshore3d.html, press Cluster > "open a kubectl JSON
         file" and pick it. (A raw `kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json` file loads too.)
 
     python3 tools/longshore.py serve [--port 8788] [--every 5] [-n NAMESPACE] [--context CTX]
         Serves the figure and a /cluster.json that is re-read from kubectl every --every seconds, then opens
-        http://localhost:8788/longshore.html?cluster=/cluster.json&poll=5 in your browser. New pods arrive by crane,
+        http://localhost:8788/longshore3d.html?cluster=/cluster.json&poll=5 in your browser (longshore.html is the
+        same yard on the old SVG engine). New pods arrive by crane,
         deleted pods fade, cordons put the tape up: run your kubectl commands in another terminal and watch.
 """
 import argparse, json, os, subprocess, sys, threading, time, webbrowser
@@ -143,7 +144,7 @@ def cmd_serve(args):
         def log_message(self, *a):
             pass
 
-    url = f'http://localhost:{args.port}/longshore.html?cluster=/cluster.json&poll={args.every}'
+    url = f'http://localhost:{args.port}/longshore3d.html?cluster=/cluster.json&poll={args.every}'
     print('Longshore watching', current_context(args), 'at', url)
     if not args.no_open:
         webbrowser.open(url)
