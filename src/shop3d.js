@@ -212,7 +212,7 @@ function mkOffice(){
 }
 /* a row's diverter: the top-of-rack switch, a switch arm on the spine belt where the row's spur leaves it, with the route strip of
    what it has learned from the cells on its row (painted on with static routes; a line per announcement with BGP) */
-const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'peer down' : n.cordoned ? 'withdrawn' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!(n.cut || (bgp && n.cordoned)) }; }); };
+const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'withdrawn (peer down)' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!n.cut }; }); };
 const stripH = Dv => 1.5 + Dv.cells.length*1.05;
 function routeTex(r, Dv){ const bgp = st.net.fabric === 'bgp', lines = stripLines(Dv);
   return tex(`strip|${r}|${bgp}|${lines.map(l => l.text + l.off).join(';')}`, 9, stripH(Dv), (g, w, h) => { rect(g, 0, 0, w, h, '#f4f2ec'); rect(g, 0, 0, w, .95, '#1d1f22'); txt(g, bgp ? `DIVERTER ${r + 1} · ROUTES LEARNED · BGP` : `DIVERTER ${r + 1} · ROUTES · STATIC`, w/2, .5, .5, WHITE);
@@ -483,7 +483,7 @@ function annPath(n){ const cb = cabinet(n), Dv = DIVERTER(n.row), yd = cellEntry
 function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length){ const g = new THREE.Group(); const s = new THREE.Mesh(sphG(.9), own(LAMP.green, { e: 2, r: .3 })); s.castShadow = false; g.add(s); g.add(box(.8, -.1, .6, 1, 2.2, 2.2, own('#2d7bd6', { r: .5 }), { r: .1 })); scene.add(g); Y.ann.push({ g, s }); }
   while (Y.ann.length > st.net.ann.length){ const A = Y.ann.pop(); dispose(A.g); }
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
-  for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cordoned ? 1 : 0) + (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
+  for (const Dv of Y.divs || []){ const key = st.net.fabric + '|' + Dv.Dv.cells.map(n => (n.cut ? 2 : 0)).join(''); if (Dv.key !== key){ Dv.key = key; Dv.stripDecal.material.map = routeTex(Dv.r, Dv.Dv); Dv.stripDecal.material.needsUpdate = true; } setLamp(Dv.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber);
     const f = st.net.flick[Dv.r]; for (const a of Dv.arms){ const on = f && f.lane === a.lane, u = on ? 1 - f.t/.55 : 0; a.g.rotation.y = 1.1*Math.sin(Math.PI*u); setLamp(a.lamp, on ? LAMP.amber : LAMP.green); } }   // the arm swings out across the belt and back
   const Bd = Y.dnsBoard; if (Bd){ const up = dnsUp(), fl = st.net.dns.flash > 0, t = dnsBoardTex(); if (Bd.decal.material.map !== t){ Bd.decal.material.map = t; Bd.decal.material.needsUpdate = true; } setLamp(Bd.lamp, up ? (fl ? LAMP.amber : LAMP.green) : LAMP.red); Bd.decal.material.emissive.set(fl ? '#5a4a18' : '#000000'); }
   // the update tick: a dashed line and a dot from the CoreDNS machine to the board (only while those machines are drawn)

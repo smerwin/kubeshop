@@ -5,10 +5,14 @@
 An interactive guide to Kubernetes drawn as a job shop, the floor Kubernetes borrowed its words from: pods are machines
 running a program, nodes are fenced work cells with their own controller cabinet (the kubelet), tool rack (the image
 cache) and AGV (the pull), the scheduler is the dispatcher in the planning office, a binding is a job card blown through a
-pneumatic tube to the cell along the same belts (the watch stream; one right of way for control and data), a Service is the sorting station on the conveyor and the Ingress is the
-receiving dock. Every button is a real operation played out one true step at a time: bootstrap, apply, scale, roll out,
-delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU scheduling, gang scheduling (a
-Volcano-style PodGroup that starts in sync), drain, send a request, and the cluster's security: the CA as a seal press
+pneumatic tube to the cell along the same belts (the watch stream; one right of way for control and data), a Service is the sorting station on the conveyor (drawn as one place, though the address is really rewritten on the
+caller's own cabinet) and the Ingress is the receiving dock, whose controller proxies straight to a pod. Every button is a real operation played out one true step at a time: bootstrap (a stacked control plane of three), apply, scale (the
+scheduler fits each pod's requests and prefers the node with the most left), roll out (maxSurge and maxUnavailable at their 25%
+defaults), delete (graceful: the replacement is raised while the old pod drains), crash (with the kubelet's CrashLoopBackOff), OOMKill, fail a probe,
+a dependency failing where it really does (web calls api calls db, so a request answers 502; the probes do not chain), a StatefulSet
+that is a StatefulSet (db-0, one at a time, no replacement while the old one is Terminating, its volume attached to one node), GPU
+scheduling, gang scheduling (a Volcano-style PodGroup that starts in sync), drain (one Eviction per pod, a PodDisruptionBudget
+refusing one until a replacement is Ready), send a request, and the cluster's security: the CA as a seal press
 that stamps a badge for every component and every cell (mutual TLS, kubelet CSRs and rotation), a NetworkPolicy as
 gates on the spurs into a job's machines, an inspector at the counter (Pod Security Admission), a forged job card refused
 at authentication, Secrets in a locked drawer, signed crates, the logbook as the audit log. Then the networking: the floor's
@@ -49,12 +53,29 @@ figure) or `guide.html`.
 - `tools/longshore.py` — point the figure at a real cluster (read-only; it only runs `kubectl get`).
 - `demo/cluster.json` — a sample snapshot in the yard's format.
 
+## What the model keeps and what it drops
+
+Kept, on the clock, at the real defaults where there is one: serialised image pulls per node and the per-node image cache (every
+container's image); the scheduler's filter (taints, requests against allocatable cpu, memory and GPUs, the bay count as maxPods) and
+score (least allocated, a preferred anti-affinity for CoreDNS); rolling updates at 25% / 25%; the ReplicaSet's immediate replacement
+of a Terminating pod and the StatefulSet's refusal to make one; a ReadWriteOnce volume attached to one node at a time; a graceful
+delete (deletionTimestamp, endpoints withdrawn, SIGTERM, grace, SIGKILL); CrashLoopBackOff (10 s doubling to 5 min, reset after
+10 min); node-monitor-grace-period 40 s and the 300 s unreachable toleration; drain as cordon plus one Eviction per pod under
+PodDisruptionBudgets; kube-proxy's random endpoint choice on the caller's node; an Ingress controller that proxies to pod IPs from the
+EndpointSlice without DNS or ClusterIP; cluster DNS as a data-plane lookup by the caller, with resolv.conf's 5 s timeout; BGP routes
+that live as long as the session, not the cordon; konnectivity as the control plane's way back in, never the kubelet's way out; a
+kubelet certificate rotated at 80%, and an expired one that nobody fixes but you.
+
+Dropped: actual cpu and memory use (so no node-pressure eviction, no throttling; an OOMKill is a button); topology spread and zones;
+QoS beyond the label on the card; PriorityClasses and preemption; HPA; the eviction API's own timing. The drawing keeps its one
+sorting station and one directory board, and the text on them says where the real thing happens.
+
 ## Your own cluster
 
 One snapshot, no server:
 
 ```bash
-kubectl get nodes,pods,deploy,sts,ds,svc,ingress -A -o json > cluster.json
+kubectl get nodes,pods,deploy,sts,ds,svc,ingress,pdb -A -o json > cluster.json
 # open figure/shopfloor.html, then Cluster ▸ "open a kubectl JSON file"
 ```
 
@@ -115,7 +136,7 @@ All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the c
 `?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
 `?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` / `?netpol=1` (the
 db-from-api NetworkPolicy in force) starting state, `?press=Break>forge@800` / `Break>apply a privileged@800` /
-`Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks, `?press=Break>cut@800` node-b's uplink cut (NotReady after 40 s, eviction after 300 more; `?speed=4` hurries it), `?fabric=bgp` the BGP fabric, `?svc=ebpf` eBPF Service
+`Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks, `?press=Break>cut@800` node-b's uplink cut (NotReady after 40 s, eviction after 300 more; `?speed=4` hurries it; a StatefulSet's pod there stays Terminating until the node returns), `?fabric=bgp` the BGP fabric, `?svc=ebpf` eBPF Service
 addressing, `?mesh=1` the mesh installed, `?canary=10` a 10% canary (installs the mesh), `?managed=1` the managed control plane,
 `?press=Break>stop CoreDNS@800` the directory board blank,
 `?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the trim colour (the office,
@@ -131,7 +152,8 @@ validation, the write), etcd as a three-member Raft group (the leader proposes a
 acknowledges, commit, apply; the watch streams fan out from the applied log; the term is shown), the controllers as loops
 (informer cache, work queue, reconcile, a write back: Deployment, then ReplicaSet, then Pod), the scheduler cycle
 (filter: room, GPU, cordon, gang; score: spread; bind) and the kubelet on the bound node (watch, CRI pull and start,
-probes, status). `Break ▸ stop an etcd follower` changes nothing (the quorum holds); `Break ▸ stop the etcd leader` runs an
+probes, status). The office is a stacked control plane of three nodes (`kubeadm init`, then `kubeadm join --control-plane` twice),
+so the three etcd members are real members. `Break ▸ stop an etcd follower` changes nothing (the quorum holds); `Break ▸ stop the etcd leader` runs an
 election: the term goes up, writes wait at the API server, then go through once a new leader is elected. Every bead wears a
 TLS tag (mutual TLS between components); the controller manager's CA box signs each kubelet's CSR at join and at rotation;
 a forged request dies in red at authentication and a privileged pod at validating admission (Pod Security); the log panel
