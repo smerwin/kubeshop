@@ -26,7 +26,7 @@
   .lb.node{background:#fff;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px}
   .lb.board{text-align:left;border-radius:8px;line-height:1.35;font-size:10.5px} .lb.board i{display:inline-block;width:9px;height:9px;border:1px solid var(--ink);border-radius:2px;vertical-align:-1px;margin-right:4px}
   .lb.callout{font-size:10px;letter-spacing:.06em;padding:5px 9px} .lb.callout.on{background:var(--accent)} .lb.callout.sel{background:var(--ink);color:var(--cream)}
-  html.nolabels .lb.callout{display:none}
+  html.nolabels .lb{display:none}
   html.notext .lb:not(.callout){display:none}
   .actions{position:absolute;top:4px;left:0;display:flex;flex-direction:column;align-items:flex-start;gap:8px;z-index:2;max-width:220px}
   .strip{position:absolute;top:44px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:10px;z-index:2;text-align:right}
@@ -1137,8 +1137,10 @@ const shared = {   // uniforms every BandMaterial shares (one object each, so on
   shadowCol: { value: CHANNEL(SHADOW) }, shadowTexel: { value: 1/1024 } };
 const BAND_VS = `varying vec3 vN; varying vec3 vW; varying vec2 vUv;
 void main(){ vN = normalize(normalMatrix * normal); vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vUv = uv; gl_Position = projectionMatrix * viewMatrix * w; }`;
+// every surface shader writes two targets at once: the colour, and the normal with the object's ink weight for the edge pass
+const GBUF = `\nlayout(location = 0) out highp vec4 pc_fragColor;\n#define gl_FragColor pc_fragColor\nlayout(location = 1) out vec4 gNormal; uniform float inkW;\n`;
 const BAND_FS = `#include <packing>
-varying vec3 vN; varying vec3 vW; varying vec2 vUv;
+varying vec3 vN; varying vec3 vW; varying vec2 vUv; ${GBUF}
 uniform vec3 cl, cm, cd, lightDir, shadowCol; uniform float hi, lo, opacity, receive, hasMap, shadowOn, shadowTexel; uniform sampler2D map, shadowMap, shadowMap2; uniform mat4 shadowVP;
 float ss(float a, float b, float x){ float k = clamp((x - a)/(b - a), 0., 1.); return k*k*(3. - 2.*k); }
 float lit(sampler2D sm, vec3 s){ if (s.x < 0. || s.x > 1. || s.y < 0. || s.y > 1.) return 0.; float z = unpackRGBAToDepth(texture2D(sm, s.xy)); return s.z - .0018 > z ? 1. : 0.; }
@@ -1150,11 +1152,11 @@ void main(){
   if (receive > 0. && shadowOn > 0.){ vec4 sp = shadowVP * vec4(vW, 1.); vec3 s = sp.xyz / sp.w * .5 + .5;
     float sh = 0.; for (int i = -1; i <= 1; i += 2) for (int j = -1; j <= 1; j += 2) sh += lit(shadowMap, s + vec3(float(i), float(j), 0.) * shadowTexel * .5);
     sh = sh * .25; float sh2 = lit(shadowMap2, s) * .45; c = mix(c, shadowCol, max(sh, sh2)); }
-  gl_FragColor = vec4(c, opacity);
+  gl_FragColor = vec4(c, opacity); gNormal = vec4(n*.5 + .5, inkW);
 }`;
 function band(pal, o = {}){
   const t = o.shade === 'tone' ? TONE : TONE_I;
-  const m = new THREE.ShaderMaterial({ vertexShader: BAND_VS, fragmentShader: BAND_FS, uniforms: {
+  const m = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader: BAND_VS, fragmentShader: BAND_FS, uniforms: { inkW: { value: 1 },
     cl: { value: CHANNEL(pal.l) }, cm: { value: CHANNEL(pal.m) }, cd: { value: CHANNEL(pal.d) }, lightDir: { value: o.shade === 'tone' ? SUN : LIN },
     hi: { value: t.hi }, lo: { value: t.lo }, opacity: { value: o.opacity == null ? 1 : o.opacity }, receive: { value: o.receive ? 1 : 0 },
     hasMap: { value: o.map ? 1 : 0 }, map: { value: o.map || null }, ...shared } });
@@ -1164,15 +1166,24 @@ function band(pal, o = {}){
 const setPal = (m, pal) => { m.uniforms.cl.value.set(pal.l); m.uniforms.cm.value.set(pal.m); m.uniforms.cd.value.set(pal.d); m.userData.pal = pal; };
 function setAlpha(mesh, a){   // a mesh (or group): every band / flat material gets opacity a, the ink pass is told too
   mesh.traverse(ob => { if (!ob.isMesh) return; ob.userData.ink = a; for (const m of (Array.isArray(ob.material) ? ob.material : [ob.material])){
-    if (m.uniforms && m.uniforms.opacity){ m.uniforms.opacity.value = a * (m.userData.baseA == null ? 1 : m.userData.baseA); m.transparent = m.uniforms.opacity.value < 1; m.depthWrite = !m.transparent; }
-    else if (m.isMeshBasicMaterial && m.userData.fades !== false){ m.opacity = a * (m.userData.baseA == null ? 1 : m.userData.baseA); m.transparent = m.opacity < 1; m.depthWrite = !m.transparent && !m.userData.decal; } } });
+    if (!m.uniforms || !m.uniforms.opacity) continue; const op = a * (m.userData.baseA == null ? 1 : m.userData.baseA);
+    m.uniforms.opacity.value = op; m.transparent = op < 1; m.depthWrite = !m.userData.noDepth && op > .02; } });
 }
+// a see-through case: drawn as a ghost (no depth, no ink of its own); its edges come from the second edge pass at a lighter weight
+function ghost(mesh, on){ mesh.layers.set(on ? 1 : 0); for (const m of (Array.isArray(mesh.material) ? mesh.material : [mesh.material])) m.depthWrite = !on && m.uniforms.opacity.value > .02; }
 // flat (unshaded) colour: lamps, flames, beads, paint that must not take the tones
-const flat = (hex, o = {}) => { const m = new THREE.MeshBasicMaterial({ color: hex, transparent: o.opacity != null && o.opacity < 1, opacity: o.opacity == null ? 1 : o.opacity, depthWrite: o.depthWrite !== false, side: o.side || THREE.FrontSide, map: o.map || null }); if (o.opacity != null) m.userData.baseA = o.opacity; if (o.map) m.userData.decal = true; return m; };
+const FLAT_FS = `varying vec3 vN; varying vec2 vUv; ${GBUF} uniform vec3 color; uniform float opacity, hasMap; uniform sampler2D map;
+void main(){ vec4 c = vec4(color, opacity); if (hasMap > 0.) c *= texture2D(map, vUv); vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n; gl_FragColor = c; gNormal = vec4(n*.5 + .5, inkW); }`;
+const flat = (hex, o = {}) => { const op = o.opacity == null ? 1 : o.opacity;
+  const m = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader: BAND_VS, fragmentShader: FLAT_FS, uniforms: { inkW: { value: 1 }, color: { value: CHANNEL(hex) }, opacity: { value: op }, hasMap: { value: o.map ? 1 : 0 }, map: { value: o.map || null } },
+    transparent: op < 1, depthWrite: o.depthWrite !== false, side: o.side || THREE.FrontSide });
+  Object.defineProperty(m, 'color', { get: () => m.uniforms.color.value });
+  if (o.opacity != null) m.userData.baseA = o.opacity; if (o.depthWrite === false) m.userData.noDepth = true; return m; };
 // the ink pass sees normals (rgb) and an ink weight (a) per object; a fading pod fades its lines with it
 const EDGE_MAT = new THREE.ShaderMaterial({ uniforms: { inkW: { value: 1 } }, vertexShader: `varying vec3 vN; void main(){ vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
   fragmentShader: `varying vec3 vN; uniform float inkW; void main(){ vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n * .5 + .5, inkW); }` });
-const edgeHook = function(r, s, c, g, material){ if (material === EDGE_MAT){ material.uniforms.inkW.value = this.userData.ink == null ? 1 : this.userData.ink; material.uniformsNeedUpdate = true; } };
+const edgeHook = function(r, s, c, g, material){ const u = material.uniforms; if (!u || !u.inkW) return; const ink = this.userData.ink == null ? 1 : this.userData.ink;
+  u.inkW.value = material === EDGE_MAT || !(this.layers.mask & 10) ? ink : 0; material.uniformsNeedUpdate = true; };
 const DEPTH_MAT = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 
 /* ---------- canvas textures: text, paint, corrugation, glass ---------- */
@@ -1300,7 +1311,7 @@ function mkChute(pm){
 }
 function mkFire(){ const g = new THREE.Group();
   for (const [dy, h] of [[-5, 5], [0, 7.5], [5, 5.5]]){ const f1 = new THREE.Mesh(cylGeo(0, 2.3, h, 7), flat('#ff6a2a')); f1.position.copy(V3(PW/2, PL/2 + dy, PH + h/2)); f1.onBeforeRender = edgeHook; g.add(f1);
-    const f2 = new THREE.Mesh(cylGeo(0, 1.2, h*.6, 7), flat('#ffd23c')); f2.position.copy(V3(PW/2 + .6, PL/2 + dy, PH + h*.3)); f2.layers.set(3); g.add(f2); }
+    const f2 = new THREE.Mesh(cylGeo(0, 1.2, h*.6, 7), flat('#ffd23c', { depthWrite: false })); f2.position.copy(V3(PW/2 + .6, PL/2 + dy, PH + h*.3)); f2.layers.set(3); g.add(f2); }
   for (const [dy, h, r] of [[-3, 10, 2], [2, 13, 2.6], [6, 16, 3]]){ const s = new THREE.Mesh(sphGeo(1, 8), flat('#8a8580', { opacity: .5, depthWrite: false })); s.scale.setScalar(r); s.position.copy(V3(PW/2, PL/2 + dy, PH + h)); s.layers.set(3); g.add(s); }
   return g; }
 
@@ -1540,7 +1551,7 @@ function syncPods(){
     // see-through: the case goes to a ghost over its lit insides
     const a = p.alpha; P.inside.visible = k > 0;
     if (P.alpha !== a || P.k !== k){ P.alpha = a; P.k = k;
-      setAlpha(P.body, a*(1 - .8*k)); P.body.layers.set(k > 0 ? 1 : 0); P.body.userData.ink = k > 0 ? .6*k*a : a;
+      setAlpha(P.body, a*(1 - .8*k)); ghost(P.body, k > 0); P.body.userData.ink = k > 0 ? .6*k*a : a;
       setAlpha(P.lamp, a); if (P.tank) setAlpha(P.tank, a); if (k > 0) setAlpha(P.inside, a*k); }
   }
   for (const [id, P] of Y.pods) if (!seen.has(id)){ dispose(P.g); Y.pods.delete(id); const i = pickables.indexOf(P.body); if (i >= 0) pickables.splice(i, 1); }
@@ -1566,7 +1577,7 @@ function syncStatics(){
   // see-through: tower, booths and kiosk ghost over their insides
   const k = ease(st.xr || 0);
   for (const O of [Y.tower, Y.kiosk, ...Y.nodes.values()]){ if (O.k === k) continue; O.k = k;
-    for (const c of O.cases){ setAlpha(c, 1 - .8*k); c.layers.set(k > 0 ? 1 : 0); c.userData.ink = k > 0 ? .6*k : 1; }
+    for (const c of O.cases){ setAlpha(c, 1 - .8*k); ghost(c, k > 0); c.userData.ink = k > 0 ? .6*k : 1; }
     for (const i of O.insides){ i.visible = k > 0; if (k > 0) setAlpha(i, k); } }
 }
 function syncAll(){ if (staticKey() !== Y.key) rebuildStatic(); syncNodes(); syncPods(); syncRegistry(); syncCrane(); syncStatics(); syncParcels(); }
@@ -1595,12 +1606,14 @@ function reframe(){   // zoom 1 frames the whole yard as seen from the front vie
   const fw = yard ? .9 : phone ? .74 : .64, fh = yard ? .6 : .88;
   const vbW = Math.max(bw/fw, bh/fh/A); frame = { w: vbW, h: vbW*A, ymid: (Math.max(...ys) + Math.min(...ys))/2 };
   if (!cam.custom) cam.focus.copy(overviewFocus());
-  applyFrame(); invalidate();
+  applyFrame(); camMoved = false; invalidate();
 }
 window.reframe = reframe;
 // the whole yard, a little above the middle of the frame (shadows fall downward); only ever offset straight up, so orbiting keeps it centred
 function overviewFocus(){ const f = YARD_MODE() ? .5 : box.w < 560 ? .44 : .42; return V3(W/2, D/2, HTOP/2).add(new THREE.Vector3(0, (frame.ymid + (f - .5)*frame.h)/Math.cos(PITCH0*Math.PI/180), 0)); }
-function applyFrame(){ const w = frame.w/cam.zoom, h = frame.h/cam.zoom;
+let camMoved = false, restT = 0;
+function applyFrame(){ camMoved = true; placeCam(); }
+function placeCam(){ const w = frame.w/cam.zoom, h = frame.h/cam.zoom;
   cam.focus.x = Math.max(-40, Math.min(W + 40, cam.focus.x)); cam.focus.z = Math.max(-40, Math.min(D + 40, cam.focus.z)); cam.focus.y = Math.max(-90, Math.min(HTOP + 90, cam.focus.y));
   camera.left = -w/2; camera.right = w/2; camera.top = h/2; camera.bottom = -h/2; camera.updateProjectionMatrix();
   camera.position.copy(cam.focus).add(viewDir(cam.yaw, cam.pitch).multiplyScalar(1000)); camera.up.set(0, 1, 0); camera.lookAt(cam.focus); camera.updateMatrixWorld(); }
@@ -1671,10 +1684,10 @@ function setFollow(on){ follow.on = !!on; if (on) camAnim++; Chrome.syncSw(); if
 const CAMKEY = 'longshore.cam'; let saveT = 0;
 function saveCam(){ clearTimeout(saveT); saveT = setTimeout(() => { try { sessionStorage.setItem(CAMKEY, JSON.stringify({ yaw: cam.yaw, pitch: cam.pitch, f: cam.focus.toArray(), zoom: cam.zoom, custom: cam.custom, W, D, yard: YARD_MODE() })); } catch {} }, 300); }
 function loadCam(){ try { const s = JSON.parse(sessionStorage.getItem(CAMKEY)); if (!s || s.W !== W || s.D !== D) return false; cam.yaw = s.yaw; cam.pitch = s.pitch;
-  if (s.custom && s.yard === YARD_MODE()){ cam.custom = true; cam.focus.fromArray(s.f); cam.zoom = s.zoom; } applyFrame(); return true; } catch { return false; } }
+  if (s.custom && s.yard === YARD_MODE()){ cam.custom = true; cam.focus.fromArray(s.f); cam.zoom = s.zoom; } applyFrame(); camMoved = false; return true; } catch { return false; } }
 
 /* ---------- the post pass: ink from depth and normals, wobble, grain ---------- */
-let colRT, edgeRT, ghostRT, shadowRT, shadowRT2, sizeKey = '';
+let shadowRT, shadowRT2, sizeKey = '';
 const shadowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3000);
 const quadScene = new THREE.Scene(), quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const noiseT = noiseTex(64, true), grainT = noiseTex(256, false), blotT = noiseTex(32, true);
@@ -1687,8 +1700,8 @@ const POST = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, tra
   // silhouettes from depth jumps (heavy), creases from normal turns (thin); the weight is the nearer object's ink
   void edges(sampler2D tn, sampler2D td, vec2 uv, float rS, float rC, out float sil, out float cre){
     vec4 n0 = texture2D(tn, uv); float d0 = texture2D(td, uv).r; vec3 nn0 = n0.rgb*2. - 1.; float gz = 1. - abs(nn0.z);
-    float thr = (1.6 + 9.0*gz*gz) / zRange; sil = 0.; cre = 0.;
-    for (int i = 0; i < 8; i++){ float a = float(i)*0.7854; vec2 o = vec2(cos(a), sin(a));
+    float thr = (1.6 + 9.0*gz*gz) / zRange; sil = 0.; cre = 0.; int n = quality > .5 ? 8 : 4;
+    for (int i = 0; i < 8; i++){ if (i >= n) break; float a = float(i)*6.2832/float(n); vec2 o = vec2(cos(a), sin(a));
       vec2 u = uv + o*rS*dpr/res; float di = texture2D(td, u).r; vec4 ni = texture2D(tn, u);
       float w = d0 <= di ? n0.a : ni.a; float dd = abs(d0 - di); sil = max(sil, w*smoothstep(thr*.6, thr*1.4, dd));
       if (i < 4){ vec2 u2 = uv + o*rC*dpr/res; vec4 nj = texture2D(tn, u2); vec3 nnj = nj.rgb*2. - 1.; float dj = texture2D(td, u2).r;
@@ -1706,19 +1719,33 @@ const POST = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, tra
     vec3 rgb = col.rgb*grain*(1. - k) + ink*k; float a = col.a*(1. - k) + k;
     gl_FragColor = vec4(rgb, a);
   }` });
-quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), POST));
-let fastMode = false;   // while a finger moves the view: pixel ratio 1 and no ink pass, restored at rest
-function ensureTargets(){
-  const dpr = fastMode ? 1 : DPR(), w = Math.max(2, Math.round(box.w*dpr)), h = Math.max(2, Math.round(box.h*dpr)), key = w + 'x' + h + (fastMode ? 'f' : '');
-  if (key === sizeKey) return; sizeKey = key;
-  renderer.setPixelRatio(1); renderer.setSize(w, h, false);
-  for (const t of [colRT, edgeRT, ghostRT]) if (t) t.dispose(); colRT = edgeRT = ghostRT = null;
-  if (!fastMode){ colRT = new THREE.WebGLRenderTarget(w, h, { samples: COARSE ? 2 : 4, depthBuffer: true });
-    const mkEdge = () => { const t = new THREE.WebGLRenderTarget(w, h); t.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType); t.depthTexture.format = THREE.DepthFormat; return t; };
-    edgeRT = mkEdge(); ghostRT = mkEdge();
-    POST.uniforms.res.value.set(w, h); POST.uniforms.dpr.value = dpr; POST.uniforms.zRange.value = camera.far - camera.near;
-    POST.uniforms.tCol.value = colRT.texture; POST.uniforms.tN.value = edgeRT.texture; POST.uniforms.tD.value = edgeRT.depthTexture; POST.uniforms.tN2.value = ghostRT.texture; POST.uniforms.tD2.value = ghostRT.depthTexture; }
+const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), POST); quadScene.add(quad);
+const BLIT = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, transparent: true, blending: THREE.NoBlending, uniforms: { t: { value: null } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`, fragmentShader: `varying vec2 vUv; uniform sampler2D t; void main(){ gl_FragColor = texture2D(t, vUv); }` });
+/* two sets of targets: the full-size multisampled one for a frame at rest, and a smaller one for frames while the camera
+   moves (the same ink, computed on fewer pixels and stretched back with linear filtering, so the lines never drop out).
+   The motion scale follows the frame interval: a phone that drops frames gets a smaller buffer, a fast one a sharper view. */
+const RT = { full: null, motion: null, motionScale: 0 };
+const perf = { scale: COARSE ? .7 : .85, lo: .6, hi: COARSE ? .8 : 1, lastT: 0, slow: 0, fast: 0 };
+function perfTick(now){ if (perf.lastT){ const dt = now - perf.lastT;
+    if (dt > 21){ perf.slow++; perf.fast = 0; } else if (dt < 13){ perf.fast++; perf.slow = Math.max(0, perf.slow - 1); }
+    if (perf.slow >= 4){ perf.scale = Math.max(perf.lo, +(perf.scale - .05).toFixed(2)); perf.slow = 0; perf.fast = 0; }
+    else if (perf.fast >= 40){ perf.scale = Math.min(perf.hi, +(perf.scale + .05).toFixed(2)); perf.fast = 0; } }
+  perf.lastT = now; }
+function mkSet(w, h, samples){
+  const rt = new THREE.WebGLRenderTarget(w, h, { count: 2, samples, depthBuffer: true }); rt.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType); rt.depthTexture.format = THREE.DepthFormat;
+  const ghost = new THREE.WebGLRenderTarget(w, h); ghost.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType); ghost.depthTexture.format = THREE.DepthFormat;
+  return { rt, ghost, ink: samples ? null : new THREE.WebGLRenderTarget(w, h), w, h }; }
+const disposeSet = S => { if (!S) return; S.rt.dispose(); S.ghost.dispose(); if (S.ink) S.ink.dispose(); };
+function ensureTargets(moving){
+  const dpr = DPR(), w = Math.max(2, Math.round(box.w*dpr)), h = Math.max(2, Math.round(box.h*dpr)), key = w + 'x' + h;
+  if (key !== sizeKey){ sizeKey = key; renderer.setPixelRatio(1); renderer.setSize(w, h, false); disposeSet(RT.full); RT.full = mkSet(w, h, COARSE ? 2 : 4); disposeSet(RT.motion); RT.motion = null; }
+  if (moving && (!RT.motion || RT.motionScale !== perf.scale)){ disposeSet(RT.motion); RT.motion = mkSet(Math.max(2, Math.round(w*perf.scale)), Math.max(2, Math.round(h*perf.scale)), 0); RT.motionScale = perf.scale; }
   if (!shadowRT){ const S = COARSE ? 1024 : 2048; shadowRT = new THREE.WebGLRenderTarget(S, S); shadowRT2 = new THREE.WebGLRenderTarget(S/2, S/2); shared.shadowMap.value = shadowRT.texture; shared.shadowMap2.value = shadowRT2.texture; shared.shadowTexel.value = 1/S; }
+  const S = moving ? RT.motion : RT.full, u = POST.uniforms;
+  u.res.value.set(S.w, S.h); u.dpr.value = dpr*(moving ? perf.scale : 1); u.zRange.value = camera.far - camera.near; u.quality.value = moving ? 0 : 1;
+  u.tCol.value = S.rt.textures[0]; u.tN.value = S.rt.textures[1]; u.tD.value = S.rt.depthTexture; u.tN2.value = S.ghost.texture; u.tD2.value = S.ghost.depthTexture;
+  return S;
 }
 // the shadow light: toward the lower left of the screen, turning with the viewer's yaw only (never with the pitch)
 function placeShadowCam(){
@@ -1730,24 +1757,22 @@ function placeShadowCam(){
   shadowCam.left = x0; shadowCam.right = x1; shadowCam.top = y1; shadowCam.bottom = y0; shadowCam.near = Math.max(1, z0 - 10); shadowCam.far = z1 + 10; shadowCam.updateProjectionMatrix();
   shared.shadowVP.value.multiplyMatrices(shadowCam.projectionMatrix, shadowCam.matrixWorldInverse);
 }
-let shadowYaw = null;
-function render(){
-  ensureTargets(); applyFrame();
+function render(moving){
+  const S = ensureTargets(moving); placeCam();
   const k = ease(st.xr || 0);
-  // shadows: everything solid into one map, the crane into a lighter one (they only change with the yaw and the scene)
+  // shadows: everything solid into one map, the crane into a lighter one
   scene.overrideMaterial = DEPTH_MAT;
   placeShadowCam();
   shadowCam.layers.set(0); shadowCam.layers.enable(1); renderer.setRenderTarget(shadowRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, shadowCam);
   shadowCam.layers.set(2); renderer.setRenderTarget(shadowRT2); renderer.clear(); renderer.render(scene, shadowCam);
-  if (fastMode){ scene.overrideMaterial = null; camera.layers.enableAll(); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, camera); return; }
-  // normals + ink weight (and depth) of the inked things; the ghost cases apart
-  scene.overrideMaterial = EDGE_MAT; renderer.setClearColor(0x000000, 0);
-  camera.layers.set(0); camera.layers.enable(2); renderer.setRenderTarget(edgeRT); renderer.clear(); renderer.render(scene, camera);
-  if (k > 0){ camera.layers.set(1); renderer.setRenderTarget(ghostRT); renderer.clear(); renderer.render(scene, camera); }
-  // colour
-  scene.overrideMaterial = null; camera.layers.enableAll(); renderer.setRenderTarget(colRT); renderer.clear(); renderer.render(scene, camera);
-  // composite to the page
-  POST.uniforms.ghost.value = .6*k; renderer.setRenderTarget(null); renderer.clear(); renderer.render(quadScene, quadCam);
+  // one draw of the scene: colour, normals + ink weight, depth
+  scene.overrideMaterial = null; renderer.setClearColor(0x000000, 0); camera.layers.enableAll(); renderer.setRenderTarget(S.rt); renderer.clear(); renderer.render(scene, camera);
+  // the ghost cases' edges apart, lighter
+  if (k > 0){ scene.overrideMaterial = EDGE_MAT; camera.layers.set(1); renderer.setRenderTarget(S.ghost); renderer.clear(); renderer.render(scene, camera); scene.overrideMaterial = null; }
+  // composite: at rest straight to the page; in motion into the small buffer, then stretched to the page
+  POST.uniforms.ghost.value = .6*k; quad.material = POST;
+  if (moving){ renderer.setRenderTarget(S.ink); renderer.clear(); renderer.render(quadScene, quadCam); quad.material = BLIT; BLIT.uniforms.t.value = S.ink.texture; }
+  renderer.setRenderTarget(null); renderer.clear(); renderer.render(quadScene, quadCam);
 }
 
 /* ---------- one clock: simulation steps, camera moves, drawing on demand ---------- */
@@ -1757,9 +1782,11 @@ const frameFn = () => { if (!driving) return; driving = false; clearTimeout(fbT)
   const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - lastT)/1000)); lastT = now;
   for (const s of [...steps]) if (s(dt) === false) steps.delete(s);
   if (follow.on && steps.size) followTick(dt);
-  if (steps.size || dirty){ dirty = false; const t0 = performance.now(); syncAll(); const t1 = performance.now(); render(); const t2 = performance.now();
+  if (steps.size || dirty){ dirty = false; const moving = camMoved; camMoved = false; if (moving) perfTick(now); else perf.lastT = 0;
+    const t0 = performance.now(); syncAll(); const t1 = performance.now(); render(moving); const t2 = performance.now();
     Chrome.tick(); drawLabels(); drawCompass(); if (window.ControlRoom) ControlRoom.observe();
-    window.__ft = { sync: t1 - t0, render: t2 - t1, post: performance.now() - t2, calls: renderer.info.render.calls, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures, frames: (window.__ft ? window.__ft.frames : 0) + 1 }; }
+    clearTimeout(restT); if (moving) restT = setTimeout(invalidate, 90);
+    window.__ft = { sync: t1 - t0, render: t2 - t1, post: performance.now() - t2, moving, scale: moving ? perf.scale : 1, calls: renderer.info.render.calls, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures, frames: (window.__ft ? window.__ft.frames : 0) + 1 }; }
   if (steps.size) drive(); };
 const drive = () => { if (driving) return; driving = true; requestAnimationFrame(frameFn); fbT = setTimeout(frameFn, 60); };
 function invalidate(){ dirty = true; drive(); }
@@ -1781,7 +1808,6 @@ function pick(e){ const [px, py] = evPos(e); raycaster.setFromCamera(new THREE.V
   return a; }
 const release = () => { if (follow.on) setFollow(false); spinOff(); camAnim++; };
 function spinOff(){ if (spin){ spin = false; Chrome.spinOff(); } }
-function fast(on){ if (!COARSE) return; if (fastMode === on) return; fastMode = on; sizeKey = ''; invalidate(); }
 zwrap.addEventListener('contextmenu', e => e.preventDefault());
 zwrap.addEventListener('pointerdown', e => { if (e.target.closest('.zchip, .lb, .card, .compass, .toast')) return; if (e.button > 2) return;
   measure(); P.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { zwrap.setPointerCapture(e.pointerId); } catch {}
@@ -1794,12 +1820,12 @@ zwrap.addEventListener('pointermove', e => {
   P.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (!ges) return;
   if (ges.type === 'pinch'){ if (P.size < 2) return; const t = two();
     if (!ges.moved){ if (Math.hypot(t.x - ges.x, t.y - ges.y) < 6 && Math.abs(t.d - ges.d) < 6) return; ges.moved = true; release(); }
-    panBy(t.x - ges.x, t.y - ges.y); zoomAt(t.d/Math.max(1, ges.d), t.x - box.left, t.y - box.top); ges.x = t.x; ges.y = t.y; ges.d = t.d; fast(true); return; }
+    panBy(t.x - ges.x, t.y - ges.y); zoomAt(t.d/Math.max(1, ges.d), t.x - box.left, t.y - box.top); ges.x = t.x; ges.y = t.y; ges.d = t.d; return; }
   if (!ges.moved){ if (Math.hypot(e.clientX - ges.x0, e.clientY - ges.y0) < 5) return; ges.moved = true; release(); zwrap.classList.add('drag'); }
   const dx = e.clientX - ges.x, dy = e.clientY - ges.y;
   if (ges.type === 'pan') panBy(dx, dy);
   else { const k = 300/box.w; cam.yaw += dx*.55*k; cam.pitch = clampP(cam.pitch + dy*.35*k); ges.s.push({ t: performance.now(), yaw: cam.yaw, pitch: cam.pitch }); if (ges.s.length > 10) ges.s.shift(); touched(); }
-  ges.x = e.clientX; ges.y = e.clientY; fast(true); });
+  ges.x = e.clientX; ges.y = e.clientY; });
 const endPointer = e => { if (!P.has(e.pointerId)) return; P.delete(e.pointerId); zwrap.classList.remove('drag');
   if (ges && ges.type === 'pinch'){
     if (P.size === 1){ if (!ges.moved && performance.now() - ges.t0 < 350) ges = { type:'tap2' }; else { const [r] = P.values(); ges = { type:'orbit', x: r.x, y: r.y, x0: r.x, y0: r.y, t0: performance.now(), moved: true, s: [] }; } }
@@ -1809,7 +1835,7 @@ const endPointer = e => { if (!P.has(e.pointerId)) return; P.delete(e.pointerId)
   if (!g.moved){ if (performance.now() - g.t0 < 500) tap(e); rest(); return; }
   if (g.type === 'orbit') glide(g.s); else rest(); };
 zwrap.addEventListener('pointerup', endPointer); zwrap.addEventListener('pointercancel', endPointer);
-function rest(){ cam.yaw = ((cam.yaw % 360) + 360) % 360; fast(false); saveCam(); }
+function rest(){ cam.yaw = ((cam.yaw % 360) + 360) % 360; saveCam(); }
 const CARD = () => [0, 90, 180, 270].map(a => YAW0 + a);
 const nearestCardinal = y => CARD().reduce((best, c) => Math.abs(angDiff(c, y)) < Math.abs(angDiff(best, y)) ? c : best, CARD()[0]);
 // a flick keeps turning and slows quickly; one that would come to rest near a cardinal view snaps onto it
@@ -1863,7 +1889,8 @@ function labelItems(){ const items = [], z = ppu(), L1 = z >= 2.2, L2 = z >= 4.4
       items.push({ key: 'p:' + p.id, cls: 'pod', col: palOf(p.app).l, text: `${esc(p.app)} ${esc(p.ver)}` + (p.gpu ? `<b>GPU x${p.gpu}</b>` : ''), sub: L2 ? p.name : '', at, up: !covered, pri: covered ? 5 : 6, act: { type:'pod', id: p.id } }); } }
   if (!html.classList.contains('nolabels')) for (const c of calloutItems()) items.push({ key: 'c:' + c.text, cls: 'callout', text: esc(c.text), at: c.at, on: c.on, lead: true, pri: (st.xr || 0) > .6 ? 6.5 : 4, act: { type:'explain', text: c.text } });   // inside a see-through pod the part names matter more than its own
   return items; }
-function drawLabels(){ const items = labelItems(), placed = [], want = new Set(), writes = []; let leaders = '';
+function drawLabels(){ if (html.classList.contains('nolabels')){ if (LB.size){ for (const L of LB.values()){ clearTimeout(L.outT); L.el.remove(); } LB.clear(); } if (ov._h){ ov._h = ''; ov.innerHTML = ''; } return; }
+  const items = labelItems(), placed = [], want = new Set(), writes = []; let leaders = '';
   for (const it of items){ const s = toScreen(it.at); it.x = s[0]; it.y = s[1]; it.depth = s[2]; }
   items.sort((a, b) => b.pri - a.pri || a.depth - b.depth);
   for (const it of items){ const w = estW(it), h = estH(it); let x = it.x, y = it.y; if (it.lead) y -= 30; else if (it.up) y -= h/2 + 3; else if (it.cls === 'node') y += h/2 + 2; else if (it.cls === 'board') y -= h/2 + 4;
