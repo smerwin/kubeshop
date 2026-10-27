@@ -64,6 +64,7 @@ function staticSvg(){
   // controllers
   s += box(20, 200, 600, 180, { fill: PAPERC, sw: 1.8 }) + title('kube-controller-manager', 32, 222);
   s += `<g id="ca">` + box(466, 208, 144, 24, { r: 5 }) + text('CA · CSR signer', 538, 220, { size: 9.5 }) + '</g>';
+  s += `<g id="nlc">` + box(246, 208, 212, 24, { r: 5 }) + `<g id="nlc-text"></g>` + '</g>';   // the node lifecycle controller: the Lease clock of every node
   for (const [id, c] of Object.entries(CTRL)){ const x = c.x, X = cx(id);
     s += `<g id="c-${id}">` + box(x, 236, 186, 130, { r: 7 }) + text(c.title.toUpperCase(), x + 8, 250, { size: 9.5, anchor: 'start', ls: '.08em', col: MUTED }) + '</g>';
     s += `<g id="inf-${id}">` + box(x + 10, 258, 166, 24, { r: 4 }) + text('informer cache', X, 270, { size: 10 }) + '</g>';
@@ -112,7 +113,7 @@ function tick(dt){
   for (const t of R.timers.slice()) if (R.now >= t.at){ R.timers.splice(R.timers.indexOf(t), 1); t.r(); }
   for (const f of R.flows.slice()){ f.t += dt*1000*cfg.speed(); if (f.t >= f.dur){ R.flows.splice(R.flows.indexOf(f), 1); f.r(); } }
   for (const [k, v] of R.lit) if (R.now >= v.until) R.lit.delete(k);
-  return R.flows.length > 0 || R.timers.length > 0 || R.lit.size > 0;
+  return R.flows.length > 0 || R.timers.length > 0 || R.lit.size > 0 || cfg.st.nodes.some(n => n.cut);   // a cut uplink keeps the node lifecycle controller's clock on screen
 }
 const frame = () => { if (!R.driving) return; R.driving = false; clearTimeout(R.fb); const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - R.lastT)/1000)); R.lastT = now; const busy = tick(dt); render(); if (busy) drive(); };
 function drive(){ if (R.driving) return; if (!R.flows.length && !R.timers.length && !R.lit.size) R.lastT = performance.now(); R.driving = true; requestAnimationFrame(frame); R.fb = setTimeout(frame, 60); }
@@ -137,6 +138,8 @@ function render(){
   const pend = st.pods.filter(p => p.phase === 'pending' && !(p.sys && !st.showSys)).length;
   svg.querySelector('#s-pending').innerHTML = text(pend ? `${pend} Pending` : 'empty', 958, 250, { size: 10, anchor: 'end', col: pend ? INKC : MUTED });
   svg.querySelector('#s-scorenote').innerHTML = R.scoreNote ? text(R.scoreNote, 958, 326, { size: 8.5, anchor: 'end', weight: 600 }) : '';
+  { const cn = st.nodes.find(n => n.cut); svg.querySelector('#nlc-text').innerHTML = text(!cn ? 'node lifecycle · leases every 10 s' : !cn.unreach ? `node lifecycle · ${cn.name}: lease ${Math.round(cn.cutT)} s ago · grace 40 s` : !cn.evicted ? `${cn.name} NotReady · unreachable ${Math.round(cn.cutT - 40)} s · tolerate 300 s` : `${cn.name} NotReady · pods evicted`, 352, 220, { size: 9, col: cn ? (cn.unreach ? REDC : INKC) : MUTED });
+    if (cn) s += `<rect x="246" y="208" width="212" height="24" rx="5" fill="${cn.unreach ? REDC : AMBER}" opacity="${(.25 + .2*Math.abs(Math.sin(R.now/400))).toFixed(2)}"/>`; }
   svg.querySelector('#k-title').innerHTML = title(`kubelet · ${R.node}`, 32, 432) + text(`container runtime (CRI) · probes · status`, 608, 432, { size: 9.5, weight: 600, col: MUTED, anchor: 'end' });
   svg.querySelector('#p-title').innerHTML = title(`kube-proxy · ${R.proxyNode}`, 662, 432) + text('data plane', 968, 432, { size: 9.5, weight: 600, col: MUTED, anchor: 'end' });
   // beads
@@ -149,8 +152,8 @@ function render(){
 }
 
 /* ---------- the sequences ---------- */
-const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8], ca: [600, BUS + 8] };
-const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456], ca: [538, 208] };
+const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8], ca: [600, BUS + 8], nlc: [352, BUS + 8] };
+const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456], ca: [538, 208], nlc: [352, 208] };
 // a request into the API server, through the pipeline, into etcd, then the watch fan-out to `watchers`
 async function apiCall(from, label, col, watchers = [], o = {}){
   const p0 = PORT[from] || from, entry = [sx(0), 104];
@@ -213,7 +216,7 @@ const raced = (pr, ms) => Promise.race([pr, sleep(ms)]);
 function snap(){ const st = cfg.st; return {
   deps: Object.fromEntries(st.deploys.map(d => [d.name, { replicas: d.replicas, version: d.version, app: d.app, kind: d.kind }])),
   pods: Object.fromEntries(st.pods.map(p => [p.id, { phase: p.phase, node: p.node, doomed: !!p.doomed, restarts: p.restarts }])),
-  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined, certOk: !n.cert || n.cert.ok, rot: n.rotated || 0 }])),
+  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined, certOk: !n.cert || n.cert.ok, rot: n.rotated || 0, cut: !!n.cut, unreach: !!n.unreach, evicted: !!n.evicted }])),
   cp: { ...st.cp }, parcels: st.parcels.length, mode: st.mode, sec: { ca: st.sec.ca, refuse: st.sec.refuse.length, netpol: !!st.sec.netpol } }; }
 function observe(){
   const st = cfg.st, now = snap(); if (!prev || prev.mode !== now.mode){ prev = now; return; }
@@ -267,7 +270,16 @@ function observe(){
     if (o.rot !== n.rot) chain(`node:${name}`, () => csrFlow(name, 'certificate rotation at 80% of its lifetime'));
     if (o.certOk && !n.certOk) chain(`node:${name}`, async () => { R.node = name; lit('k4', 600); await apiCall('kubelet', `Node ${name} status`, REDC, [], { method: 'PATCH', verb: 'kubelet', failAt: 0, fail: `authentication: x509: certificate has expired (kubelet client cert of ${name}) -> 401; after node-monitor-grace-period the node-lifecycle controller marks ${name} NotReady and its endpoints are withdrawn` }); });
     if (!o.certOk && n.certOk) chain(`node:${name}`, () => csrFlow(name, 're-bootstrap with a fresh token'));
-    if (!o.ready && n.ready) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); }); }
+    if (!o.ready && n.ready && !o.unreach) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); });
+    // a cut uplink: the kubelet's Lease renewal fails, the node lifecycle controller's clock runs, NotReady after the grace period, eviction after the toleration
+    if (!o.cut && n.cut) chain(`node:${name}`, async () => { R.node = name; lit('k4', 1400, REDC); lit('nlc', 1400, AMBER); logLine(`kubelet ${name}: PUT leases/${name} (kube-node-lease) -> dial tcp :6443: no route to host (the uplink is cut); it retries every 10 s (node-status-update-frequency); the node lifecycle controller last saw a renewal just now and waits node-monitor-grace-period (40 s)`); await sleep(600); });
+    if (!o.unreach && n.unreach) chain(`node:${name}`, async () => { lit('nlc', 1600, REDC); await apiCall('nlc', `Node ${name} Ready=Unknown`, REDC, ['sched', 'ep'], { method: 'PATCH', verb: 'node lifecycle ctrl', event: 'Node' });
+      lit('f-cordon', 900); lit('c-ep', 900); lit('p-rules', 900); logLine(`node lifecycle controller: no Lease renewal from ${name} for 40 s -> Ready=Unknown and the taint node.kubernetes.io/unreachable:NoExecute; its pods' Ready conditions go false and they leave their EndpointSlices; the taint manager starts the 300 s tolerationSeconds clock`); await sleep(800); });
+    if (!o.evicted && n.evicted) chain(`node:${name}`, async () => { const k = st.pods.filter(p => p.node === name && p.orphan).length; lit('nlc', 1600, REDC); await apiCall('nlc', `delete Pods on ${name} x${k}`, REDC, ['rs', 'ep'], { method: 'DELETE', verb: 'taint manager', event: 'Pod (deleted)' });
+      logLine(`taint manager: the 300 s toleration of node.kubernetes.io/unreachable ran out, so ${name}'s ${k} pods are deleted in the API (their containers keep running in the cell, unreachable); the ReplicaSet controllers see the shortfall and create replacements`); await sleep(600); });
+    if (o.cut && !n.cut) chain(`node:${name}`, async () => { R.node = name; lit('k0', 800); lit('nlc', 1200);
+      if (o.evicted){ logLine(`kubelet ${name}: the uplink is back; its watch resumes and finds its pods gone from the API, so it stops their containers (SIGTERM) and reports Ready`); await sleep(500); lit('k2', 700); await sleep(400); }
+      await kubeletStatus({ node: name, app: 'web', name }, o.unreach ? `Node ${name} Ready=true` : `Lease ${name} renewed`, ['sched'], { method: o.unreach ? 'PATCH' : 'PUT', verb: 'kubelet', event: 'Node' }); if (o.unreach) logLine(`node lifecycle controller: ${name} reports again, Ready=true, the unreachable taint is removed`); }); }
   // the control plane coming up
   if (!prev.sec.ca && now.sec.ca) chain('cp:ca', async () => { lit('ca', 1800); logLine('kubeadm init phase certs: the cluster CA is created (/etc/kubernetes/pki/ca.crt); apiserver, apiserver-kubelet-client, front-proxy and the etcd server, peer and client certificates and the sa key pair are signed with it; csrsigning will sign CSRs with the same CA'); await sleep(1400); });
   if (now.sec.refuse > prev.sec.refuse){ const r = st.sec.refuse[st.sec.refuse.length - 1]; chain('refuse', () => r.kind === 'authn'

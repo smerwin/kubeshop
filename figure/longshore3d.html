@@ -223,7 +223,7 @@ const CONC = { l:'#dedad0', m:'#c3bfb3', d:'#9d9889' };
 const YARD = { l:'#e8e3d6', m:'#d2cbbb', d:'#aba394' };
 const CRATE = { l:'#f1e6c8', m:'#d9ca9f', d:'#a8956a' };
 const GLASS = '#1d2a26';
-const LAMPC = { green:'#43c25c', amber:'#f2b230', red:'#e2483d', grey:'#9a948a' };
+const LAMPC = { green:'#43c25c', amber:'#f2b230', red:'#e2483d', grey:'#9a948a', unknown:'#7f93b3' };
 const APP_PALS = { web: PALS.cobalt, api: PALS.mint, db: PALS.tomato, cache: PALS.blush, train: matOf('#f08a2b'), spark: matOf('#9b7bd6') };
 const GOLD = '#f2c230';
 const EXTRA_PALS = ['#9b7bd6', '#4fb3b3', '#f08a2b', '#b9c45a', '#d98fd4', '#8aa0b8', '#c9a066', '#6fb86f'].map(matOf);
@@ -304,9 +304,9 @@ const st = { t:0, mode:'demo', model:'yard', nodes:[], pods:[], deploys:[], serv
   // the directory (CoreDNS), the mesh (sidecars, the mesh's own CA, a weighted canary) and a managed control plane behind the fence
   net:{ fabric:'static', svc:'iptables', lane:0, ann:[], hops:[], flick:{}, dns:{ n:0, flash:0, hl:null, hlT:0, key:'' }, mesh:{ on:false, canary:0, n:0 }, managed:false } };
 // on the shop floor a machine that is powering down still counts for a moment, so its replacement card is raised after it stops
-const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
+const podsOf = (app, alive = true) => st.pods.filter(p => p.app === app && !(alive && p.orphan) && (!alive || p.phase !== 'terminating' || (isShop() && p.phaseT < .6)));
 const isReady = p => p.phase === 'running' && p.ready;
-const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
+const lampOf = p => p.phase === 'terminating' ? LAMPC.grey : p.unknown ? LAMPC.unknown : p.phase === 'done' ? '#5a82c6' : p.phase === 'crash' ? (p.phaseT < 1 ? LAMPC.red : LAMPC.amber) : isReady(p) ? LAMPC.green : LAMPC.amber;
 const imageOf = p => (p.containers[0] || {}).image || p.app;
 const depOf = app => st.deploys.find(d => d.app === app);
 function say(key, text, ms = 2300){ if (!ui) return; const now = performance.now(); if (st.said[key] && now - st.said[key] < 2600) return; st.said[key] = now; ui.flash(text, ms); }
@@ -430,10 +430,11 @@ function craneTick(dt){
    a time per node (serialised by default), from the registry when the node has never seen the image and from its own cache
    when it has, and only then starts the containers. Nodes pull in parallel. A gang's members each pull, then start together. */
 const cellDoor = n => [n.x0 - 4, n.y0 + SLW - 6, 12];    // the cell's job board on the controller cabinet, where the tube ends
-function mkCap(p, n){ const to = cellDoor(n), L = Math.abs(OFFICE[0] - to[0]) + Math.abs(OFFICE[1] - to[1]) + 70; return { pod: p, node: n.name, t: 0, dur: Math.max(.7, L/170) }; }
+function mkCap(p, n){ return { pod: p, node: n.name, t: 0, dur: Math.max(.7, pathLen(tubePath(n))/240) }; }
 function shopTick(dt){ let busy = false;
-  for (const c of st.caps){ c.t += dt/c.dur; busy = true;
-    if (c.t >= 1){ c.done = true; const p = c.pod, n = st.nodes.find(n => n.name === c.node); if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
+  for (const c of st.caps){ const n = st.nodes.find(n => n.name === c.node); if (n && n.cut && c.t + dt/c.dur >= cutT(n)){ c.t = cutT(n); busy = true; continue; }   // the card stops at the break until the uplink is back
+    c.t += dt/c.dur; busy = true;
+    if (c.t >= 1){ c.done = true; const p = c.pod; if (p.orphan) removePod(p); else if (n && (p.phase === 'bound' || p.phase === 'dropping')){ p.pos = slotPos(n, p.slot); p.phase = 'queued'; p.phaseT = 0; } } }
   st.caps = st.caps.filter(c => !c.done);
   for (const n of st.nodes){ if (!n.cache) n.cache = new Set();
     if (!n.pull){ const p = st.pods.find(p => p.node === n.name && p.phase === 'queued'); const key = p && p.app + ':' + p.ver, warm = p && n.cache.has(key);
@@ -498,6 +499,16 @@ const rowCorridor = r => Math.max(...rowCells(r).map(n => n.x0 + n.depth)) + 4;
 const DIVERTER = r => { const cells = rowCells(r); return cells.length ? { x: LANE, y: rowSpur(r), cx: rowCorridor(r), cells } : null; };
 const flick = (r, lane) => { st.net.flick[r] = { t: .55, lane }; };   // the diverter's arm swings as a part is sent down its spur
 const cellEntry = n => n.y0 + SLW - 5;                                 // the y of the cell's opening on the corridor side (the gap in the fence)
+// the pneumatic tube rides the fabric: up from the counter to the trusses, over to the spine, down to just above the belt, along the spine to
+// the row's diverter, out the spur and along the corridor with the belts, then across the cell to the cabinet's job board. One right of way
+// carries control and data: the cell's spur is where a cut uplink severs both
+const TZ = 18;
+const TRUNK = () => [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], 46], [OFFICE[0], 30, 46], [LANE, 30, 46], [LANE, 30, TZ], [LANE, D - 20, TZ]];
+function tubePath(n){ const d = cellDoor(n), ys = rowSpur(n.row), cx = rowCorridor(n.row); return [...TRUNK().slice(0, 5), [LANE, ys, TZ], [cx, ys, TZ], [cx, d[1], TZ], [d[0], d[1], TZ], [d[0], d[1], d[2] + 4]]; }
+const FORGE = () => TRUNK().slice().reverse();                        // a forged job card's way in: up the trunk backwards, to the counter
+const pathLen = pts => pts.reduce((a, p, i) => i ? a + dist3(pts[i - 1], p) : 0, 0);
+const breakAt = n => ({ x: rowCorridor(n.row) - 2.5, y: cellEntry(n), ty: cellDoor(n)[1] });   // where the cell's spur is severed: just inside the corridor
+const cutT = n => { const P = tubePath(n); return (pathLen(P.slice(0, 8)) + 2.5)/pathLen(P); };   // a job card's stop at the break, as a fraction of its way
 function laneX(canary){ if (canary != null) return canary ? SPINE2() : LANE; return st.net.fabric === 'bgp' && isShop() ? (st.net.lane++ % 2 ? SPINE2() : LANE) : LANE; }
 function makeParcel(p, svc){
   const n = p && st.nodes.find(n => n.name === p.node), dns = isShop(), pts = dns ? [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 30, 2.2], [LANE, 45, 2.2]] : [[LANE, 1, 2.2], [LANE, 20, 2.2], [LANE, 45, 2.2]];
@@ -527,6 +538,8 @@ function makeLink(a, b, blocked){
   const meshed = st.net.mesh.on && MESHED.has(a.app) && MESHED.has(b.app);
   return { pts, segs, L, pod: b, svc: st.services.find(s => (s.selector || {}).app === b.app) || { name: b.app }, from: a, link: true, blocked: !!blocked, stop: L - 4.5, t: 0, dir: 1, col: palOf(a.app).l, hold: 0, sleeve: meshed, kioskD: -1, dirD: -1, divs };
 }
+// where a part's path crosses a cut cell's break (the stretch along the cell's entry y at the break's x), as a distance along the path
+function breakD(pc, n){ const b = breakAt(n); for (const s of pc.segs) if (Math.abs(s.a[1] - b.y) < .01 && Math.abs(s.b[1] - b.y) < .01 && (s.a[0] - b.x)*(s.b[0] - b.x) <= 0) return s.s0 + Math.abs(b.x - s.a[0]); return -1; }
 function parcelAt(pc, d){ for (const s of pc.segs) if (d <= s.s0 + s.l + 1e-6) return lerp3(s.a, s.b, s.l ? (d - s.s0)/s.l : 0); return pc.pts[pc.pts.length - 1]; }
 // the target is chosen when the part leaves the station (a Ready endpoint then) and re-checked every frame after: a machine that is
 // draining still answers (in-flight connections finish inside the grace period); one that has powered down, crashed or been removed
@@ -544,6 +557,10 @@ function parcelTick(pc, dt){
         else { pc.dns = 'fail'; if (pc.dhold > DNS_TIMEOUT){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; say('nxdomain', `${pc.svc.name}.default.svc.cluster.local: lookup timed out after ${DNS_TIMEOUT} s (resolv.conf timeout:5), kube-dns has no Ready endpoints; connections already open keep working, new ones cannot find an address`); } return true; } } }
     if (pc.t < kioskD && pc.t + spd*dt >= kioskD && pc.hold < .3){ pc.hold += dt; pc.t = kioskD; return true; }
     for (const dv of pc.divs || []) if (pc.t < dv.d && pc.t + spd*dt >= dv.d) flick(dv.row, dv.lane);   // the diverter sends it down the spur
+    // a cut uplink: the belt into (or out of) that cell is severed at the corridor, so the part stops at the break and the caller times out
+    { const cn = [pc.pod, pc.from].map(p => p && st.nodes.find(n => n.name === p.node)).find(n => n && n.cut), bd = cn ? breakD(pc, cn) : -1;
+      if (bd >= 0 && pc.t < bd + .01 && pc.t + spd*dt >= bd){ pc.t = bd; pc.hold += dt; if (pc.hold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++;
+          say('cut-' + cn.name, `No route: the belt into ${cn.name} is cut, so the part stops at the break and the caller times out${cn.unreach ? '' : ' (the Service still lists the machine: the node is not NotReady yet)'}`); } return true; } }
     // a NetworkPolicy gate: the part stops at the machine's gate, is dropped there (the CNI drops the packet; the caller times out) and comes back red
     if (pc.blocked && pc.t + spd*dt >= pc.stop){ pc.t = pc.stop; pc.hold += dt; if (pc.hold > .9){ pc.dir = -1; pc.col = LAMPC.red; st.reqs.err++; const pol = st.sec.netpol;
         say('netpol-drop', `NetworkPolicy ${pol ? pol.name : ''}: ${pc.from.app} -> ${pc.pod.app} is not allowed, so the CNI drops the packet at ${pc.pod.name}'s gate (the caller times out; nothing in the office is asked)`); } return true; }
@@ -555,6 +572,8 @@ function parcelTick(pc, dt){
       else { pc.col = LAMPC.green; st.reqs.ok++; } }
     return true; }
   for (const dv of pc.divs || []) if (pc.t > dv.d && pc.t - spd*dt*1.15 <= dv.d) flick(dv.row, dv.lane);   // and merges it back on the way out
+  { const cn = [pc.pod, pc.from].map(p => p && st.nodes.find(n => n.name === p.node)).find(n => n && n.cut), bd = cn ? breakD(pc, cn) : -1;
+    if (bd >= 0 && !pc.cutBack && pc.t > bd && pc.t - spd*dt*1.15 <= bd){ pc.cutBack = true; if (pc.col !== LAMPC.red){ pc.col = LAMPC.red; st.reqs.err++; } } }   // a reply cannot get out either
   pc.t -= spd*dt*1.15; return pc.t > 0;
 }
 
@@ -586,7 +605,7 @@ function run(){ if (loopOn || !ui) return; loopOn = true; ui.animate(dt => { con
 function bootstrap(){
   if (st.mode === 'live') return liveNote('kubeadm init (control plane), then kubeadm join on each node');
   startDemo(); st.pods = []; st.deploys = []; st.crane.queue = []; st.crane.job = null; st.crane.carry = null; st.caps = []; st.parcels = []; st.said = {};
-  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.joining = false; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; }
+  for (const n of st.nodes){ n.used = new Set(); n.joined = 0; n.joining = false; n.ready = false; n.cordoned = false; n.tape = 0; n.cache = new Set(); n.pull = null; n.cut = false; n.unreach = false; n.evicted = false; n.cutT = 0; }
   st.cp = { etcd:0, api:0, ctrl:0, hold:0 }; st.crane.z = 1; st.crane.x = (XR0 + XR1)/2; st.crane.y = D/2; refreshRegistry();
   Object.assign(st.sec, { ca: 0, badges: 0, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); for (const n of st.nodes){ n.cert = null; n.csr = false; }
   const V = VOC(); const ev = [
@@ -822,7 +841,28 @@ function removeMesh(){ if (st.mode === 'live') return liveNote('istioctl uninsta
 function setManaged(on, quiet){ if (st.net.managed === !!on) return; st.net.managed = !!on; OFFICE[0] = on ? -22 : 20;
   if (!quiet) say('managed', on ? 'Managed control plane: the planning office moves into the provider\'s building behind the fence. The counter still takes every request; the cells reach it, and it reaches them for logs and exec, through the konnectivity tunnel (a relay on every cabinet). The provider owns the office, you own the cells' : 'The control plane is yours again: the office is back on the mezzanine, no tunnel needed');
   if (ui) reframe(); run(); }
-function netTick(dt){ let busy = false; const N = st.net;
+// a node's uplink: with it cut the kubelet cannot renew its Lease; the node lifecycle controller marks the node NotReady after
+// node-monitor-grace-period, and the taint manager evicts its pods after the unreachable toleration (the real defaults, on the clock)
+const NODE_LEASE = 10, NODE_GRACE = 40, NODE_TOLERATION = 300;
+function cutUplink(name = 'node-b'){ if (st.mode === 'live') return liveNote('(on the node: ip link set eth0 down, or pull the cable; then kubectl get nodes -w)'); const n = st.nodes.find(n => n.name === name) || st.nodes[1] || st.nodes[0]; if (!n || n.joined < 1) return say('nocut', `${name} has not joined yet`); if (n.cut) return say('cutalready', `${n.name}'s uplink is already cut`);
+  n.cut = true; n.cutT = 0; n.unreach = false; n.evicted = false;
+  say('cut', `${n.name}'s uplink is cut: the belt and the tube into its cell are severed at the corridor. Its kubelet can no longer renew its Lease (it tries every ${NODE_LEASE} s, node-status-update-frequency) and nothing reaches the cell; the node lifecycle controller waits node-monitor-grace-period (${NODE_GRACE} s) before it marks the node NotReady. Parts and job cards for ${n.name} stop at the break`, 5200); run(); }
+function restoreUplink(name = 'node-b'){ const n = st.nodes.find(n => n.name === name); if (!n || !n.cut) return say('nocut2', `${name}'s uplink is not cut`); n.cut = false;
+  const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating');
+  if (n.evicted){ for (const p of mine){ p.unknown = false; p.down = true; terminate(p); } n.unreach = false; n.evicted = false; n.ready = true;
+    say('restore', `${n.name}'s uplink is back: the kubelet reports in, finds its pods deleted (evicted while it was unreachable) and tears the orphaned machines down; the replacements are already running in other cells`, 4600); }
+  else if (n.unreach){ for (const p of mine){ if (p.unknown){ p.unknown = false; p.ready = !!p.wasReady; } } n.unreach = false; n.ready = true;
+    say('restore', `${n.name}'s uplink is back before the toleration ran out: the kubelet renews its Lease, the node is Ready again and its machines rejoin their Services; nothing moved`, 4200); }
+  else say('restore', `${n.name}'s uplink is back within the grace period: the Lease is renewed and the controller never noticed; the parts and cards waiting at the break go on`, 3600);
+  run(); }
+function uplinkTick(dt){ let busy = false;
+  for (const n of st.nodes){ if (!n.cut) continue; n.cutT += dt; busy = true;
+    if (!n.unreach && n.cutT >= NODE_GRACE){ n.unreach = true; n.ready = false; for (const p of st.pods) if (p.node === n.name && (p.phase === 'running' || p.phase === 'unready')){ p.unknown = true; p.wasReady = p.ready; p.ready = false; }
+      say('unreach', `${n.name} is NotReady: no Lease renewal for ${NODE_GRACE} s (node-monitor-grace-period). Its machines' status is Unknown and they leave their Services; the node gets the taint node.kubernetes.io/unreachable:NoExecute, which its pods tolerate for ${NODE_TOLERATION} s (tolerationSeconds) before they are evicted`, 5200); }
+    if (n.unreach && !n.evicted && n.cutT >= NODE_GRACE + NODE_TOLERATION){ n.evicted = true; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating'); for (const p of mine){ p.orphan = true; p.ready = false; }
+      say('evict', `${NODE_TOLERATION} s up: the taint manager evicts ${n.name}'s ${mine.length} pods (their API objects are deleted) and the ReplicaSets raise replacement cards for other cells. The cell keeps its machines running, orphaned, until its uplink returns`, 5200); } }
+  return busy; }
+function netTick(dt){ let busy = false; const N = st.net; if (uplinkTick(dt)) busy = true;
   for (const a of N.ann){ a.t += dt/a.dur; busy = true; } N.ann = N.ann.filter(a => a.t < 1.25);
   for (const k of Object.keys(N.flick)){ N.flick[k].t -= dt; if (N.flick[k].t <= 0) delete N.flick[k]; else busy = true; }
   for (const h of N.hops){ h.t += dt/h.dur; busy = true; } N.hops = N.hops.filter(h => h.t < 1); if (N.dns.flash > 0){ N.dns.flash -= dt; busy = true; }
@@ -900,6 +940,7 @@ function staticSvg(){
   // controllers
   s += box(20, 200, 600, 180, { fill: PAPERC, sw: 1.8 }) + title('kube-controller-manager', 32, 222);
   s += `<g id="ca">` + box(466, 208, 144, 24, { r: 5 }) + text('CA · CSR signer', 538, 220, { size: 9.5 }) + '</g>';
+  s += `<g id="nlc">` + box(246, 208, 212, 24, { r: 5 }) + `<g id="nlc-text"></g>` + '</g>';   // the node lifecycle controller: the Lease clock of every node
   for (const [id, c] of Object.entries(CTRL)){ const x = c.x, X = cx(id);
     s += `<g id="c-${id}">` + box(x, 236, 186, 130, { r: 7 }) + text(c.title.toUpperCase(), x + 8, 250, { size: 9.5, anchor: 'start', ls: '.08em', col: MUTED }) + '</g>';
     s += `<g id="inf-${id}">` + box(x + 10, 258, 166, 24, { r: 4 }) + text('informer cache', X, 270, { size: 10 }) + '</g>';
@@ -948,7 +989,7 @@ function tick(dt){
   for (const t of R.timers.slice()) if (R.now >= t.at){ R.timers.splice(R.timers.indexOf(t), 1); t.r(); }
   for (const f of R.flows.slice()){ f.t += dt*1000*cfg.speed(); if (f.t >= f.dur){ R.flows.splice(R.flows.indexOf(f), 1); f.r(); } }
   for (const [k, v] of R.lit) if (R.now >= v.until) R.lit.delete(k);
-  return R.flows.length > 0 || R.timers.length > 0 || R.lit.size > 0;
+  return R.flows.length > 0 || R.timers.length > 0 || R.lit.size > 0 || cfg.st.nodes.some(n => n.cut);   // a cut uplink keeps the node lifecycle controller's clock on screen
 }
 const frame = () => { if (!R.driving) return; R.driving = false; clearTimeout(R.fb); const now = performance.now(), dt = Math.max(0, Math.min(.05, (now - R.lastT)/1000)); R.lastT = now; const busy = tick(dt); render(); if (busy) drive(); };
 function drive(){ if (R.driving) return; if (!R.flows.length && !R.timers.length && !R.lit.size) R.lastT = performance.now(); R.driving = true; requestAnimationFrame(frame); R.fb = setTimeout(frame, 60); }
@@ -973,6 +1014,8 @@ function render(){
   const pend = st.pods.filter(p => p.phase === 'pending' && !(p.sys && !st.showSys)).length;
   svg.querySelector('#s-pending').innerHTML = text(pend ? `${pend} Pending` : 'empty', 958, 250, { size: 10, anchor: 'end', col: pend ? INKC : MUTED });
   svg.querySelector('#s-scorenote').innerHTML = R.scoreNote ? text(R.scoreNote, 958, 326, { size: 8.5, anchor: 'end', weight: 600 }) : '';
+  { const cn = st.nodes.find(n => n.cut); svg.querySelector('#nlc-text').innerHTML = text(!cn ? 'node lifecycle · leases every 10 s' : !cn.unreach ? `node lifecycle · ${cn.name}: lease ${Math.round(cn.cutT)} s ago · grace 40 s` : !cn.evicted ? `${cn.name} NotReady · unreachable ${Math.round(cn.cutT - 40)} s · tolerate 300 s` : `${cn.name} NotReady · pods evicted`, 352, 220, { size: 9, col: cn ? (cn.unreach ? REDC : INKC) : MUTED });
+    if (cn) s += `<rect x="246" y="208" width="212" height="24" rx="5" fill="${cn.unreach ? REDC : AMBER}" opacity="${(.25 + .2*Math.abs(Math.sin(R.now/400))).toFixed(2)}"/>`; }
   svg.querySelector('#k-title').innerHTML = title(`kubelet · ${R.node}`, 32, 432) + text(`container runtime (CRI) · probes · status`, 608, 432, { size: 9.5, weight: 600, col: MUTED, anchor: 'end' });
   svg.querySelector('#p-title').innerHTML = title(`kube-proxy · ${R.proxyNode}`, 662, 432) + text('data plane', 968, 432, { size: 9.5, weight: 600, col: MUTED, anchor: 'end' });
   // beads
@@ -985,8 +1028,8 @@ function render(){
 }
 
 /* ---------- the sequences ---------- */
-const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8], ca: [600, BUS + 8] };
-const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456], ca: [538, 208] };
+const PORT = { kubectl: [120, 88], dep: [CTRL.dep.x + 186, BUS + 8], rs: [CTRL.rs.x + 186, BUS + 8], ep: [CTRL.ep.x + 186, BUS + 8], sched: [978, BUS + 8], kubelet: [612, BUS + 8], ca: [600, BUS + 8], nlc: [352, BUS + 8] };
+const INF = { dep: [cx('dep'), 258], rs: [cx('rs'), 258], ep: [cx('ep'), 258], sched: [815, 236], kubelet: [82, 462], proxy: [815, 456], ca: [538, 208], nlc: [352, 208] };
 // a request into the API server, through the pipeline, into etcd, then the watch fan-out to `watchers`
 async function apiCall(from, label, col, watchers = [], o = {}){
   const p0 = PORT[from] || from, entry = [sx(0), 104];
@@ -1049,7 +1092,7 @@ const raced = (pr, ms) => Promise.race([pr, sleep(ms)]);
 function snap(){ const st = cfg.st; return {
   deps: Object.fromEntries(st.deploys.map(d => [d.name, { replicas: d.replicas, version: d.version, app: d.app, kind: d.kind }])),
   pods: Object.fromEntries(st.pods.map(p => [p.id, { phase: p.phase, node: p.node, doomed: !!p.doomed, restarts: p.restarts }])),
-  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined, certOk: !n.cert || n.cert.ok, rot: n.rotated || 0 }])),
+  nodes: Object.fromEntries(st.nodes.map(n => [n.name, { cordoned: n.cordoned, ready: n.ready, joined: n.joined, certOk: !n.cert || n.cert.ok, rot: n.rotated || 0, cut: !!n.cut, unreach: !!n.unreach, evicted: !!n.evicted }])),
   cp: { ...st.cp }, parcels: st.parcels.length, mode: st.mode, sec: { ca: st.sec.ca, refuse: st.sec.refuse.length, netpol: !!st.sec.netpol } }; }
 function observe(){
   const st = cfg.st, now = snap(); if (!prev || prev.mode !== now.mode){ prev = now; return; }
@@ -1103,7 +1146,16 @@ function observe(){
     if (o.rot !== n.rot) chain(`node:${name}`, () => csrFlow(name, 'certificate rotation at 80% of its lifetime'));
     if (o.certOk && !n.certOk) chain(`node:${name}`, async () => { R.node = name; lit('k4', 600); await apiCall('kubelet', `Node ${name} status`, REDC, [], { method: 'PATCH', verb: 'kubelet', failAt: 0, fail: `authentication: x509: certificate has expired (kubelet client cert of ${name}) -> 401; after node-monitor-grace-period the node-lifecycle controller marks ${name} NotReady and its endpoints are withdrawn` }); });
     if (!o.certOk && n.certOk) chain(`node:${name}`, () => csrFlow(name, 're-bootstrap with a fresh token'));
-    if (!o.ready && n.ready) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); }); }
+    if (!o.ready && n.ready && !o.unreach) chain(`node:${name}`, async () => { R.node = name; lit('k0', 600); await kubeletStatus({ node: name, app: 'web', name }, `Node ${name} Ready (register)`, ['sched'], { method: 'POST', verb: 'kubelet', event: 'Node' }); });
+    // a cut uplink: the kubelet's Lease renewal fails, the node lifecycle controller's clock runs, NotReady after the grace period, eviction after the toleration
+    if (!o.cut && n.cut) chain(`node:${name}`, async () => { R.node = name; lit('k4', 1400, REDC); lit('nlc', 1400, AMBER); logLine(`kubelet ${name}: PUT leases/${name} (kube-node-lease) -> dial tcp :6443: no route to host (the uplink is cut); it retries every 10 s (node-status-update-frequency); the node lifecycle controller last saw a renewal just now and waits node-monitor-grace-period (40 s)`); await sleep(600); });
+    if (!o.unreach && n.unreach) chain(`node:${name}`, async () => { lit('nlc', 1600, REDC); await apiCall('nlc', `Node ${name} Ready=Unknown`, REDC, ['sched', 'ep'], { method: 'PATCH', verb: 'node lifecycle ctrl', event: 'Node' });
+      lit('f-cordon', 900); lit('c-ep', 900); lit('p-rules', 900); logLine(`node lifecycle controller: no Lease renewal from ${name} for 40 s -> Ready=Unknown and the taint node.kubernetes.io/unreachable:NoExecute; its pods' Ready conditions go false and they leave their EndpointSlices; the taint manager starts the 300 s tolerationSeconds clock`); await sleep(800); });
+    if (!o.evicted && n.evicted) chain(`node:${name}`, async () => { const k = st.pods.filter(p => p.node === name && p.orphan).length; lit('nlc', 1600, REDC); await apiCall('nlc', `delete Pods on ${name} x${k}`, REDC, ['rs', 'ep'], { method: 'DELETE', verb: 'taint manager', event: 'Pod (deleted)' });
+      logLine(`taint manager: the 300 s toleration of node.kubernetes.io/unreachable ran out, so ${name}'s ${k} pods are deleted in the API (their containers keep running in the cell, unreachable); the ReplicaSet controllers see the shortfall and create replacements`); await sleep(600); });
+    if (o.cut && !n.cut) chain(`node:${name}`, async () => { R.node = name; lit('k0', 800); lit('nlc', 1200);
+      if (o.evicted){ logLine(`kubelet ${name}: the uplink is back; its watch resumes and finds its pods gone from the API, so it stops their containers (SIGTERM) and reports Ready`); await sleep(500); lit('k2', 700); await sleep(400); }
+      await kubeletStatus({ node: name, app: 'web', name }, o.unreach ? `Node ${name} Ready=true` : `Lease ${name} renewed`, ['sched'], { method: o.unreach ? 'PATCH' : 'PUT', verb: 'kubelet', event: 'Node' }); if (o.unreach) logLine(`node lifecycle controller: ${name} reports again, Ready=true, the unreachable taint is removed`); }); }
   // the control plane coming up
   if (!prev.sec.ca && now.sec.ca) chain('cp:ca', async () => { lit('ca', 1800); logLine('kubeadm init phase certs: the cluster CA is created (/etc/kubernetes/pki/ca.crt); apiserver, apiserver-kubelet-client, front-proxy and the etcd server, peer and client certificates and the sa key pair are signed with it; csrsigning will sign CSRs with the same CA'); await sleep(1400); });
   if (now.sec.refuse > prev.sec.refuse){ const r = st.sec.refuse[st.sec.refuse.length - 1]; chain('refuse', () => r.kind === 'authn'
@@ -1217,6 +1269,7 @@ const BUTTONS = [
   { label:'Break', choices: () => [
     { label:'delete a web pod', onClick: () => deletePod() },
     { label:'delete the db pod', onClick: () => deletePod('db') },
+    ...(SHOP() ? [ (() => { const n = st.nodes.find(n => n.name === 'node-b') || st.nodes[1] || st.nodes[0]; return n ? { label: n.cut ? `restore ${n.name}'s uplink` : `cut ${n.name}'s uplink`, sub: n.cut ? 'the belt and the tube into the cell are joined again' : 'sever the belt and the tube into the cell; the kubelet\'s lease stops', onClick: () => n.cut ? restoreUplink(n.name) : cutUplink(n.name) } : null; })() ].filter(Boolean) : []),
     { label:'crash a container', onClick: () => crashPod() },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
     ...(SHOP() ? [ { label:'stop CoreDNS', sub:'the board goes blank; new parts stall at the dock', disabled: !dnsUp(), why:'no CoreDNS machine is up', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
@@ -1299,7 +1352,7 @@ const T = () => SHOP() ? { node: 'Work cell', tower: 'Planning office', kiosk: '
   : { node: 'Node', tower: 'Harbour tower', kiosk: 'Kiosk', gate: 'the gate', registry: 'Registry shelf', crane: 'Gantry crane', board: 'Deployments board', runs: 'kubelet, container runtime, kube-proxy', pullNote: 'The kubelet pulls from here before a container can start.', kick: 'In the yard', inflight: 'requests in the yard now', boot: 'empty the yard and bring it up in order' };
 const phaseText = p => p.phase === 'pending' ? 'Pending' : p.phase === 'scheduled' ? 'Bound, waiting for the crane' : p.phase === 'bound' ? 'Bound: the job card is in the tube to the cell' : p.phase === 'queued' ? 'Bound, waiting for the cell\'s image pull' : p.phase === 'pulling' ? 'ContainerCreating: the cell is pulling the image' : p.phase === 'staged' ? 'Image ready, waiting for the rest of the gang'
   : p.phase === 'creating' ? (SHOP() ? 'ContainerCreating: the machine is powering up' : 'ContainerCreating (pulling the image)') : p.phase === 'dropping' ? (SHOP() ? 'Bound as a gang, job cards in the tube' : 'Bound as a gang, landing')
-  : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.nodeDown ? ' (its node is NotReady)' : p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
+  : p.orphan ? 'Deleted in the API (evicted from an unreachable node); still running in the cell until its kubelet returns' : p.unknown ? 'Unknown: the node has not reported (its uplink is cut); not Ready' : p.phase === 'running' ? (p.ready ? 'Running, Ready' : 'Running') : p.phase === 'unready' ? `Running, not Ready${p.nodeDown ? ' (its node is NotReady)' : p.waitingOn ? ' (Service ' + p.waitingOn + ' has no endpoints)' : ' (probe failing)'}` : p.phase === 'crash' ? 'Crashed, the kubelet is restarting it' : p.phase === 'terminating' ? (draining(p) ? 'Terminating: draining, finishing in-flight requests (grace period)' : 'Terminating: powered down') : p.phase === 'done' ? 'Succeeded' : p.phase;
 const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
 const gatesText = (n, mine) => { const pol = st.sec.netpol; if (!pol) return 'all open: no NetworkPolicy selects anything here'; const k = mine.filter(p => p.app === pol.to).length;
   return k ? `${k} ${pol.to} machine${k > 1 ? 's' : ''} gated: ingress from ${pol.from.join(', ')} only (${pol.name})` : `open: ${pol.name} selects ${pol.to} machines and none are in this cell`; };
@@ -1342,7 +1395,8 @@ const EXPLAIN = {
   'RACK': 'The node\'s image cache: crates of every image this cell has pulled before. A second pull of the same image is instant.',
   'AGV': 'The pull: the cell\'s own robot fetches an image crate from the crib, one trip at a time per cell (serialised image pulls).',
   'JOB BOARD': 'Where the cell\'s bound job cards arrive from the tube: the kubelet\'s watch on Pods with its nodeName.',
-  'TUBE': 'The watch stream made physical: every write the API server commits is blown to every cell that watches for it.',
+  'TUBE': 'The watch stream made physical: every write the API server commits is blown to every cell that watches for it. It rides the same belts as the parts: a stock cluster has no separate control network.',
+  'UPLINK CUT': 'The cell\'s spur is severed: parts and job cards stop at the break, the kubelet cannot renew its Lease, and the node lifecycle controller starts its clock (node-monitor-grace-period 40 s, then the unreachable toleration 300 s).',
   'LEDGER': 'etcd: the cabinet of record in the office, three drawers for the three Raft members.',
   'COUNTER': 'The API server: the one counter every request goes through, checked and written to the ledger.',
   'DISPATCHER': 'The scheduler: for each job card without a cell, filter the cells that cannot take it, score the rest, write the cell\'s name on the card.',
@@ -1383,12 +1437,12 @@ function cardFor(a){
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
         d && d.kind !== 'Job' ? { label:'app…', onClick: () => open({ type:'app', app: p.app }) } : null ].filter(Boolean) }; }
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
-    return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
+    return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : n.unreach ? `NotReady, Unknown: no Lease renewal for ${Math.round(n.cutT)} s; taint node.kubernetes.io/unreachable:NoExecute` + (n.evicted ? '; pods evicted' : `, pods evicted after ${NODE_TOLERATION} s`) : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` + (SHOP() && n.joined >= 1 ? row('Uplink', n.cut ? `<span style="color:#b3261e">cut ${Math.round(n.cutT)} s ago</span>: the belt and the tube into the cell are severed` : 'up: the cell\'s spur carries parts, job cards and the kubelet\'s own traffic') + row('Lease', n.cut ? `<span style="color:#b3261e">not renewed for ${Math.round(n.cutT)} s</span> (every ${NODE_LEASE} s normally; NotReady after ${NODE_GRACE} s)` : `renewed every ${NODE_LEASE} s in kube-node-lease (node-status-update-frequency)`) : '') +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
       (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to diverter ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
-      acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
+      acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } }, ...(SHOP() && n.joined >= 1 ? [ n.cut ? { label:'restore the uplink', onClick: () => restoreUplink(n.name) } : { label:'cut the uplink', title:'sever the belt and the tube into this cell', onClick: () => cutUplink(n.name) } ] : []) ] }; }
   if (a.type === 'tower'){ const R = window.ControlRoom ? ControlRoom.R : null, cp = st.cp;
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +

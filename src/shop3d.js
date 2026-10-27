@@ -25,7 +25,7 @@ const html = document.documentElement;
 
 /* ---------- palette and materials ---------- */
 const YEL = '#f2b824', CONCRETE = '#9b978e', FLOOR = '#86837c', WALL = '#d6d3cb', STEEL = '#8d9196', DARKM = '#2e3135', WHITE = '#f4f2ec', GLASS = '#9fc3d6';
-const LAMP = { green: '#2fd45e', amber: '#ffb020', red: '#ff3b2f', blue: '#4b8cff', off: '#2a2d31' };
+const LAMP = { green: '#2fd45e', amber: '#ffb020', red: '#ff3b2f', blue: '#4b8cff', unknown: '#7f93b3', off: '#2a2d31' };
 const matCache = new Map();
 // a shared material for a fixed colour (bodies that never fade); o.r roughness, o.m metalness, o.e emissive intensity
 function M(hex, o = {}){ const key = hex + JSON.stringify(o); if (matCache.has(key)) return matCache.get(key);
@@ -75,7 +75,7 @@ const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h,
 
 /* ---------- dimensions ---------- */
 const MW = 9, ML = 10, MH = 8;                         // a machine: 9 deep (x), 10 wide (y), 8 tall
-const TRUSS_Z = 50, TUBE_Z = 46, TUBE_X = 40;          // the trusses and the tube trunk's height; the trunk runs along y at TUBE_X
+const TRUSS_Z = 50;                                    // the trusses' height; the tube (TRUNK, tubePath in the simulation) rides the belts at TZ
 const OFF = { x0: 2, x1: 36, y0: 2, y1: 40, z0: 24, z1: 42 };   // the planning office on its mezzanine
 const ox = () => st.net.managed ? -42 : 0;                        // in managed mode the office stands in the provider's building past the floor's back edge
 const OFFV = () => ({ ...OFF, x0: OFF.x0 + ox(), x1: OFF.x1 + ox() });
@@ -87,10 +87,6 @@ const cellBox = n => ({ x0: n.x0, x1: n.x0 + n.depth, y0: n.y0, y1: n.y0 + SLW }
 const cabinet = n => { const c = cellBox(n); return { x0: c.x0 - 10, x1: c.x0 - 4, y0: c.y1 - 14, y1: c.y1 - 4, h: 15 }; };
 const rackOf = n => { const c = cellBox(n); return { x0: c.x0 - 10, x1: c.x0 - 4, y0: c.y1 - 32, y1: c.y1 - 17, h: 12 }; };
 const agvHome = n => { const c = cellBox(n); return [c.x0 - 7, c.y1 - 40, 0]; };
-// the tube path from the office to a cell's job board: up from the counter, along the trunk, a branch along x, down the cabinet
-function tubePath(n){ const d = cellDoor(n); return [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, d[1], TUBE_Z], [d[0], d[1], TUBE_Z], [d[0], d[1], d[2] + 4]]; }
-// a forged job card's way in: up the trunk from the floor end, backwards, to the counter
-const FORGE = () => [[TUBE_X, D - 20, TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [OFFICE[0], OFFICE[1], TUBE_Z], [OFFICE[0], OFFICE[1], OFFICE[2] + 1]];
 function along(pts, t){ const segs = []; let L = 0; for (let i = 0; i < pts.length - 1; i++){ const l = dist3(pts[i], pts[i + 1]); segs.push([L, l, i]); L += l; } const d = t*L;
   for (const [s0, l, i] of segs) if (d <= s0 + l + 1e-6) return lerp3(pts[i], pts[i + 1], l ? (d - s0)/l : 0); return pts[pts.length - 1]; }
 // the AGV's run: cabinet to the crib's door (a cold pull) or just to the rack (a warm one), and back
@@ -125,10 +121,13 @@ function rebuildStatic(){
     line(g, [[W - 30, 45], [W - 44, 45]], WHITE, .8, [3, 3]); }, 4);
   paint.anisotropy = 8;
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ map: paint, roughness: .92, metalness: 0 })); floor.rotation.x = -Math.PI/2; floor.position.copy(V3(W/2, D/2, 0)); floor.receiveShadow = true; S.add(floor);
-  // the pneumatic tube network overhead (the hall's roof is implied; the light comes from above)
-  const tubeM = M(GLASS, { a: .32, r: .15, m: .1 }); tubeM.depthWrite = false;
-  const trunk = [[OFFICE[0], OFFICE[1], OFFICE[2]], [OFFICE[0], OFFICE[1], TUBE_Z], [TUBE_X, OFFICE[1], TUBE_Z], [TUBE_X, D - 20, TUBE_Z]];
-  for (let i = 0; i < trunk.length - 1; i++) S.add(rod(trunk[i], trunk[i + 1], 1.1, tubeM));
+  // the pneumatic tube: up from the counter, over to the spine, then along the spine belt just above it; per row the spur and the corridor
+  // (the cells' own branches are theirs, lit when they join), with a fitting on the tube over each diverter
+  const tubeM = M(GLASS, { a: .32, r: .15, m: .1 }); tubeM.depthWrite = false; const T = TRUNK();
+  for (let i = 0; i < T.length - 1; i++) S.add(rod(T[i], T[i + 1], 1.1, tubeM));
+  for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const ys = Dv.cells.map(n => cellDoor(n)[1]); S.add(rod([LANE, Dv.y, TZ], [Dv.cx, Dv.y, TZ], 1.1, tubeM)); S.add(rod([Dv.cx, Math.min(Dv.y, ...ys), TZ], [Dv.cx, Math.max(Dv.y, ...ys), TZ], 1.1, tubeM));
+    S.add(box(LANE - 1.7, Dv.y - 1.7, TZ - 1.7, LANE + 1.7, Dv.y + 1.7, TZ + 1.7, M('#5a6068', { r: .4, m: .5 }), { r: .3 })); S.add(box(Dv.cx - 1.5, Dv.y - 1.5, TZ - 1.5, Dv.cx + 1.5, Dv.y + 1.5, TZ + 1.5, M('#5a6068', { r: .4, m: .5 }), { r: .3 })); }
+  for (const y of [60, 130, 200]) if (y < D - 24) S.add(rod([LANE + 3.2, y, 0], [LANE + 3.2, y, TZ - .4], .4, M(DARKM, { r: .5 })));   // hangers off the belt's edge
   Y.office = mkOffice(); Y.office.g.position.x = ox(); S.add(Y.office.g);
   if (st.net.managed){ const F = new THREE.Group(); for (let y = -8; y <= 64; y += 12) F.add(cyl(-3, y, 0, 10, .5, M(YEL, { r: .5 }), { n: 8 })); const pm = own('#4a4e54', { a: .35, r: .5, m: .4 }); pm.depthWrite = false; pm.side = THREE.DoubleSide;
     const pnl = new THREE.Mesh(boxG(.15, 8.5, 72), pm); pnl.position.copy(V3(-3, 28, 5.2)); pnl.castShadow = false; F.add(pnl); F.add(rod([-3, -8, 10], [-3, 64, 10], .35, M(YEL, { r: .5 })));
@@ -328,7 +327,7 @@ function mkNode(n){
   out.rise.add(decal([rk.x1 + .42, (rk.y0 + rk.y1)/2, rk.h - 1], [1, 0, 0], [0, -1, 0], 10, 1.4, tex('racksign', 10, 1.4, (g, w, h) => txt(g, 'IMAGE CACHE', w/2, h/2, 1, '#1d1f22'), 24)));
   out.rise.add(out.crates);
   // the cell's branch of the tube, unlit until the cell joins; a power strip on the cabinet that lights with it; the gate on the opening, closed until Ready
-  out.branch = new THREE.Group(); const bm = own(GLASS, { a: .32, r: .15, m: .1 }); bm.depthWrite = false; const tp = tubePath(n); for (let i = 3; i < tp.length - 1; i++) out.branch.add(rod(tp[i], tp[i + 1], 1.1, bm)); const dr = cellDoor(n); out.branch.add(cyl(dr[0], dr[1], dr[2] + 3, dr[2] + 5, 1.6, M(DARKM, { r: .4 }), { n: 12 })); g.add(out.branch);
+  out.branch = new THREE.Group(); const bm = own(GLASS, { a: .32, r: .15, m: .1 }); bm.depthWrite = false; const tp = tubePath(n); for (let i = 7; i < tp.length - 1; i++) out.branch.add(rod(tp[i], tp[i + 1], 1.1, bm)); const dr = cellDoor(n); out.branch.add(cyl(dr[0], dr[1], dr[2] + 3, dr[2] + 5, 1.6, M(DARKM, { r: .4 }), { n: 12 })); g.add(out.branch);
   out.power = box(cb.x1 - .1, cb.y0 + 3.4, 5.5, cb.x1 + .25, cb.y1 - 1.4, 6.5, own('#ffe3a0', { e: 1.4, r: .4 }), { r: .1, shadow: false }); out.rise.add(out.power);
   out.gate = new THREE.Group(); for (const z of [3, 6.5]) out.gate.add(rod([c.x1, c.y1 - 9, z], [c.x1, c.y1 - 1, z], .35, M(YEL, { r: .5 }))); out.gate.add(decal([c.x1 + .4, c.y1 - 5, 4.8], [1, 0, 0], [0, -1, 0], 6, 1.6, tex('gateclosed', 6, 1.6, (g, w, h) => { rect(g, 0, 0, w, h, YEL); txt(g, 'NOT READY', w/2, h/2, .9, '#1d1f22'); }, 40))); g.add(out.gate);
   // the AGV
@@ -348,7 +347,14 @@ function mkNode(n){
     const tp = new THREE.Mesh(boxG(L, 1.1, .2), new THREE.MeshStandardMaterial({ map: t, roughness: .6, transparent: true })); tp.material.userData.base = 1; tp.position.copy(V3((a[0] + b[0])/2, (a[1] + b[1])/2, 8)); tp.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]); tp.castShadow = false; out.tape.add(tp); out.tapes.push(tp); }
   const my = (c.y0 + c.y1)/2; out.sign = box(c.x1 + 1.6, my - 8, 4, c.x1 + 2, my + 8, 9, own(WHITE, { r: .5 }), { r: .15 }); out.tape.add(out.sign);
   out.signDecal = decal([c.x1 + 2.02, my, 6.5], [1, 0, 0], [0, -1, 0], 15, 4, tex('maint', 15, 4, (g, w, h) => { rect(g, 0, 0, w, h, YEL); txt(g, 'MAINTENANCE', w/2, 1.5, 1.7, '#1d1f22'); txt(g, 'cordoned · no new jobs', w/2, 3.1, .95, '#1d1f22', 700); }, 24)); out.tape.add(out.signDecal);
-  g.add(out.tape); g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 24, c.y1 - c.y0 + 10)); return out;
+  g.add(out.tape);
+  // the break: with the uplink cut, a red cross on the belt into the cell and on the tube above it, just inside the corridor
+  out.cut = new THREE.Group(); { const b = breakAt(n), red = own('#e2483d', { e: 1.8, r: .5 });
+    for (const s of [1, -1]){ const bar = box(-.35, -2.9, .15, .35, 2.9, .9, red, { r: .1 }); const gg = new THREE.Group(); gg.add(bar); gg.position.copy(V3(b.x, b.y, 0)); gg.rotation.y = s*Math.PI/4; out.cut.add(gg); }
+    for (const s of [1, -1]){ const bar = box(-.3, -2.3, -.3, .3, 2.3, .3, red, { r: .1 }); const gg = new THREE.Group(); gg.add(bar); gg.position.copy(V3(b.x, b.ty, TZ)); gg.rotation.x = s*Math.PI/4; out.cut.add(gg); }
+    out.cut.add(rod([b.x - 1.2, b.ty, TZ], [b.x + 1.2, b.ty, TZ], 1.45, red)); out.cutLamp = lamp(b.x, b.y - 4, 3, LAMP.red, .45); out.cut.add(out.cutLamp); }
+  out.cut.visible = false; g.add(out.cut);
+  g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 24, c.y1 - c.y0 + 10)); return out;
 }
 const svcTex = mode => tex('svc|' + mode, 5.2, 1.2, (g, w, h) => { rect(g, 0, 0, w, h, mode === 'ebpf' ? '#1f4034' : '#3a3d42'); txt(g, mode === 'ebpf' ? 'eBPF · no kube-proxy' : 'kube-proxy · iptables', w/2, h/2, .5, WHITE); }, 48);
 function gaugeMesh(n, out){ const cb = cabinet(n), cap = cellCap(), frac = Math.min(1, n.used.size/cap), q = Math.round(frac*20)/20, key = q + '|' + cap; if (out.gaugeKey === key) return; out.gaugeKey = key;
@@ -362,6 +368,7 @@ function syncNodes(dt){
     N.power.material.emissiveIntensity = 1.6*j; N.power.material.color.set(j > 0 ? '#ffe3a0' : '#3a3d42'); if (N.jk !== j){ N.jk = j; setAlpha(N.branch, .12 + .88*j); }
     const used = gpuUsed(n); N.presses.forEach((l, i) => setLamp(l, i < used ? LAMP.amber : LAMP.green, j >= 1));
     const lc = n.ready ? (n.cordoned ? LAMP.amber : LAMP.green) : n.joined < 1 ? null : st.boot ? LAMP.amber : LAMP.red; setLamp(N.lamp, lc || LAMP.red, !!lc); gaugeMesh(n, N);
+    N.cut.visible = !!n.cut; if (n.cut) setLamp(N.cutLamp, LAMP.red, Math.floor(n.cutT*3) % 2 === 0);
     N.bgp.visible = st.net.fabric === 'bgp' && j >= 1; N.relay.visible = st.net.managed && j >= 1; if (N.svcKey !== st.net.svc){ N.svcKey = st.net.svc; N.svcDecal.material.map = svcTex(st.net.svc); N.svcDecal.material.needsUpdate = true; }
     if (n.cert){ N.badge.visible = true; const bk = n.cert.ok ? 'ok' : 'bad'; if (N.badgeKey !== bk){ N.badgeKey = bk; N.badge.material.map = idBadgeTex(n.cert.ok, n.name); N.badge.material.needsUpdate = true; }
       const f = n.cert.flash || 0; N.badge.scale.setScalar(1 + .5*Math.sin(Math.min(1, f/.9)*Math.PI)); setLamp(N.badgeLamp, LAMP.amber, f > 0 && Math.floor(f*8) % 2 === 0); }
@@ -428,6 +435,7 @@ function syncPods(dt){
       const bk = `${p.ver}|${p.gpu || 0}|${p.sys ? 1 : 0}`; if (P.key !== bk){ P.key = bk; P.decal.material.map = verTex(P.pm, p.app, p.ver, p.gpu, p.sys); P.decal.material.needsUpdate = true; }
       const col = lampOf(p); P.andon.forEach((l, i) => setLamp(l, [LAMP.green, LAMP.amber, LAMP.red][i], col === [LAMPC.green, LAMPC.amber, LAMPC.red][i]));
       if (p.phase === 'done') setLamp(P.andon[0], LAMP.blue, true);
+      if (p.unknown && p.phase !== 'terminating'){ P.andon.forEach(l => setLamp(l, LAMP.off, false)); setLamp(P.andon[0], LAMP.unknown, true); P.andon[0].material.emissiveIntensity = 1.1; }   // Unknown: the node has not reported; a dim grey-blue
       if (p.phase === 'terminating'){ P.andon.forEach(l => setLamp(l, LAMP.off, false)); if (draining(p)) setLamp(P.andon[1], LAMP.amber, Math.floor(p.phaseT*5) % 2 === 0); }   // draining: the amber andon blinks while the machine finishes what it has
       if (p.phase === 'running' || p.phase === 'unready' || draining(p)) P.spindle.rotation.y = spinA;
       if (p.fire > 0){ if (!P.fire){ P.fire = mkFire(); P.g.add(P.fire); } P.fire.children.forEach((c, i) => { if (c.userData.spark){ c.position.set(MW/2 + Math.sin(spinA*3 + i)*2.5, MH + 1 + Math.abs(Math.sin(spinA*2.3 + i*1.7))*3, ML/2 + Math.cos(spinA*2.7 + i)*2.5); } else c.position.y = MH + 3 + ((spinA*1.5 + i*2) % 8); }); }
@@ -561,7 +569,7 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     const sec = st.pods.find(p => p.pos && p.secret); if (sec) items.push({ at:[sec.pos[0] - 1, sec.pos[1] + ML - 2.5, sec.pos[2] + 1.3], text:`SECRET ${sec.secret}`, on:false });
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
     items.push({ at:[o.x0 + 27, o.y0 + 31, o.z0 + 10], text:'SEAL PRESS', on: st.sec.stamp > 0 }, { at:[o.x0 + 6, o.y0 + 15, o.z0 + 7], text:'LOCKED DRAWER', on:false }, { at:[o.x0 + 25, o.y0 + 11, o.z0 + 9], text:'ADMISSION', on: st.sec.inspect > 0 });
-    items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
+    items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[LANE, 72, TZ], text:'TUBE', on: st.caps.length > 0 }); }
   else { const ing = st.ingresses[0], gn = st.nodes.find(n => n.gpus && n.joined >= 1);
     if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'CELL', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
     if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }, { at:[x + 3, y - .3, z + 4.1], text:'VISITOR PASS', on:false }); }
@@ -578,7 +586,8 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     if (gn){ const c = cellBox(gn); items.push({ at:[c.x0 + 9, c.y0 + 3, 17], text:'PRESS', on: gpuUsed(gn) > 0 }); }
     const cr = CRIB(), s = STATION(), d = DOCK();
     items.push({ at:[(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 2], text:'OFFICE', on:false }, { at:[(o.x0 + o.x1)/2, o.y1 + 1.3, o.z1 - 4], text:'ORDER BOARD', on:false }, { at:[cr.x1, (cr.y0 + cr.y1)/2, cr.h], text:'CRIB', on: st.nodes.some(n => n.pull && !n.pull.warm) },
-      { at:[s.x1, (s.y0 + s.y1)/2, 16], text:'STATION', on: st.parcels.length > 0 }, { at:[(d.x0 + d.x1)/2, d.y1, 24], text: ing ? 'DOCK' : 'DOCK', on: st.boom > .5 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
+      { at:[s.x1, (s.y0 + s.y1)/2, 16], text:'STATION', on: st.parcels.length > 0 }, { at:[(d.x0 + d.x1)/2, d.y1, 24], text: ing ? 'DOCK' : 'DOCK', on: st.boom > .5 }, { at:[LANE, 72, TZ], text:'TUBE', on: st.caps.length > 0 });
+    for (const n of st.nodes) if (n.cut){ const b = breakAt(n); items.push({ at:[b.x, b.y, TZ + 2.5], text:'UPLINK CUT', on: true }); } }
   return items; }
 function pickAct(h){ const a = h.object.userData.act; if (a && a.type === 'board'){ const rows = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5), zTop = OFF.z1 - 3 - 1.9, i = Math.floor((zTop - h.point.y)/1.7); if (rows[i] && i >= 0) return { type:'app', app: rows[i].app }; } return a; }
 

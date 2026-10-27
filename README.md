@@ -5,7 +5,7 @@
 An interactive guide to Kubernetes drawn as a job shop, the floor Kubernetes borrowed its words from: pods are machines
 running a program, nodes are fenced work cells with their own controller cabinet (the kubelet), tool rack (the image
 cache) and AGV (the pull), the scheduler is the dispatcher in the planning office, a binding is a job card blown through a
-pneumatic tube to the cell (the watch stream), a Service is the sorting station on the conveyor and the Ingress is the
+pneumatic tube to the cell along the same belts (the watch stream; one right of way for control and data), a Service is the sorting station on the conveyor and the Ingress is the
 receiving dock. Every button is a real operation played out one true step at a time: bootstrap, apply, scale, roll out,
 delete / crash / fail a probe, a dependency cascade (web needs api needs db), GPU scheduling, gang scheduling (a
 Volcano-style PodGroup that starts in sync), drain, send a request, and the cluster's security: the CA as a seal press
@@ -115,7 +115,7 @@ All the figures take the same parameters. `?xr=1` see-through, `?labels=1` the c
 `?yaw=45&pitch=35` camera, `?press=Scale>5@800,Send@2500` press buttons after load (label, optional `>choice`, `@ms`),
 `?boot=1` bootstrap on load, `?web=5` / `?v2=1` / `?cache=1` / `?train=1` / `?spark=1` / `?cordon=node-a` / `?netpol=1` (the
 db-from-api NetworkPolicy in force) starting state, `?press=Break>forge@800` / `Break>apply a privileged@800` /
-`Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks, `?fabric=bgp` the BGP fabric, `?svc=ebpf` eBPF Service
+`Break>let node-b@800` / `Apply>NetworkPolicy@800` the security breaks, `?press=Break>cut@800` node-b's uplink cut (NotReady after 40 s, eviction after 300 more; `?speed=4` hurries it), `?fabric=bgp` the BGP fabric, `?svc=ebpf` eBPF Service
 addressing, `?mesh=1` the mesh installed, `?canary=10` a 10% canary (installs the mesh), `?managed=1` the managed control plane,
 `?press=Break>stop CoreDNS@800` the directory board blank,
 `?cluster=URL&poll=5` watch a snapshot URL, `?speed=4` run the simulation faster, `?pal=cobalt` the trim colour (the office,
