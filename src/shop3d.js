@@ -105,7 +105,7 @@ const Y = { statics: new THREE.Group(), nodes: new Map(), pods: new Map(), caps:
 scene.add(Y.statics);
 const pickables = [];
 const m0 = () => PALS[st.pal];
-function staticKey(){ return [W, D, st.pal, st.nodes.map(n => n.name + ':' + n.row + ':' + n.depth).join(','), (st.ingresses[0] || {}).host, (svcMain() || {}).name, st.net.fabric, st.net.managed].join('|'); }
+function staticKey(){ return [W, D, st.pal, st.nodes.map(n => n.name + ':' + n.row + ':' + n.depth).join(','), (st.ingresses[0] || {}).host, (svcMain() || {}).name, st.net.fabric, st.net.managed, dnsIP()].join('|'); }
 function rebuildStatic(){
   dispose(Y.statics); Y.statics = new THREE.Group(); scene.add(Y.statics); pickables.length = 0;
   for (const N of Y.nodes.values()) dispose(N.g); Y.nodes.clear();
@@ -213,8 +213,9 @@ function mkJunction(r, J){ const g = new THREE.Group(), out = { g, key: '' }, x 
 function mkDirectory(){ const d = DIR(), g = new THREE.Group(), out = { g, lamps: [] }, m = m0();
   g.add(box(d.x0, d.y0, 0, d.x1, d.y1, 1, M(CONCRETE, { r: .85 }), { r: .2 })); out.body = box(d.x0 + .5, d.y0 + .5, 1, d.x1 - .5, d.y1 - .5, 7, own('#f1e6c8', { r: .55 }), { r: .4 }); out.body.userData.act = { type: 'dns' }; pickables.push(out.body); g.add(out.body);
   g.add(box(d.x0 - .4, d.y0 - .4, 7, d.x1 + .4, d.y1 + .4, 8, M(m.l, { r: .5 }), { r: .3 })); g.add(box(d.x1 - 1.2, d.y0 + 1.5, 8, d.x1 + .1, d.y1 - 1.5, 12.2, M(DARKM, { r: .5 }), { r: .3 }));
-  g.add(decal([d.x1 + .12, (d.y0 + d.y1)/2, 10.1], [1, 0, 0], [0, -1, 0], 6.6, 3.6, tex('dirsign', 6.6, 3.6, (g2, w, h) => { txt(g2, 'DIRECTORY', w/2, .9, .95, WHITE); txt(g2, 'CoreDNS · kube-dns', w/2, 2, .62, LAMP.amber); txt(g2, '10.96.0.10', w/2, 2.9, .6, '#c9c4b8', 700); }, 32)));
-  for (let i = 0; i < 2; i++){ const x0 = d.x0 + 1.5 + i*4.2, y0 = d.y0 + 1.5; g.add(box(x0, y0, 1, x0 + 3.4, y0 + 3, 3.6, own('#5a82c6', { r: .45, m: .2 }), { r: .3 })); const l = lamp(x0 + 2.9, y0 + 2.5, 4, LAMP.green, .3); g.add(l); out.lamps.push(l); }
+  const ip = dnsIP(); out.ip = ip; g.add(decal([d.x1 + .12, (d.y0 + d.y1)/2, 10.1], [1, 0, 0], [0, -1, 0], 6.6, 3.6, tex(`dirsign|${ip}`, 6.6, 3.6, (g2, w, h) => { txt(g2, 'DIRECTORY', w/2, .9, .95, WHITE); txt(g2, 'kube-dns · the Service', w/2, 2, .62, LAMP.amber); txt(g2, ip, w/2, 2.9, .6, '#c9c4b8', 700); }, 32)));
+  // the window: a lit opening on the lane side (dark when kube-dns has no endpoints), with a shelf; a lookup flashes it
+  out.win = box(d.x0 - .02, d.y0 + 2, 2.2, d.x0 + .3, d.y1 - 2, 5.6, own('#ffe3a0', { e: 1.2, r: .4 }), { r: .15, shadow: false }); g.add(out.win); g.add(box(d.x0 - 1.2, d.y0 + 1.6, 1.9, d.x0 + .3, d.y1 - 1.6, 2.3, M(DARKM, { r: .5 }), { r: .1 }));
   g.add(box(d.x0 + 2, d.y1 - 3.5, 1, d.x0 + 6, d.y1 - 1, 2.2, M('#8e6236', { r: .7 }), { r: .15 })); g.add(decal([d.x0 + 4, d.y1 - .98, 1.6], [0, 1, 0], [1, 0, 0], 3.6, 1, tex('book', 3.6, 1, (g2, w, h) => txt(g2, 'cluster.local', w/2, h/2, .5, WHITE, 800), 48)));
   out.lamp = lamp(d.x1 + .4, d.y1 - 1, 12.6, LAMP.green, .5); g.add(out.lamp); g.add(ao((d.x0 + d.x1)/2, (d.y0 + d.y1)/2, 20, 16)); return out; }
 function boardRows(){ const deps = st.deploys.filter(d => !d.sys || st.showSys).slice(0, 5);
@@ -368,12 +369,13 @@ function syncNodes(dt){
   for (const [name, N] of Y.nodes) if (!seen.has(name)){ dispose(N.g); Y.nodes.delete(name); N.g.traverse(o => { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); }); }
 }
 /* machines */
-function verTex(pm, app, ver, gpu){ return tex(`ver|${app}|${ver}|${gpu || 0}`, ML - 2, MH - 2.4, (g, w, h) => { txt(g, app.slice(0, 8).toUpperCase(), w/2, h*.36, 1.9, WHITE); txt(g, ver, w/2, h*.7, 1.3, WHITE, 700); if (gpu){ rect(g, w/2 - 2.6, h - 1.3, 5.2, 1.1, YEL); txt(g, `GPU x${gpu}`, w/2, h - .75, .8, '#1d1f22'); } }, 24); }
+function verTex(pm, app, ver, gpu, sys){ return tex(`ver|${app}|${ver}|${gpu || 0}|${sys ? 1 : 0}`, ML - 2, MH - 2.4, (g, w, h) => { txt(g, app.slice(0, 8).toUpperCase(), w/2, h*.36, 1.9, WHITE); txt(g, ver, w/2, h*.7, 1.3, WHITE, 700); if (gpu){ rect(g, w/2 - 2.6, h - 1.3, 5.2, 1.1, YEL); txt(g, `GPU x${gpu}`, w/2, h - .75, .8, '#1d1f22'); }
+  if (sys){ rect(g, 0, 0, w, 1, '#2b3a66'); txt(g, 'kube-system', w/2, .5, .62, WHITE, 800); } }, 24); }   // a system pod wears its namespace as a band
 function mkPod(p){
   const g = new THREE.Group(), pm = palOf(p.app), out = { g, key: '', pm, machine: new THREE.Group(), card: null, fire: null };
   out.body = box(0, 0, 0, MW, ML, MH - 1.5, own(pm.l, { r: .42, m: .18 }), { r: .7 }); out.body.userData.act = { type: 'pod', id: p.id }; pickables.push(out.body); out.machine.add(out.body);
   out.machine.add(box(.6, .6, MH - 1.5, MW - .6, ML - .6, MH, own('#2b2e32', { r: .5, m: .3 }), { r: .3 }));
-  out.decal = decal([MW + .02, ML/2, (MH - 1.5)/2], [1, 0, 0], [0, -1, 0], ML - 2, MH - 2.4, verTex(pm, p.app, p.ver, p.gpu)); out.decal.material.userData.base = 1; out.machine.add(out.decal);
+  out.decal = decal([MW + .02, ML/2, (MH - 1.5)/2], [1, 0, 0], [0, -1, 0], ML - 2, MH - 2.4, verTex(pm, p.app, p.ver, p.gpu, p.sys)); out.decal.material.userData.base = 1; out.machine.add(out.decal);
   out.spindle = new THREE.Group(); out.spindle.add(cyl(0, 0, 0, 1.6, 1.2, own(STEEL, { r: .3, m: .8 }), { n: 12 })); out.spindle.add(box(-.3, -1.3, 1.6, .3, 1.3, 2.2, own(DARKM), { r: .1 })); out.spindle.position.copy(V3(MW*.35, ML*.35, MH)); out.machine.add(out.spindle);
   out.machine.add(cyl(MW - 1.6, ML - 1.6, MH, MH + 2, .35, own(DARKM), { n: 8 }));
   out.andon = [LAMP.green, LAMP.amber, LAMP.red].map((c, i) => { const l = new THREE.Mesh(cylG(.9, .9, 1.1, 12), own(c, { e: 2.6, r: .3 })); l.position.copy(V3(MW - 1.6, ML - 1.6, MH + 2.6 + i*1.2)); l.castShadow = false; out.machine.add(l); setLamp(l, c, false); return l; });
@@ -413,7 +415,7 @@ function syncPods(dt){
     if (gated){ const open = st.parcels.some(pc => pc.pod === p && pc.link && !pc.blocked && pc.L - pc.t < (pc.dir === 1 ? 44 : 12)) ? 1 : 0; P.boomUp = Math.max(0, Math.min(1, P.boomUp + (open ? dt : -dt)*6));   // lifts as an allowed part comes down the aisle, drops once it has left
       rodTo(P.boom, [MW + 2.6, 1.2, 2.8 + 4*ease(P.boomUp)], [MW + 2.6, ML - 1.2, 2.8 + 4*ease(P.boomUp)], .26); setLamp(P.gateLamp, P.boomUp > .5 ? LAMP.green : LAMP.red); }
     if (!waiting){ const up = p.phase === 'creating' ? .25 + .75*ease(Math.min(1, p.phaseT/PULL.start)) : 1; P.machine.scale.set(1, up, 1);
-      const bk = `${p.ver}|${p.gpu || 0}`; if (P.key !== bk){ P.key = bk; P.decal.material.map = verTex(P.pm, p.app, p.ver, p.gpu); P.decal.material.needsUpdate = true; }
+      const bk = `${p.ver}|${p.gpu || 0}|${p.sys ? 1 : 0}`; if (P.key !== bk){ P.key = bk; P.decal.material.map = verTex(P.pm, p.app, p.ver, p.gpu, p.sys); P.decal.material.needsUpdate = true; }
       const col = lampOf(p); P.andon.forEach((l, i) => setLamp(l, [LAMP.green, LAMP.amber, LAMP.red][i], col === [LAMPC.green, LAMPC.amber, LAMPC.red][i]));
       if (p.phase === 'done') setLamp(P.andon[0], LAMP.blue, true);
       if (p.phase === 'terminating'){ P.andon.forEach(l => setLamp(l, LAMP.off, false)); if (draining(p)) setLamp(P.andon[1], LAMP.amber, Math.floor(p.phaseT*5) % 2 === 0); }   // draining: the amber andon blinks while the machine finishes what it has
@@ -449,7 +451,12 @@ function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length
   while (Y.ann.length > st.net.ann.length){ const A = Y.ann.pop(); dispose(A.g); }
   st.net.ann.forEach((a, i) => { const n = st.nodes.find(n => n.name === a.node), A = Y.ann[i]; if (!n) return; const p = along(annPath(n), Math.min(1, a.t)); A.g.position.copy(V3(...p)); setLamp(A.s, a.withdraw ? LAMP.red : LAMP.green); setAlpha(A.g, a.t > 1 ? Math.max(0, 1 - (a.t - 1)/.25) : 1); });
   for (const Jn of Y.junctions || []){ const key = st.net.fabric + '|' + Jn.J.cells.map(n => n.cordoned ? 1 : 0).join(''); if (Jn.key !== key){ Jn.key = key; Jn.cardDecal.material.map = routeTex(Jn.r, Jn.J); Jn.cardDecal.material.needsUpdate = true; } setLamp(Jn.lamp, st.net.fabric === 'bgp' ? LAMP.green : LAMP.amber); }
-  const Dd = Y.dir; if (Dd){ const up = st.net.dns.up; Dd.lamps.forEach(l => setLamp(l, LAMP.green, up)); setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); }
+  const Dd = Y.dir; if (Dd){ const up = dnsUp(), fl = st.net.dns.flash > 0; setLamp(Dd.lamp, up ? LAMP.green : LAMP.red); Dd.body.material.color.set(up ? '#f1e6c8' : '#8a8378'); Dd.win.material.emissiveIntensity = up ? (fl ? 3.2 : 1.2) : 0; Dd.win.material.color.set(up ? '#ffe3a0' : '#3a3d42'); }
+  // the lookup's hop: a dashed line and a dot from the window to the CoreDNS machine that answers, and back (only while those machines are drawn)
+  Y.hops = Y.hops || []; while (Y.hops.length < st.net.hops.length){ const g = new THREE.Group(); const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]), new THREE.LineDashedMaterial({ color: '#ffe3a0', dashSize: 2, gapSize: 1.4 })); g.add(line); const dot = lamp(0, 0, 0, LAMP.amber, .5); g.add(dot); scene.add(g); Y.hops.push({ g, line, dot }); }
+  while (Y.hops.length > st.net.hops.length){ const H = Y.hops.pop(); dispose(H.g); }
+  st.net.hops.forEach((h, i) => { const H = Y.hops[i], p = h.pod, dd = DIR(); if (!p.pos || (p.sys && !st.showSys)){ H.g.visible = false; return; } H.g.visible = true; const a = V3(dd.x0, (dd.y0 + dd.y1)/2, 4), b = V3(p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 1.5);
+    H.line.geometry.setFromPoints([a, b]); H.line.computeLineDistances(); const u = h.t < .5 ? h.t*2 : 2 - h.t*2; H.dot.position.lerpVectors(a, b, ease(Math.min(1, u))); });
   const O = Y.office; if (O && O.annex) O.annex.visible = st.net.mesh.on; }
 function syncStatics(){
   const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
@@ -552,7 +559,8 @@ function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFFV(), n0 
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }
-    { const J = JUNCTION(0), dd = DIR(); if (J) items.push({ at:[J.x, J.y, 10], text:'JUNCTION', on: st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.parcels.some(pc => pc.dirD >= 0 && pc.t < pc.dirD + .5 && pc.dir === 1) });
+    { const J = JUNCTION(0), dd = DIR(); if (J) items.push({ at:[J.x, J.y, 10], text:'JUNCTION', on: st.net.ann.length > 0 }); items.push({ at:[dd.x1, (dd.y0 + dd.y1)/2, 12.5], text:'DIRECTORY', on: st.net.dns.flash > 0 });
+      if (st.showSys) for (const p of st.pods.filter(p => isDnsPod(p) && p.pos && !NOPOS.has(p.phase))) items.push({ at:[p.pos[0] + MW/2, p.pos[1] + 1, p.pos[2] + MH + 2], text:'COREDNS', on: st.net.hops.some(h => h.pod === p) });
       if (st.net.fabric === 'bgp'){ items.push({ at:[SPINE2(), 90, 2.5], text:'SPINE', on: st.parcels.length > 0 }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x1 - 1.5, cb.y0 + 6.3, cb.h + 5], text:'BGP SPEAKER', on: st.net.ann.some(a => a.node === n0.name) }); } }
       if (st.net.mesh.on){ const mp = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && MESHED.has(p.app)); if (mp) items.push({ at:[mp.pos[0] + 6.6, mp.pos[1] - 1.3, mp.pos[2] + 3.4], text:'ESCORT', on: st.parcels.some(pc => pc.sleeve) }); items.push({ at:[o.x1 + 13, o.y0 + 8, o.z0 + 11], text:'MESH DESK', on:false }); }
       if (st.net.managed){ items.push({ at:[-3, 28, 15], text:'PROVIDER', on:false }); if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[cb.x0 + 2.6, cb.y0 + 2.5, cb.h + 3], text:'RELAY', on: st.caps.length > 0 }); } } }
