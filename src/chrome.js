@@ -28,6 +28,9 @@ const BUTTONS = [
     { label:'delete spark', disabled: !depOf('spark'), why:'spark is not deployed', onClick: () => deleteDep('spark') },
     ...(SHOP() ? [ { label:'NetworkPolicy: db accepts only api', current: !!st.sec.netpol && st.mode === 'demo', onClick: () => applyNetpol() },
       { label:'remove the policy', disabled: !st.sec.netpol, why:'no NetworkPolicy in force', onClick: () => removeNetpol() } ] : []),
+    ...(SHOP() ? [ { label:'mesh: inject sidecars into web and api', current: st.net.mesh.on && st.mode === 'demo', onClick: () => applyMesh() },
+      { label:'canary: 10% of web to v2', current: st.net.mesh.canary === 10, onClick: () => applyCanary(10) },
+      { label:'remove the mesh', disabled: !st.net.mesh.on && !st.net.mesh.canary, why:'no mesh installed', onClick: () => removeMesh() } ] : []),
     { label:'reset the demo', onClick: () => { startDemo(); say('reset', 'Demo cluster reset: web x3, api x2, db x1'); } } ] },
   { label:'Scale web', short:'Scale', choices: () => scaleChoices('web') },
   { label:'Roll out', choices: () => { const w = depOf('web'), a = depOf('api'); return [
@@ -39,7 +42,7 @@ const BUTTONS = [
     { label:'delete the db pod', onClick: () => deletePod('db') },
     { label:'crash a container', onClick: () => crashPod() },
     { label:'fail a readiness probe', onClick: () => unreadyPod() },
-    ...(SHOP() ? [ { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
+    ...(SHOP() ? [ { label:'stop CoreDNS', disabled: !st.net.dns.up, why:'the directory is already closed', onClick: () => stopDns() }, { label:'forge a job card', onClick: () => forgeCard() }, { label:"let node-b's badge expire", onClick: () => expireBadge('node-b') }, { label:'apply a privileged pod', onClick: () => applyPrivileged() } ] : []),
     { label:'stop an etcd follower', onClick: () => window.ControlRoom && ControlRoom.stopFollower() },
     { label:'stop the etcd leader', onClick: () => window.ControlRoom && ControlRoom.stopLeader() } ] },
   { label:'Drain', choices: () => st.nodes.map(n => ({ label: n.cordoned ? `uncordon ${n.name}` : `drain ${n.name}`, onClick: () => n.cordoned ? uncordon(n) : drain(n) })) },
@@ -48,7 +51,12 @@ const BUTTONS = [
     { label: SHOP() ? 'the demo floor' : 'the demo yard', current: st.mode === 'demo', onClick: () => { startDemo(); say('demo', 'Back to the demo cluster'); } },
     { label:'open a kubectl JSON file', onClick: () => loadFile() },
     { label:'watch localhost:8788', current: st.live.url === 'http://localhost:8788/cluster.json', onClick: () => watchUrl('http://localhost:8788/cluster.json', 5) },
-    { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } } ] } ];
+    { label: st.showSys ? 'hide system pods' : 'show system pods', onClick: () => { st.showSys = !st.showSys; for (const p of st.pods) if (p.sys && !st.showSys && p.node){ removeFromNode(p); p.phase = 'pending'; } run(); } },
+    ...(SHOP() ? [ { label:'fabric: static routes', sub:'the Hard Way: a route per cell, written by hand', current: st.net.fabric === 'static', onClick: () => setFabric('static') },
+      { label:'fabric: BGP', sub:'every cabinet announces its PodCIDR to the junction; two spine lanes', current: st.net.fabric === 'bgp', onClick: () => setFabric('bgp') },
+      { label:'service addressing: kube-proxy iptables', current: st.net.svc === 'iptables', onClick: () => setSvcMode('iptables') },
+      { label:'service addressing: eBPF (kube-proxy replacement)', sub:'Cilium, as on DigitalOcean Kubernetes', current: st.net.svc === 'ebpf', onClick: () => setSvcMode('ebpf') },
+      { label: st.net.managed ? 'self-managed control plane' : 'managed control plane', sub: st.net.managed ? 'bring the office back onto the mezzanine' : 'the office moves into the provider\'s building; a tunnel to every cabinet', onClick: () => setManaged(!st.net.managed) } ] : []) ] } ];
 const scaleChoices = app => [1, 2, 3, 5, 8].map(n => ({ label:`${n} replica${n === 1 ? '' : 's'}`, current: st.mode === 'demo' && !!depOf(app) && depOf(app).replicas === n, onClick: () => scaleTo(app, n) }));
 const btns = document.getElementById('btns');
 const closeChips = () => document.querySelectorAll('.stepwrap.open').forEach(w => w.classList.remove('open'));
@@ -88,7 +96,8 @@ async function loadChapter(id){ try {
   chap.querySelector('.prose').innerHTML = col.innerHTML + `<a class="more" href="${GUIDE}#${encodeURIComponent(id)}">Back to the guide ↗</a>`; chapb.hidden = false; } catch {} }
 // a camera intent per chapter: frame the thing the chapter is about, or follow the operation it presses
 const CHAPTER = {
-  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 }, security: { follow: 1 },
+  boot: { follow: 1 }, apply: { follow: 1 }, scale: { follow: 1 }, rollout: { follow: 1 }, heal: { follow: 1 }, probes: { follow: 1 }, gang: { follow: 1 }, traffic: { follow: 1 }, security: { follow: 1 }, fabric: { follow: 1 }, dns: { follow: 1 }, mesh: { follow: 1 },
+  managed: { frame: () => ({ type:'tower' }) },
   pods: { frame: () => { const p = st.pods.find(p => p.pos && p.configMap) || st.pods.find(p => p.pos); return p && { type:'pod', id: p.id }; } },
   nodes: { frame: () => st.nodes[0] && { type:'node', node: st.nodes[0].name } },
   control: { frame: () => ({ type:'tower' }) },
@@ -175,7 +184,15 @@ const EXPLAIN = {
   'PVC': 'A PersistentVolumeClaim: the fixture pallet under the machine, storage bound to the Pod that outlives any program in it.',
   'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
   'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
-  'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.' };
+  'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.',
+  'JUNCTION': 'The row\'s top-of-rack switch: with BGP every cabinet in the row announces its PodCIDR here, and the junctions trade routes over the spine.',
+  'SPINE': 'The main avenue of the fabric: two lanes of equal cost, so consecutive parts take turns (ECMP), the way a Clos fabric spreads flows over its spines.',
+  'BGP SPEAKER': 'The CNI\'s BGP speaker on the node (Cilium or Calico): it peers with the top-of-rack switch and announces the node\'s PodCIDR, withdrawing it when the node leaves.',
+  'DIRECTORY': 'CoreDNS: two pods in kube-system behind the kube-dns ClusterIP. Every pod\'s resolv.conf points here; a Service name becomes its ClusterIP, a headless Service becomes the pod addresses.',
+  'ESCORT': 'The sidecar proxy (Envoy for Istio, the Linkerd proxy) injected beside the containers: it takes the machine\'s parts in and out, encrypts them to other escorts, retries, times out and reports.',
+  'MESH DESK': 'The mesh control plane (istiod, or Linkerd\'s): it issues each escort a certificate from the mesh\'s own CA, which is not the cluster CA, and pushes routing rules such as a weighted split.',
+  'RELAY': 'The konnectivity agent: a managed control plane cannot reach into your network, so each node runs a relay that opens a tunnel to the provider\'s counter; logs and exec come back through it.',
+  'PROVIDER': 'A managed control plane: the API server, etcd, the scheduler and the controllers run in the provider\'s building; you see the counter\'s address and nothing behind it.' };
 function cardFor(a){
   if (a.type === 'pod'){ const p = st.pods.find(p => p.id === a.id); if (!p) return null; const d = depOf(p.app), live = st.mode === 'live';
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
@@ -190,7 +207,7 @@ function cardFor(a){
   if (a.type === 'node'){ const n = st.nodes.find(n => n.name === a.node); if (!n) return null; const mine = st.pods.filter(p => p.node === n.name && p.phase !== 'terminating' && !(p.sys && !st.showSys)), cap = cellCap();
     return { kick: T().node, title: esc(n.name), body: `<table>${row('Status', n.joined < 1 ? LAMP(LAMPC.grey) + (n.joining ? 'Joining: the kubelet is registering' : 'Not registered (no kubelet yet)') : LAMP(n.ready ? (n.cordoned ? LAMPC.amber : LAMPC.green) : LAMPC.red) + (n.ready ? 'Ready' : 'NotReady') + (n.cordoned ? ', cordoned (SchedulingDisabled)' : ''))}` +
       row('Pods', `${mine.length} on this node`) + row('Capacity', `${n.used.size}/${cap} ${SHOP() ? 'bays' : 'slots'} allocated · maxPods ${cap} (the kubelet's pod-count cap, with CPU and memory)`) + (n.gpus ? row('GPUs', `${gpuUsed(n)}/${n.gpus} in use`) : '') +
-      (SHOP() ? row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
+      (SHOP() ? row('Fabric', st.net.fabric === 'bgp' ? `BGP speaker: announces 10.200.${st.nodes.indexOf(n)}.0/24 to junction ${(n.row || 0) + 1}${n.cordoned ? ' (withdrawn while cordoned)' : ''}` : `static route per cell to 10.200.${st.nodes.indexOf(n)}.0/24 (no announcements)`) + row('Service addressing', st.net.svc === 'ebpf' ? 'eBPF programs from the CNI (Cilium); no kube-proxy on this node' : 'kube-proxy, iptables mode: a chain per Service') + (st.net.managed ? row('Tunnel', 'konnectivity agent: the cabinet reaches the provider\'s counter, and the counter reaches it for logs and exec, through the relay') : '') + row('Identity', `<b>system:node:${esc(n.name)}</b> · group system:nodes: the Node authorizer lets it read and write only its own node's objects, NodeRestriction keeps it from touching other nodes' pods`) : '') +
       (SHOP() ? row('Image cache', n.cache && n.cache.size ? [...n.cache].map(esc).join(', ') : 'empty') + row('Pulling', n.pull ? esc(imageOf(n.pull.pod)) + (n.pull.warm ? ' (from the cache)' : ' (from the registry)') : 'nothing; ' + st.pods.filter(p => p.node === n.name && p.phase === 'queued').length + ' queued') : '') +
       row('Runs', T().runs) + (SHOP() ? row('Badge', n.cert ? (n.cert.ok ? `kubelet certificate valid, expires in ${Math.max(0, n.cert.exp - st.t).toFixed(0)} s, rotates at 80%` : '<span style="color:#b3261e">kubelet certificate expired: its status updates are refused</span>') : 'none yet: no CSR signed') + row('Gates', gatesText(n, mine)) : '') + '</table>',
       acts: [ n.cordoned ? { label:'uncordon', onClick: () => { uncordon(n); run(); } } : { label:'drain', title:'cordon, then evict every pod', onClick: () => { drain(n); run(); } } ] }; }
@@ -198,12 +215,13 @@ function cardFor(a){
     return { kick: 'Control plane', title: T().tower, body: `<table>${row('etcd', LAMP(cp.etcd && !cp.hold ? LAMPC.green : cp.etcd ? LAMPC.amber : LAMPC.red) + (!cp.etcd ? 'down' : cp.hold ? 'no leader, election running' : R ? `leader ${esc(R.members[R.leader].name)}, term ${R.term}, ${R.members.filter(m => m.up).length}/3 up` : 'up'))}` +
       row('API server', LAMP(cp.api ? LAMPC.green : LAMPC.red) + (cp.api ? 'serving on :6443' : 'down')) + row('Controllers', LAMP(cp.ctrl ? LAMPC.green : LAMPC.red) + (cp.ctrl ? 'controller manager and scheduler running' : 'not running')) +
       row('Pending', `${st.pods.filter(p => p.phase === 'pending').length} pods waiting for a node`) +
-      (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
+      (SHOP() && st.net.managed ? row('Owner', 'the provider: a managed control plane behind the fence, reached through the konnectivity tunnel; the cells are yours') : '') + (SHOP() ? row('CA', st.sec.ca ? `${LAMP(LAMPC.green)}cluster CA from kubeadm; ${st.sec.badges} certificates signed` : LAMP(LAMPC.grey) + 'not created yet') + row('Admission', 'Pod Security Admission enforces restricted on default') + row('Secrets', 'encrypted at rest (EncryptionConfiguration; the key stays in the office)') + row('Audit', 'every request in the logbook (the control room log)') : '') + '</table>',
       acts: [ { label:'control room', onClick: () => setRoom(!html.classList.contains('room')) }, { label:'bootstrap', title: T().boot, onClick: () => bootstrap() } ] }; }
   if (a.type === 'kiosk'){ const svc = svcMain(); if (!svc) return { kick:'Service', title: T().kiosk, body:'<p>No Service in this cluster.</p>', acts: [] }; const eps = endpointsOf(svc), all = st.pods.filter(p => p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating');
     return { kick: 'Service · ClusterIP', title: `${esc(svc.name)}:${(svc.ports || [])[0] || 80}`, body: `<table>${row('Selector', esc(Object.entries(svc.selector || {}).map(([k, v]) => k + '=' + v).join(', ') || '—'))}` +
       row('Endpoints', eps.length ? eps.map(p => LAMP(LAMPC.green) + esc(p.name)).join('<br>') : '<span style="color:#b3261e">none Ready (503)</span>') +
-      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) + '</table>',
+      (all.length > eps.length ? row('Not Ready', all.filter(p => !eps.includes(p)).map(p => LAMP(lampOf(p)) + esc(p.name)).join('<br>')) : '') + row('Round robin', `next: ${eps.length ? esc(eps[st.rr % eps.length].name) : '—'}`) +
+      (SHOP() ? row('Name', `${esc(svc.name)}.default.svc.cluster.local -> this ClusterIP, from the directory (CoreDNS)`) : '') + (SHOP() && st.net.mesh.on && st.net.mesh.canary && svc.name === 'web' ? row('Mesh split', `${100 - st.net.mesh.canary} / ${st.net.mesh.canary} v1 / v2 by the sidecars (VirtualService / HTTPRoute), not by this Service`) : '') + '</table>',
       acts: [ { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
   if (a.type === 'gate'){ const ing = st.ingresses[0], svc = svcMain();
     return { kick: 'Ingress', title: esc(ing ? ing.host : T().gate), body: `<table>${row('Routes to', svc ? `Service ${esc(svc.name)}:${ing && ing.port || (svc.ports || [])[0] || 80}` : '—')}${row('Then', 'kube-proxy sends it to one Ready endpoint')}${row('Requests', `${st.parcels.length} ${T().inflight}`)}${row('Answered', `${st.reqs.ok} of ${st.reqs.sent}`)}${row('Errors', st.reqs.err ? `${st.reqs.err}: ${st.reqs.reset} connection reset, ${st.reqs.err - st.reqs.reset} with no endpoint (503)` : 'none')}</table>`,
@@ -222,6 +240,11 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
+  if (a.type === 'dns'){ const d = st.net.dns; return { kick: 'Cluster DNS · kube-system', title: 'The directory (CoreDNS)', body: `<table>${row('Service', 'kube-dns · ClusterIP 10.96.0.10 · 53/UDP+TCP')}${row('Pods', LAMP(d.up ? LAMPC.green : LAMPC.red) + (d.up ? '2/2 CoreDNS Ready' : '0/2 Ready: the Deployment is replacing them'))}${row('resolv.conf', 'nameserver 10.96.0.10 · search default.svc.cluster.local svc.cluster.local cluster.local · ndots:5')}${row('Answers', 'web -> web.default.svc.cluster.local -> the ClusterIP; a headless Service -> the pod addresses themselves')}</table>`,
+      acts: [ { label: d.up ? 'stop CoreDNS' : 'coming back…', onClick: () => stopDns() }, { label:'send a request', go: true, onClick: () => { request(); run(); } } ] }; }
+  if (a.type === 'junction'){ const r = a.row || 0, cells = st.nodes.filter(n => n.row === r), bgp = st.net.fabric === 'bgp';
+    return { kick: 'Fabric', title: `Junction ${r + 1} · top-of-rack switch`, body: `<table>${row('Routes', cells.map(n => `10.200.${st.nodes.indexOf(n)}.0/24 ${bgp ? (n.cordoned ? '<span style="color:#b3261e">withdrawn</span>' : 'learned from ' + esc(n.name)) : 'static via ' + esc(n.name)}`).join('<br>') || '—')}${row('Peers', bgp ? cells.map(n => esc(n.name)).join(', ') + ' (each cabinet\'s BGP speaker, one AS per rack or per node)' : 'none: static routes')}${row('Uplinks', bgp ? 'two spine lanes, equal cost: parts take turns (ECMP)' : 'one lane')}</table>`,
+      acts: [ { label: bgp ? 'static routes' : 'switch to BGP', onClick: () => setFabric(bgp ? 'static' : 'bgp') } ] }; }
   if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;
 }
@@ -291,6 +314,7 @@ function wireSwitches(){
 function init(api){ yard = api; buildButtons(); wireSwitches(); wireClock();
   const ch = Q.get('chapter'); if (ch){ loadChapter(ch); }
   if (Q.get('netpol') === '1' && SHOP()) applyNetpol(true);
+  if (SHOP()){ if (Q.get('fabric') === 'bgp') setFabric('bgp', true); if (Q.get('svc') === 'ebpf') setSvcMode('ebpf', true); if (Q.get('mesh') === '1') applyMesh(true); if (Q.has('canary')) applyCanary(+Q.get('canary') || 10, true); if (Q.get('managed') === '1') setManaged(true, true); }
   if (Q.has('press')) Q.get('press').split(',').forEach(item => { const [what, ms] = item.split('@'), [label, choice] = what.split('>'); setTimeout(() => press(label, choice), +ms || 0); });
   const tst = $('#toast'); if (tst) tst.addEventListener('click', e => { e.stopPropagation(); fanToasts(); });
   addEventListener('keydown', e => { if (e.key === 'Escape'){ closeSheets(); hideCard(); } });

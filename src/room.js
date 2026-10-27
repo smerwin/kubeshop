@@ -88,6 +88,8 @@ function staticSvg(){
   s += `<path d="M${kx(4) + 50} 492L612 492L612 ${BUS + 8}" fill="none" stroke="${INKC}" stroke-width="1" opacity=".55"/>` + text('write', 610, BUS + 20, { size: 8.5, weight: 600, col: MUTED, anchor: 'end' });
   // the other direction: the API server calls into the kubelet for logs, exec, port-forward and metrics
   s += `<g id="k-in">` + box(454, 532, 156, 36, { r: 5 }) + text('inbound :10250\nlogs · exec · port-forward', 532, 550, { size: 8.5 }) + '</g>';
+  // cluster DNS: CoreDNS pods behind the kube-dns ClusterIP, the first stop of every request by name
+  s += `<g id="dns">` + box(30, 532, 170, 36, { r: 5 }) + text('CoreDNS · kube-dns 10.96.0.10\nweb -> web.default.svc.cluster.local', 115, 550, { size: 8 }) + '</g>';
   // kube-proxy
   s += box(650, 410, 330, 170, { fill: PAPERC, sw: 1.8 }) + `<g id="p-title"></g>`;
   s += `<g id="p-inf">` + box(662, 456, 306, 24, { r: 4 }) + text('informer: EndpointSlices', 815, 468, { size: 10 }) + '</g>';
@@ -277,7 +279,9 @@ function observe(){
   if (!prev.cp.api && now.cp.api) chain('cp:api', async () => { for (let i = 0; i < 6; i++) lit('stage' + i, 900); lit('watch', 900); logLine('kube-apiserver: serving on :6443 (etcd reachable)'); });
   if (!prev.cp.ctrl && now.cp.ctrl) chain('cp:ctrl', async () => { for (const id of ['dep', 'rs', 'ep']) lit('c-' + id, 900); lit('s-queue', 900); logLine('kube-controller-manager and kube-scheduler: Lease acquired (leader election), informers synced'); });
   // traffic: the data plane
-  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => { R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
+  if (now.parcels > prev.parcels){ const pc = st.parcels[st.parcels.length - 1]; if (pc) chain('req', async () => {
+      if (pc.dns){ lit('dns', 700, pc.dns === 'fail' ? REDC : undefined); logLine(pc.dns === 'fail' ? `CoreDNS: ${pc.svc.name}.default.svc.cluster.local -> SERVFAIL / timeout: kube-dns has no endpoints; the client cannot resolve the name` : `CoreDNS: ${pc.svc.name}.default.svc.cluster.local -> A ${pc.svc.name === 'web' ? '10.96.0.12' : '10.96.0.' + (20 + pc.svc.name.length)} (the ClusterIP; the search list and ndots:5 in resolv.conf expanded the short name)`); await sleep(500); if (pc.dns === 'fail') return; }
+      R.proxyNode = pc.pod ? pc.pod.node : R.proxyNode; lit('p-rules', 600); await bead([[815, 530], [815, 549]], { label: pc.pod ? 'request' : '503', col: pc.pod ? col(pc.pod) : REDC, dur: 300, tls: false }); lit('p-out', 600); logLine(pc.pod ? `kube-proxy ${R.proxyNode}: ClusterIP ${pc.svc.name} DNAT -> ${pc.pod.name}` : `kube-proxy: Service ${pc.svc.name} has no Ready endpoints -> connection refused (503 at the Ingress)`);  }); }
   prev = now;
 }
 const depOfName = app => { const d = cfg.st.deploys.find(d => d.app === app); return d ? d.name : app; };

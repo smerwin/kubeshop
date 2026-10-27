@@ -24,8 +24,8 @@ const basis = (yaw, pitch) => { const d = viewDir(yaw, pitch), R = new THREE.Vec
 const measure = () => { const r = zwrap.getBoundingClientRect(); box = { w: Math.max(1, r.width), h: Math.max(1, r.height), left: r.left, top: r.top }; };
 function reframe(){
   layout(st); measure();
-  const { R, U } = basis(YAW0, PITCH0), c = V3(W/2, D/2, HTOP/2), xs = [], ys = [];
-  for (const x of [0, W]) for (const y of [0, D]) for (const z of [0, HTOP]){ const q = V3(x, y, z).sub(c); xs.push(q.dot(R)); ys.push(q.dot(U)); }
+  const x0 = cfg.extent ? cfg.extent().x0 : 0, { R, U } = basis(YAW0, PITCH0), c = V3((x0 + W)/2, D/2, HTOP/2), xs = [], ys = [];   // cfg.extent: the scene reaches past the floor's edge (the provider's building)
+  for (const x of [x0, W]) for (const y of [0, D]) for (const z of [0, HTOP]){ const q = V3(x, y, z).sub(c); xs.push(q.dot(R)); ys.push(q.dot(U)); }
   const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys), A = box.h/box.w, yard = YARD_MODE(), phone = box.w < 560;
   const fw = yard ? .9 : phone ? .74 : .64, fh = yard ? .6 : .88;
   const vbW = Math.max(bw/fw, bh/fh/A); frame = { w: vbW, h: vbW*A, ymid: (Math.max(...ys) + Math.min(...ys))/2 };
@@ -33,7 +33,7 @@ function reframe(){
   applyFrame(); camMoved = false; if (cfg.onRelayout) cfg.onRelayout(); invalidate();
 }
 window.reframe = reframe;
-function overviewFocus(){ const f = YARD_MODE() ? .5 : box.w < 560 ? .44 : .42; return V3(W/2, D/2, HTOP/2).add(new THREE.Vector3(0, (frame.ymid + (f - .5)*frame.h)/Math.cos(PITCH0*Math.PI/180), 0)); }
+function overviewFocus(){ const f = YARD_MODE() ? .5 : box.w < 560 ? .44 : .42, x0 = cfg.extent ? cfg.extent().x0 : 0; return V3((x0 + W)/2, D/2, HTOP/2).add(new THREE.Vector3(0, (frame.ymid + (f - .5)*frame.h)/Math.cos(PITCH0*Math.PI/180), 0)); }
 let camMoved = false, restT = 0;
 function applyFrame(){ camMoved = true; placeCam(); }
 function placeCam(){ const w = frame.w/cam.zoom, h = frame.h/cam.zoom;
