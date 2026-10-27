@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" class="nolabels"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Longshore</title>
+<style>
+  :root{--paper:#f2efe7;--ink:#231e16;--muted:#857d6e;--rule:#ddd6c8;--accent:#f4b829}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background-color:var(--paper);
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .42  0 0 0 0 .39  0 0 0 0 .33  .16 0 0 0 0'/></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>");
+    overflow-x:hidden;color:var(--ink);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;display:flex;flex-direction:column;align-items:center;padding:24px 16px 32px}
+  header{width:100%;max-width:760px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+  header h1{font-size:13px;font-weight:600;margin:0;letter-spacing:.02em} header span{color:var(--muted)}
+  .stage{position:relative;width:100%;max-width:760px}
+  .zwrap{position:relative;width:100%;aspect-ratio:4/3;margin:4px 0 8px;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:grab;overflow:visible}
+  .zwrap.drag{cursor:grabbing} .zwrap.pick{cursor:pointer}
+  #gl{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y}
+  #ov{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none}
+  html.nolabels #ov .tag{display:none}
+  #ov .tag text{font:800 10px ui-monospace,Menlo,monospace;letter-spacing:.04em;fill:var(--ink)} #ov .tag rect{fill:#fff4d6} #ov .tag.on rect{fill:var(--accent)}
+  .actions{position:absolute;top:4px;left:0;display:flex;flex-direction:column;align-items:flex-start;gap:8px;z-index:2;max-width:220px}
+  .stats{position:absolute;top:44px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:10px;z-index:2;text-align:right}
+  .stat .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-size:34px;font-weight:800;line-height:1.05;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .stat.small .v{font-size:20px}
+  .stat .v.bump{animation:bump .35s ease-out}
+  @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
+  .vset{position:absolute;top:4px;right:0;z-index:2}.vrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .stepwrap{position:relative;display:flex;align-items:center;gap:8px}
+  .act{font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);border-radius:999px;padding:5px 14px;cursor:pointer;white-space:nowrap}
+  .act:hover{background:color-mix(in srgb,var(--paper) 92%,var(--ink))}
+  .act[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+  .act .car{margin-left:6px;font-size:10px}
+  .act:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .chips{display:none;flex-wrap:wrap;gap:6px;background:var(--paper);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 var(--ink);
+    padding:8px;width:max-content;max-width:min(300px,62vw);position:absolute;left:calc(100% + 10px);top:-4px;z-index:3}
+  .stepwrap.open .chips{display:flex}
+  .chip{white-space:nowrap;font:inherit;font-size:11.5px;font-weight:700;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);border-radius:8px;padding:4px 8px;cursor:pointer;box-shadow:2px 2px 0 var(--ink)}
+  .chip:hover{background:var(--accent,#f4b829);transform:translate(-1px,-1px)}
+  .chip.current{background:var(--ink);color:var(--paper)} .chip.current:hover{background:var(--ink);transform:none}
+  .chip.off{opacity:.45} .chip.off:hover{transform:none;background:var(--paper)}
+  .toast{position:absolute;left:50%;top:6%;z-index:4;transform:translate(-50%,8px);opacity:0;pointer-events:none;display:flex;align-items:center;gap:8px;
+    width:max-content;max-width:min(86%,440px);font:600 12.5px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:#fff1bf;
+    border:1px solid rgba(35,30,22,.28);border-radius:8px;box-shadow:0 8px 22px rgba(35,30,22,.16);padding:7px 13px 7px 9px;transition:opacity .18s ease,transform .18s ease}
+  .toast::before{content:"!";flex:none;width:17px;height:17px;border-radius:50%;background:var(--ink);color:#fff1bf;font:800 11px/17px ui-monospace,Menlo,monospace;text-align:center}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .zchip{position:absolute;right:2px;bottom:6px;display:flex;align-items:center;gap:2px;font:600 11px ui-monospace,Menlo,monospace;
+    background:rgba(242,239,231,.88);border:1px solid rgba(35,30,22,.25);border-radius:999px;padding:2px;z-index:3;user-select:none}
+  .zchip button{all:unset;cursor:pointer;min-width:22px;height:22px;line-height:22px;text-align:center;border-radius:999px;color:var(--ink)}
+  .zchip button:hover{background:rgba(35,30,22,.08)}.zchip .zp{min-width:44px}
+  .lgd{display:none;grid-template-columns:1fr 1fr;gap:2px 8px;margin:4px 0 12px;width:100%;max-width:760px;font:700 10.5px/1.25 ui-monospace,Menlo,monospace;letter-spacing:.03em}
+  .lgd button{all:unset;display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px;border-radius:7px;-webkit-tap-highlight-color:transparent}
+  .lgd b{flex:none;min-width:17px;height:17px;padding:0 3px;border-radius:999px;border:1.2px solid var(--ink);background:#fff4d6;text-align:center;font:800 10px/15px ui-monospace,Menlo,monospace}
+  .lgd .on b{background:var(--accent)}.lgd .sel{background:rgba(35,30,22,.09)}.lgd .sel b{background:var(--ink);color:#fff4d6}
+  .controls{width:100%;max-width:760px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px 28px;border-top:1px solid var(--rule);padding-top:16px}
+  .ctl{display:flex;flex-direction:column;gap:6px}
+  .ctl label{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button{font:inherit;color:var(--ink);background:transparent;border:1.5px solid var(--ink);border-radius:999px;padding:5px 14px;cursor:pointer}
+  button:hover{background:#0000000d}
+  button[aria-pressed=true]:not(.sw){background:var(--ink);color:var(--paper)}
+  .sw{width:26px;height:26px;padding:0;border-radius:50%} .sw[aria-pressed=true]{outline:2px solid var(--ink);outline-offset:2px}
+  .made-with{width:100%;max-width:760px;margin-top:18px;text-align:right;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .made-with a{color:var(--muted);text-decoration:none} .made-with a:hover{color:var(--ink)}
+  /* the control room: a second panel under the yard */
+  #room{display:none;width:100%;max-width:760px;margin:0 0 14px}
+  html.room #room{display:block}
+  #room svg{width:100%;height:auto;display:block;overflow:visible}
+  #room .cap{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 0 4px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  #room .cap b{color:var(--ink);letter-spacing:.06em}
+  #room .log{font:600 11.5px/1.35 ui-monospace,Menlo,monospace;min-height:1.4em;margin:4px 0 0;color:var(--ink)}
+  @media (max-width:560px){body{padding:14px 12px 24px}body > header{display:none}
+    .actions{position:static;max-width:none;margin:6px 0 4px;flex-direction:row;flex-wrap:wrap;gap:6px}.act{font-size:12px;padding:4px 11px}
+    .stats{position:static;flex-direction:row;justify-content:flex-end;gap:18px;margin-bottom:4px}.stat .v{font-size:20px}
+    .vset{position:static;margin:8px 0 2px}.chips{left:0;top:calc(100% + 8px)}
+    .zwrap{aspect-ratio:1/1.1}
+    html:not(.nolabels) .lgd.has{display:grid}}
+</style></head><body>
+<header><h1>Fig. K8 — Longshore</h1><span>drag to turn · pinch or ctrl+wheel to zoom</span></header>
+<div class="stage">
+  <div class="actions" id="btns"></div>
+  <div class="vset"><div class="vrow"><button class="act" id="xrb" aria-pressed="false">See-through</button><button class="act" id="lblb" aria-pressed="false">Labels</button><button class="act" id="roomb" aria-pressed="false">Control room</button></div></div>
+  <div class="stats" id="stats"></div>
+  <div class="zwrap" id="zwrap"><canvas id="gl"></canvas><svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="zchip"><button class="zm" aria-label="Zoom out">−</button><button class="zp" aria-label="Reset zoom">100%</button><button class="zi" aria-label="Zoom in">+</button></div>
+    <div class="toast" id="toast" role="status"></div></div>
+</div>
+<div class="lgd" id="lgd"></div>
+<div id="room"></div>
+<div class="controls">
+  <div class="ctl"><label>Colour</label><div class="row" id="pals"></div></div>
+  <div class="ctl"><label>View</label><div class="row"><button id="vreset">Front view</button><button id="vspin" aria-pressed="false">Turntable</button></div></div>
+</div>
+<footer class="made-with"><a href="https://april-zhu.com/colorfigures" target="_blank" rel="noopener">Drawn after Colorfigures ↗</a> · <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> · <a href="longshore.html">old engine</a></footer>
+<script>
+/* the palette helpers the simulation expects from the Colorfigures engine */
+const PALS = {
+  mustard: { l:'#f4b829', m:'#d49c1f', d:'#4e4a18' },
+  tomato:  { l:'#ef6a4c', m:'#cf5038', d:'#4a2219' },
+  mint:    { l:'#93d3b0', m:'#71b693', d:'#1f4034' },
+  cobalt:  { l:'#76a0e2', m:'#5a82c6', d:'#1c2948' },
+  blush:   { l:'#f3a6bb', m:'#d8869c', d:'#4b2430' } };
+const METAL = { l:'#eef0f0', m:'#c6ccce', d:'#8f989b' }, CERAMIC = { l:'#fbfaf3', m:'#e3e0d2', d:'#bdb8a6' }, DARK = { l:'#55504a', m:'#3d3935', d:'#272421' };
+const WOOD = { l:'#d9a86c', m:'#bf8a4f', d:'#8e6236' }, CLEAR = { l:'#e4f2f4', m:'#c4dfe4', d:'#97b9c0' }, INK = '#231e16', SHADOW = '#41538f';
+const mix = (a, b, t) => '#' + [1,3,5].map(i => Math.round(parseInt(a.substr(i,2),16)*(1-t) + parseInt(b.substr(i,2),16)*t).toString(16).padStart(2,'0')).join('');
+const matOf = hex => ({ l:hex, m:mix(hex,'#000000',.16), d:mix(hex,'#000000',.42) });
+const ease = t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+addEventListener('error', e => { document.documentElement.dataset.errors = (document.documentElement.dataset.errors || '') + ' ' + e.message + ';'; });
+</script>
+<script src="sim.js"></script>
+<script src="room.js"></script>
+<script type="module" src="yard3d.js"></script>
+</body></html>
