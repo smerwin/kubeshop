@@ -47,6 +47,10 @@
   .clock button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
   html.yard .clock{display:none}
   .toast .was{opacity:.55;font-weight:600} .toast .now{font-weight:700}
+  /* recent events: columns on a wide page, a short stack of rows on a phone and in full screen, each row clamped to two lines */
+  .toast .lines{display:flex;flex-wrap:wrap;gap:4px 14px;min-width:0} .toast .lines div{flex:1 1 150px;max-width:230px;overflow-wrap:anywhere}
+  html.yard .toast{top:auto;bottom:calc(76px + var(--sab) + var(--cardh,0px));left:calc(82px + var(--sal));right:calc(10px + var(--sar));width:auto;max-width:none;transform:none;align-items:flex-start}
+  html.yard .toast .lines,.toast.stack .lines{flex-direction:column;flex-wrap:nowrap;gap:3px} html.yard .toast .lines div,.toast.stack .lines div{flex:none;max-width:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   @keyframes bump{0%{transform:scale(1.18)}100%{transform:none}}
   .vset{position:absolute;top:4px;right:0;z-index:2}.vrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
   .vrow .yardonly{display:none}
@@ -138,7 +142,7 @@
     .actions{position:static;max-width:none;margin:6px 0 4px;flex-direction:row;flex-wrap:wrap;gap:6px}.act{font-size:12px;padding:4px 11px}
     .strip{position:static;flex-direction:row;flex-wrap:wrap;justify-content:flex-end;gap:12px 18px;margin-bottom:4px}.stats{flex-direction:row;gap:18px}.stat .v{font-size:20px}.clock{max-width:none;margin-top:0}
     .vset{position:static;margin:8px 0 2px}.chips{left:0;top:calc(100% + 8px)}
-    .zwrap{aspect-ratio:1/1.1}}
+    .zwrap{aspect-ratio:1/1.1}.toast{max-width:92%}.toast .lines{flex-direction:column;flex-wrap:nowrap;gap:3px}.toast .lines div{flex:none;max-width:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
   /* ---------- yard mode: the canvas is the whole viewport and the page never scrolls ---------- */
   html.yard,html.yard body{height:100%;overflow:hidden;overscroll-behavior:none}
   html.yard body{padding:0;display:block;position:fixed;inset:0;width:100%}
@@ -158,7 +162,6 @@
   html.yard .vset{position:fixed;right:calc(8px + var(--sar));top:calc(52px + var(--sat));z-index:11} html.yard .vrow{flex-direction:column;align-items:flex-end;gap:5px;flex-wrap:nowrap}
   html.yard .vrow .act{font-size:11px;padding:5px 10px;min-height:30px;background:rgba(242,239,231,.92)} html.yard .vrow .act[aria-pressed=true]{background:var(--ink)} html.yard .vrow .yardonly{display:inline-block} html.yard .vrow .pageonly{display:none}
   html.yard .compass{left:calc(8px + var(--sal));bottom:calc(74px + var(--sab));width:64px;height:64px}
-  html.yard .toast{top:calc(50px + var(--sat));left:calc(10px + var(--sal));transform:translate(0,8px);max-width:min(calc(100% - 150px),440px)} html.yard .toast.show{transform:none}
   html.yard .card{left:50%;bottom:calc(66px + var(--sab));width:min(520px,calc(100% - 16px));transform:translate(-50%,16px);max-height:48dvh;display:flex;flex-direction:column} html.yard .card.open{transform:translate(-50%,0)}
   html.yard .card .body{max-height:none;overflow:auto;flex:1 1 auto} html.yard .card .acts button{min-height:36px}
   html.yard #room{display:block;position:fixed;left:50%;bottom:0;z-index:21;width:min(760px,100%);max-width:none;max-height:min(76dvh,76vh);margin:0;transform:translate(-50%,105%);transition:transform .32s cubic-bezier(.16,1,.3,1);
@@ -1051,8 +1054,9 @@ function applyChapter(id, camParams){ const c = CHAPTER[id]; if (!c) return;
 /* ---------- the card: what was tapped, with the actions that make sense there ---------- */
 const card = $('#card'); let cardAct = null, cardHtml = '';
 card.querySelector('.x').onclick = hideCard;
-function hideCard(){ card.classList.remove('open'); cardAct = null; yard && yard.select(null); }
+function hideCard(){ card.classList.remove('open'); cardAct = null; html.style.setProperty('--cardh', '0px'); yard && yard.select(null); }
 function open(a){ cardAct = a; cardHtml = ''; renderCard(); card.classList.add('open'); yard.select(a);
+  html.style.setProperty('--cardh', isYard() ? (card.offsetHeight + 8) + 'px' : '0px');   // the toast sits above the card in full screen
   if (a.type !== 'explain') yard.frameAct(a, { below: cardFrac() }); }
 function cardFrac(){ if (!isYard()) return .2; const r = card.getBoundingClientRect(); return Math.max(.1, Math.min(.6, (innerHeight - r.top)/innerHeight)); }
 const LAMP = c => `<span class="lamp" style="background:${c}"></span>`;
@@ -1335,7 +1339,7 @@ const toastLog = [];
 ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.size && !driving) lastT = performance.now(); steps.set(step, tag || 'ui'); drive(); },
   flash: (text, ms = 1600) => { const t = document.getElementById('toast'), line = text[0].toUpperCase() + text.slice(1), hold = Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)));
     toastLog.push(line); while (toastLog.length > 3) toastLog.shift(); const slow = SPEED > 0 && SPEED < 1, lines = slow ? toastLog : toastLog.slice(-1);
-    t.innerHTML = lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join(''); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
+    t.innerHTML = '<div class="lines">' + lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join('') + '</div>'; t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
 // the clock: pause holds every 'sim' step (the floor and the room freeze, the camera still flies); step advances one simulated slice
 function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
 function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }

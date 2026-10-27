@@ -101,7 +101,7 @@ const toastLog = [];
 ui = { st, render: invalidate, invalidate, animate: (step, tag) => { if (!steps.size && !driving) lastT = performance.now(); steps.set(step, tag || 'ui'); drive(); },
   flash: (text, ms = 1600) => { const t = document.getElementById('toast'), line = text[0].toUpperCase() + text.slice(1), hold = Math.max(1200, Math.min(8000, ms/Math.max(SPEED, .15)));
     toastLog.push(line); while (toastLog.length > 3) toastLog.shift(); const slow = SPEED > 0 && SPEED < 1, lines = slow ? toastLog : toastLog.slice(-1);
-    t.innerHTML = lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join(''); t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
+    t.innerHTML = '<div class="lines">' + lines.map((l, i) => `<div class="${i === lines.length - 1 ? 'now' : 'was'}">${esc(l)}</div>`).join('') + '</div>'; t.classList.add('show'); clearTimeout(ui._ft); ui._ft = setTimeout(() => t.classList.remove('show'), hold); } };
 // the clock: pause holds every 'sim' step (the floor and the room freeze, the camera still flies); step advances one simulated slice
 function resume(){ if (!steps.size) return; lastT = performance.now(); drive(); }
 function stepSim(dts){ const was = SPEED; SPEED = 1; for (const [s, tag] of [...steps]) if (tag === 'sim' && s(dts) === false) steps.delete(s); SPEED = was; if (window.ControlRoom) ControlRoom.step(dts); invalidate(); }

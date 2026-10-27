@@ -98,8 +98,9 @@ function applyChapter(id, camParams){ const c = CHAPTER[id]; if (!c) return;
 /* ---------- the card: what was tapped, with the actions that make sense there ---------- */
 const card = $('#card'); let cardAct = null, cardHtml = '';
 card.querySelector('.x').onclick = hideCard;
-function hideCard(){ card.classList.remove('open'); cardAct = null; yard && yard.select(null); }
+function hideCard(){ card.classList.remove('open'); cardAct = null; html.style.setProperty('--cardh', '0px'); yard && yard.select(null); }
 function open(a){ cardAct = a; cardHtml = ''; renderCard(); card.classList.add('open'); yard.select(a);
+  html.style.setProperty('--cardh', isYard() ? (card.offsetHeight + 8) + 'px' : '0px');   // the toast sits above the card in full screen
   if (a.type !== 'explain') yard.frameAct(a, { below: cardFrac() }); }
 function cardFrac(){ if (!isYard()) return .2; const r = card.getBoundingClientRect(); return Math.max(.1, Math.min(.6, (innerHeight - r.top)/innerHeight)); }
 const LAMP = c => `<span class="lamp" style="background:${c}"></span>`;
