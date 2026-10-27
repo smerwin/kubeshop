@@ -1235,6 +1235,8 @@ const EXPLAIN = {
   'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
   'LOCKED DRAWER': 'Secrets encrypted at rest: with an EncryptionConfiguration the API server encrypts Secret values before they reach etcd, with a key only the office holds (or a KMS).',
   'INSPECTOR': 'Pod Security Admission: a validating admission check that refuses a Pod breaking the namespace\'s level (privileged, baseline, restricted) before anything is written.',
+  'ADMISSION': 'The inspector at the counter: admission control. Pod Security Admission refuses a Pod that breaks the namespace\'s level (privileged, baseline, restricted) before anything is written; other policies and webhooks stand at the same spot.',
+  'PVC': 'A PersistentVolumeClaim: the fixture pallet under the machine, storage bound to the Pod that outlives any program in it.',
   'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
   'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
   'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.' };
@@ -1243,7 +1245,7 @@ function cardFor(a){
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
       body: `<table>${row('Status', LAMP(lampOf(p)) + esc(phaseText(p)))}${row('Node', esc(p.node || '—'))}${row('Version', esc(p.ver) + (p.gpu ? ` · GPU x${p.gpu}` : ''))}` +
         row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
-        (p.pvc ? row('Volume', esc(p.pvc)) : '') + (p.configMap ? row('ConfigMap', esc(p.configMap)) : '') + (p.secret ? row('Secret', esc(p.secret) + ' (from the locked drawer: encrypted at rest)') : '') +
+        (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '')) : '') +
         (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
       acts: [ { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
@@ -1282,7 +1284,7 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
-  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
+  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;
 }
 function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c){ hideCard(); return; }
@@ -1803,8 +1805,8 @@ function mkOffice(){
   ins.add(rod([o.x0 + 15, o.y0 + 24.5, z + 5.1], [o.x0 + 16.6, o.y0 + 24.5, z + 5.1], .22, M('#e8b923', { r: .35, m: .8 }))); ins.add(cyl(o.x0 + 14.7, o.y0 + 24.5, z + 5, z + 5.25, .5, M('#e8b923', { r: .35, m: .8 }), { n: 10 }));
   // the inspector at the counter (Pod Security Admission): raises a STOP sign when a job is refused
   const ip = { x: o.x0 + 24.5, y: o.y0 + 11 }; ins.add(cyl(ip.x, ip.y, z, z + 4.2, 1.1, M('#2b3a66', { r: .6 }), { n: 12 })); const head = new THREE.Mesh(sphG(.9), M('#e0b48a', { r: .7 })); head.position.copy(V3(ip.x, ip.y, z + 5.2)); ins.add(head);
-  out.sign = new THREE.Group(); out.sign.add(rod([ip.x + 1.5, ip.y, z + 2.6], [ip.x + 1.5, ip.y, z + 6.4], .18, M(DARKM))); out.sign.add(box(ip.x + 1.2, ip.y - 1.4, z + 6.4, ip.x + 1.8, ip.y + 1.4, z + 8.6, M('#e2483d', { r: .5 }), { r: .3 }));
-  out.sign.add(decal([ip.x + 1.82, ip.y, z + 7.5], [1, 0, 0], [0, -1, 0], 2.6, 2, tex('stop', 2.6, 2, (g, w, h) => { txt(g, 'STOP', w/2, .7, .7, WHITE); txt(g, 'PSA', w/2, 1.45, .55, WHITE, 700); }, 48))); out.signY = out.sign.position.y; ins.add(out.sign);
+  out.sign = new THREE.Group(); out.sign.add(rod([ip.x + 1.5, ip.y, z + 2.6], [ip.x + 1.5, ip.y, z + 6.4], .18, M(DARKM))); out.sign.add(box(ip.x + 1.2, ip.y - 1.8, z + 6.4, ip.x + 1.8, ip.y + 1.8, z + 8.6, M('#e2483d', { r: .5 }), { r: .3 }));
+  out.sign.add(decal([ip.x + 1.82, ip.y, z + 7.5], [1, 0, 0], [0, -1, 0], 3.4, 2, tex('stop', 3.4, 2, (g, w, h) => { txt(g, 'STOP', w/2, .68, .72, WHITE); txt(g, 'ADMISSION', w/2, 1.45, .5, WHITE, 700); }, 48))); out.signY = out.sign.position.y; ins.add(out.sign);
   g.add(ins); out.insides.push(ins);
   // the order board on the outside wall facing the floor
   out.board = box(o.x1 + .4, o.y0 + 6, o.z0 + 4, o.x1 + 1.2, o.y1 - 6, o.z1 - 3, M(WHITE, { r: .5 }), { r: .2 }); out.board.userData.act = { type: 'board' }; pickables.push(out.board); g.add(out.board);
@@ -1959,9 +1961,10 @@ function mkPod(p){
   const ins = new THREE.Group(); p.containers.forEach((c, i) => { const w = i ? 2.2 : 3.4, h = i ? 2.4 : 3.6; ins.add(box(1.5 + i*(w + .8), 1.2, 1.2, 1.5 + i*(w + .8) + w, 1.2 + 2.6, 1.2 + h, own(i ? '#c9a066' : '#e8e1d2', { r: .5 }), { r: .25 })); });
   ins.add(box(1.2, ML - 2.8, 2.2, 2.6, ML - 1.2, 3.8, own('#2d7bd6', { r: .4, m: .4 }), { r: .2 })); ins.add(rod([2.6, ML - 2, 3], [MW - .5, ML - 2, 3], .25, own('#2d7bd6')));
   out.inside = ins; ins.visible = false; out.machine.add(ins);
-  if (p.configMap){ const sh = box(MW - .2, 1.2, 2.2, MW + .3, 5.4, 6.6, own(WHITE, { r: .6 }), { r: .1 }); out.machine.add(sh); out.machine.add(decal([MW + .32, 3.3, 4.4], [1, 0, 0], [0, -1, 0], 3.8, 4, tex('setup', 3.8, 4, (g, w, h) => { for (let y = .8; y < h; y += .7) line(g, [[.4, y], [w - .4, y]], '#8a8580', .18); txt(g, 'SETUP', w/2, .5, .6, '#1d1f22'); }, 32))); }
-  if (p.secret) out.machine.add(box(-1.8, ML - 4, 0, -.2, ML - 1, 2.6, own('#3a3d42', { r: .5, m: .4 }), { r: .2 }));
-  if (p.pvc){ out.machine.add(box(-.4, -.4, 0, MW + .4, ML + .4, .5, own('#8e6236', { r: .7 }), { r: .1 })); out.machine.add(decal([MW + .42, ML/2, .25], [1, 0, 0], [0, -1, 0], 6, .4, tex(`pvtag|${p.pvc}`, 6, .4, (g, w, h) => txt(g, p.pvc.slice(0, 12), w/2, h/2, .32, WHITE), 60))); }
+  if (p.configMap){ const sh = box(MW - .2, 1.2, 2.2, MW + .3, 5.4, 6.6, own(WHITE, { r: .6 }), { r: .1 }); out.machine.add(sh); out.machine.add(decal([MW + .32, 3.3, 4.4], [1, 0, 0], [0, -1, 0], 3.8, 4, tex('setup', 3.8, 4, (g, w, h) => { for (let y = 1.7; y < h; y += .7) line(g, [[.4, y], [w - .4, y]], '#8a8580', .18); txt(g, 'SETUP', w/2, .5, .6, '#1d1f22'); txt(g, 'CONFIGMAP', w/2, 1.15, .42, '#5e5a52', 800); }, 32))); }
+  if (p.secret){ out.machine.add(box(-1.8, ML - 4, 0, -.2, ML - 1, 2.6, own('#3a3d42', { r: .5, m: .4 }), { r: .2 }));
+    out.machine.add(decal([-1.82, ML - 2.5, 1.3], [-1, 0, 0], [0, 1, 0], 2.6, 2.2, tex('secretdoor', 2.6, 2.2, (g, w, h) => { txt(g, 'SECRET', w/2, .5, .5, WHITE, 800); g.strokeStyle = '#e8b923'; g.lineWidth = .14; g.beginPath(); g.arc(w/2, 1.3, .32, Math.PI, 0); g.stroke(); rect(g, w/2 - .42, 1.3, .84, .6, '#e8b923'); }, 48))); }
+  if (p.pvc){ out.machine.add(box(-.4, -.4, 0, MW + .4, ML + .4, .5, own('#8e6236', { r: .7 }), { r: .1 })); out.machine.add(decal([MW + .42, ML/2, .25], [1, 0, 0], [0, -1, 0], 6, .4, tex(`pvtag|${p.pvc}`, 6, .4, (g, w, h) => txt(g, 'PVC ' + p.pvc.slice(0, 12), w/2, h/2, .32, WHITE), 60))); }
   // the visitor pass (a bound ServiceAccount token) hung on the machine's side
   out.machine.add(box(2, -.25, 2.8, 4, -.02, 5.4, own(WHITE, { r: .6 }), { r: .08 })); out.machine.add(decal([3, -.27, 4.1], [0, -1, 0], [-1, 0, 0], 1.8, 2.4, tex('pass', 1.8, 2.4, (g, w, h) => { rect(g, 0, 0, w, .55, '#2d7bd6'); txt(g, 'PASS', w/2, .28, .38, WHITE); txt(g, 'SA', w/2, 1.15, .62, '#1d1f22'); txt(g, 'token', w/2, 1.8, .4, '#5e5a52', 700); }, 48)));
   // the policy gate on the machine's spur: drawn only while a NetworkPolicy selects this app; the boom lifts for a part the policy allows
@@ -2100,14 +2103,16 @@ function labelItems({ L1, L2 }){ const items = [];
     items.push({ key: 'p:' + p.id, cls: 'pod', col: palOf(p.app).l, text: `${esc(p.app)} ${esc(p.ver)}` + (p.gpu ? `<b>GPU x${p.gpu}</b>` : ''), sub: L2 ? p.name : '', at: [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH + 5.5], up: true, pri: 6, act: { type:'pod', id: p.id } }); }
   return items; }
 function calloutItems(){ const k = ease(st.xr || 0), items = [], o = OFF, n0 = st.nodes[0], p0 = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && p.configMap) || st.pods.find(p => p.pos && !NOPOS.has(p.phase));
-  if (k > .6){ if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + 3, y + 2.5, z + 3], text:'PROGRAM', on: isReady(p0) }, { at:[x + 2, y + ML - 2, z + 3], text:'DATA PORT', on: isReady(p0) }); if (p0.configMap) items.push({ at:[x + MW, y + 3.3, z + 4.4], text:'SETUP SHEET', on:false }); }
-    const sec = st.pods.find(p => p.pos && p.secret); if (sec) items.push({ at:[sec.pos[0] - 1, sec.pos[1] + ML - 2.5, sec.pos[2] + 1.3], text:'SECRET', on:false });
+  if (k > .6){ if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + 3, y + 2.5, z + 3], text:'PROGRAM', on: isReady(p0) }, { at:[x + 2, y + ML - 2, z + 3], text:'DATA PORT', on: isReady(p0) }); if (p0.configMap) items.push({ at:[x + MW, y + 3.3, z + 4.4], text:`CONFIGMAP ${p0.configMap}`, on:false }); }
+    const sec = st.pods.find(p => p.pos && p.secret); if (sec) items.push({ at:[sec.pos[0] - 1, sec.pos[1] + ML - 2.5, sec.pos[2] + 1.3], text:`SECRET ${sec.secret}`, on:false });
     if (n0 && n0.joined >= 1){ const cb = cabinet(n0); items.push({ at:[(cb.x0 + cb.x1)/2, cb.y0 + 2.7, 7], text:'DRIVE', on: !!n0.pull }, { at:[(cb.x0 + cb.x1)/2, cb.y1 - 3, 3], text:'SWITCH', on: st.parcels.length > 0 }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h], text:'CABINET', on: !!n0.pull }); }
-    items.push({ at:[o.x0 + 27, o.y0 + 31, o.z0 + 10], text:'SEAL PRESS', on: st.sec.stamp > 0 }, { at:[o.x0 + 6, o.y0 + 15, o.z0 + 7], text:'LOCKED DRAWER', on:false }, { at:[o.x0 + 25, o.y0 + 11, o.z0 + 9], text:'INSPECTOR', on: st.sec.inspect > 0 });
+    items.push({ at:[o.x0 + 27, o.y0 + 31, o.z0 + 10], text:'SEAL PRESS', on: st.sec.stamp > 0 }, { at:[o.x0 + 6, o.y0 + 15, o.z0 + 7], text:'LOCKED DRAWER', on:false }, { at:[o.x0 + 25, o.y0 + 11, o.z0 + 9], text:'ADMISSION', on: st.sec.inspect > 0 });
     items.push({ at:[o.x0 + 7, o.y0 + 7, o.z0 + 8], text:'LEDGER', on:false }, { at:[o.x0 + 18, o.y0 + 20, o.z0 + 6], text:'COUNTER', on: st.caps.length > 0 }, { at:[o.x0 + 8, o.y1 - 10, o.z0 + 6], text:'DISPATCHER', on: st.pods.some(p => p.phase === 'pending') || st.caps.length > 0 }, { at:[TUBE_X, 60, TUBE_Z], text:'TUBE', on: st.caps.length > 0 }); }
   else { const ing = st.ingresses[0], gn = st.nodes.find(n => n.gpus && n.joined >= 1);
     if (n0 && n0.joined >= 1){ const c = cellBox(n0), cb = cabinet(n0), rk = rackOf(n0), h = agvHome(n0); items.push({ at:[c.x1 - 3, c.y0 + 6, 9], text:'CELL', on:false }, { at:[(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h + 1], text:'CABINET', on: !!n0.pull }, { at:[cb.x1 + .4, cb.y0 + 1.8, 6], text:'CAPACITY', on:false }, { at:[(rk.x0 + rk.x1)/2, (rk.y0 + rk.y1)/2, rk.h], text:'RACK', on: !!(n0.pull && n0.pull.warm) }, { at:[h[0], h[1], 3], text:'AGV', on: !!n0.pull }, { at:[cb.x1 + .5, (cb.y0 + cb.y1)/2, 11.5], text:'JOB BOARD', on: st.caps.some(c => c.node === n0.name) }); }
-    if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }, { at:[x + 3, y - .3, z + 4.1], text:'VISITOR PASS', on:false }); if (p0.pvc) items.push({ at:[x + MW/2, y - .4, z + .3], text:'PALLET', on:false }); }
+    if (p0){ const [x, y, z] = p0.pos; items.push({ at:[x + MW, y + ML/2, z + 3], text:'MACHINE', on: isReady(p0) }, { at:[x + MW - 1.6, y + ML - 1.6, z + MH + 5], text:'ANDON', on: isReady(p0) }, { at:[x + 3, y - .3, z + 4.1], text:'VISITOR PASS', on:false }); }
+    const pv = st.pods.find(p => p.pos && !NOPOS.has(p.phase) && p.pvc); if (pv) items.push({ at:[pv.pos[0] + MW/2, pv.pos[1] - .4, pv.pos[2] + .3], text:`PVC ${pv.pvc}`, on:false });   // the pallet is under whichever machine has a claim
+    items.push({ at:[o.x0 + 25, o.y0 + 11, o.z0 + 10], text:'ADMISSION', on: st.sec.inspect > 0 });
     if (n0 && n0.cert){ const cb = cabinet(n0); items.push({ at:[cb.x1 + .5, cb.y1 - 3.4, 3.4], text:'BADGE', on: n0.cert.flash > 0 || !n0.cert.ok }); }
     if (st.sec.netpol){ const gp = st.pods.find(p => p.app === st.sec.netpol.to && p.pos && !NOPOS.has(p.phase)); if (gp) items.push({ at:[gp.pos[0] + MW + 2.6, gp.pos[1] + ML/2, gp.pos[2] + 4.6], text:'POLICY GATE', on: st.parcels.some(pc => pc.link) }); }
     { const rk = st.nodes[0] && rackOf(st.nodes[0]); if (rk && st.nodes[0].cache && st.nodes[0].cache.size) items.push({ at:[rk.x0 + .5, rk.y0 + 3, 3], text:'TAMPER SEAL', on:false }); }

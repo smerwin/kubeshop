@@ -171,6 +171,8 @@ const EXPLAIN = {
   'VISITOR PASS': 'A bound ServiceAccount token projected into the machine: short-lived, audience-bound, refreshed by the kubelet; RBAC decides which doors it opens.',
   'LOCKED DRAWER': 'Secrets encrypted at rest: with an EncryptionConfiguration the API server encrypts Secret values before they reach etcd, with a key only the office holds (or a KMS).',
   'INSPECTOR': 'Pod Security Admission: a validating admission check that refuses a Pod breaking the namespace\'s level (privileged, baseline, restricted) before anything is written.',
+  'ADMISSION': 'The inspector at the counter: admission control. Pod Security Admission refuses a Pod that breaks the namespace\'s level (privileged, baseline, restricted) before anything is written; other policies and webhooks stand at the same spot.',
+  'PVC': 'A PersistentVolumeClaim: the fixture pallet under the machine, storage bound to the Pod that outlives any program in it.',
   'POLICY GATE': 'A NetworkPolicy: the CNI closes every spur into the selected machines except from the pods and ports the policy allows; with no policy every gate is open.',
   'TAMPER SEAL': 'An image signature (cosign): an admission policy verifies the crate\'s seal against a public key before a Pod may use it; an unsigned image is refused.',
   'LOGBOOK': 'The audit log: the API server writes every request it decided, with who, what and the verdict, to the audit backend.' };
@@ -179,7 +181,7 @@ function cardFor(a){
     return { kick: `${d ? d.kind : 'Pod'} · ${esc(p.app)}`, title: `<span class="sw" style="background:${palOf(p.app).l}"></span>${esc(p.name)}`,
       body: `<table>${row('Status', LAMP(lampOf(p)) + esc(phaseText(p)))}${row('Node', esc(p.node || '—'))}${row('Version', esc(p.ver) + (p.gpu ? ` · GPU x${p.gpu}` : ''))}` +
         row('Containers', p.containers.map(c => `${esc(c.name)} <span style="color:var(--muted)">${esc(c.image || '')}</span>`).join('<br>')) + row('Restarts', p.restarts) +
-        (p.pvc ? row('Volume', esc(p.pvc)) : '') + (p.configMap ? row('ConfigMap', esc(p.configMap)) : '') + (p.secret ? row('Secret', esc(p.secret) + ' (from the locked drawer: encrypted at rest)') : '') +
+        (p.configMap ? row('ConfigMap', `<b>${esc(p.configMap)}</b>` + (SHOP() ? ' · the setup sheet' : '')) : '') + (p.secret ? row('Secret', `<b>${esc(p.secret)}</b>` + (SHOP() ? ' · the locked tool cabinet, encrypted at rest' : '')) : '') + (p.pvc ? row('PVC', `<b>${esc(p.pvc)}</b>` + (SHOP() ? ' · the tagged pallet' : '')) : '') +
         (SHOP() && p.pass ? row('Visitor pass', `bound ServiceAccount token, expires in ${Math.max(1, Math.round((p.pass.exp - st.t)/60))} min; RBAC decides what it may ask the counter`) + row('Image seal', 'signature verified by the admission policy before loading') : '') + '</table>',
       acts: [ { label:'delete', title: live ? 'shows the kubectl command' : 'the ReplicaSet replaces it', onClick: () => { deletePod(p.app, p); run(); } },
         { label:'crash', onClick: () => { crashPod(p); run(); } }, { label:'fail probe', onClick: () => { unreadyPod(p); run(); } },
@@ -218,7 +220,7 @@ function cardFor(a){
         { label:'delete', onClick: () => { deleteDep(d.app); hideCard(); } } ] }; }
   if (a.type === 'crane'){ const c = st.crane; return { kick: 'Scheduler', title: T().crane, body: SHOP() ? `<p>${st.caps.length ? `${st.caps.length} job card${st.caps.length === 1 ? '' : 's'} in the tube` : 'No job cards in flight'}; ${st.pods.filter(p => p.phase === 'pending').length} Pending.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>` : `<p>${c.carry ? `Carrying ${esc(c.carry.name)} to ${esc(c.carry.node)}` : c.job && c.job.pod ? `Fetching ${esc(c.job.pod.name)} from the registry` : 'Idle'}${c.queue.length ? `; ${c.queue.length} more bound and waiting` : ''}.</p><p style="color:var(--muted)">${EXPLAIN.SCHEDULER}</p>`,
       acts: [ { label: yard.following() ? 'stop following' : 'follow', onClick: () => yard.follow(!yard.following()) } ] }; }
-  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || '')}</p>`, acts: [] };
+  if (a.type === 'explain') return { kick: T().kick, title: esc(a.text), body: `<p>${esc(EXPLAIN[a.text] || EXPLAIN[String(a.text).split(' ')[0]] || '')}</p>`, acts: [] };
   return null;
 }
 function renderCard(){ if (!cardAct) return; const c = cardFor(cardAct); if (!c){ hideCard(); return; }

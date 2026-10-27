@@ -115,14 +115,14 @@ kubectl apply -f app/</pre>
   <div>
     <div class="num">Fig. 2 · see-through</div>
     <h2>A Pod is a machine, and a machine holds programs</h2>
-    <div class="yard"><b>On the floor</b>Switch on See-through and look inside any machine: one program cartridge per container (the main one large, sidecars small), the data port on the back wall patched to the cell's switch, a laminated setup sheet clipped to the side, a small locked tool cabinet on the floor beside it, and under the whole machine a fixture pallet with a named tag.</div>
+    <div class="yard"><b>On the floor</b>Switch on See-through and look inside any machine: one program cartridge per container (the main one large, sidecars small), the data port on the back wall patched to the cell's switch, a laminated setup sheet clipped to the side (its header reads CONFIGMAP), a small locked tool cabinet on the floor beside it (SECRET on the door), and under the whole machine a fixture pallet with a tag (PVC and the claim's name). With Labels on, the chips name the objects: <code>CONFIGMAP web-config</code>, <code>SECRET api-keys</code>, <code>PVC data-db-0</code>; the machine's card lists the same three rows.</div>
     <p>A Pod is the smallest thing Kubernetes schedules. It is one or more containers that always land on the same node, share one network namespace (one IP, one set of ports: the data port) and can share volumes (the pallet). A tiny pause container holds that namespace open while app containers come and go.</p>
     <p>Config and secrets are not baked into the image; they are mounted in from ConfigMaps (the setup sheet) and Secrets (the lockbox), so the same image runs in every environment. A PersistentVolumeClaim gives a pod storage that outlives the container (the <code>db</code> machine stands on one).</p>
     <pre><span class="c"># what is in a pod</span>
 kubectl get pod web-6b8fd-xk2p9 -o yaml
 kubectl describe pod web-6b8fd-xk2p9
 kubectl logs web-6b8fd-xk2p9 -c nginx</pre>
-    <p class="try">Try: tap a machine for its name, cell, programs, restarts and pallet.</p>
+    <p class="try">Try: tap a machine for its name, cell, programs, restarts and its ConfigMap, Secret and PVC by name.</p>
   </div>
   <div class="figwrap" data-ch="pods" data-src="figure/shopfloor.html?chapter=pods&xr=1&labels=1"><a class="open" target="_blank" href="figure/shopfloor.html?yard=1&chapter=pods&xr=1&labels=1">Open full screen ↗</a><div class="poster"><b>Load fig. 2</b><span>see-through, labels on</span></div></div>
 </section>
