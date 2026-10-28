@@ -572,9 +572,10 @@ function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML
   const sp = st.boot && st.cp.spot; if (sp){ const o = OFFV(), z = o.z0 + 1.2, drawer = i => [o.x0 + 11, o.y0 + 7, z + 11 - i*4];
     // frame the subject: a box dx × dy × dz world units projects to about .707(dx+dy) wide and .408(dx+dy) + .816dz tall at the default
     // yaw and pitch; the zoom makes it fill a fraction f of the viewport, whichever axis is tighter. On a page the toasts and a card can
-    // cover the top of the figure, so the focus is pushed up the screen a little and the subject sits in the lower two thirds
+    // cover the top of the figure, so the focus is pushed up the screen a little and the subject sits in the lower two thirds; in full-screen mode the
+    // toasts sit at the bottom instead and the subject rides a little higher
     const b = view.box(), fit = (dx, dy, dz, f) => Math.min(zoomFor(f*b.w/(.707*(dx + dy))), zoomFor(f*b.h/(.408*(dx + dy) + .816*dz)));
-    const at = (p, zm) => { if (view.isYard()) return { p, z: zm }; const U = view.basis().U, q = V3(...p).addScaledVector(U, .09*b.h/zm); return { p: [q.x, q.z, q.y], z: zm }; };
+    const at = (p, zm) => { const U = view.basis().U, q = V3(...p).addScaledVector(U, (view.isYard() ? -.1 : .09)*b.h/zm); return { p: [q.x, q.z, q.y], z: zm }; };   // full screen: the toasts sit at the bottom, so the subject rides a little higher
     if (sp.what === 'office') return at([(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, z + 6], fit(34, 38, 18, .55));
     if (sp.what === 'ca') return at([o.x0 + 27, o.y0 + 31, z + 5], fit(8, 8, 10, .4));
     if (sp.what === 'drawer') return at(drawer(sp.i), fit(4, 8, 13, .42));
