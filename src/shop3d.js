@@ -162,7 +162,7 @@ function mkOffice(){
   const glaze = box(o.x0, o.y0, o.z0 + 1.2, o.x1, o.y1, o.z1, glassM, { r: 0, shadow: false }); glaze.userData.act = { type: 'tower' }; pickables.push(glaze); g.add(glaze); out.cases.push(glaze);
   for (const [a, b] of [[[o.x0, o.y0], [o.x1, o.y0]], [[o.x1, o.y0], [o.x1, o.y1]], [[o.x1, o.y1], [o.x0, o.y1]], [[o.x0, o.y1], [o.x0, o.y0]]]) for (const z of [o.z0 + 1.2, o.z1]) g.add(rod([a[0], a[1], z], [b[0], b[1], z], .5, M(DARKM, { r: .4, m: .5 })));
   for (const [x, y] of [[o.x0, o.y0], [o.x1, o.y0], [o.x0, o.y1], [o.x1, o.y1], [o.x1, o.y0 + 13], [o.x1, o.y0 + 26], [o.x0, o.y0 + 19]]) g.add(rod([x, y, o.z0 + 1.2], [x, y, o.z1], .5, M(DARKM, { r: .4, m: .5 })));
-  g.add(box(o.x0 - 1, o.y0 - 1, o.z1, o.x1 + 1, o.y1 + 1, o.z1 + 1.6, M(DARKM, { r: .6 }), { r: .3 }));
+  out.roof = box(o.x0 - 1, o.y0 - 1, o.z1, o.x1 + 1, o.y1 + 1, o.z1 + 1.6, own(DARKM, { r: .6 }), { r: .3 }); g.add(out.roof);   // the roof lifts out of the way (fades) while the bootstrap spotlight is inside
   out.beacon = lamp((o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 3.4, LAMP.amber, 1.3); setLamp(out.beacon, LAMP.amber, false); g.add(out.beacon); g.add(cyl((o.x0 + o.x1)/2, (o.y0 + o.y1)/2, o.z1 + 1.6, o.z1 + 2.6, 1.6, M(DARKM), { n: 10 }));
   const z = o.z0 + 1.2, ins = new THREE.Group();
   // the counter (API server) by the tube's mouth, with a screen
@@ -493,7 +493,9 @@ function syncNet(){ Y.ann = Y.ann || []; while (Y.ann.length < st.net.ann.length
     H.line.geometry.setFromPoints([b, a]); H.line.computeLineDistances(); H.dot.position.lerpVectors(b, a, ease(Math.min(1, h.t))); });
   const O = Y.office; if (O && O.annex) O.annex.visible = st.net.mesh.on; }
 function syncStatics(){
-  const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
+  const O = Y.office, cp = st.cp, SEC = st.sec;
+  { const inside = !!(st.boot && cp.spot && ['office', 'ca', 'drawer', 'bcp3', 'api', 'sched'].includes(cp.spot.what)); O.roofK = Math.max(0, Math.min(1, (O.roofK == null ? 1 : O.roofK) + (inside ? -.07 : .07))); setAlpha(O.roof, .06 + .94*O.roofK); O.roof.castShadow = O.roofK > .5; }
+  setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
   setLamp(O.pressLamp, LAMP.green, !!SEC.ca); O.pressHead.position.y = O.pressY - 1.7*Math.abs(Math.sin(Math.max(0, SEC.stamp)*Math.PI*2)); for (const b of O.badges) b.visible = !!SEC.ca;
   O.sign.position.y = O.signY + 2.6*ease(Math.min(1, Math.max(0, SEC.inspect)/.6));
   // the ledger's drawers: one per etcd member, lit as each joins (a pulse for the learner-then-voter), the leader amber once there is a quorum of two;
@@ -568,14 +570,19 @@ function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML
   // the bootstrap spotlight: the office, the CA press, each etcd drawer as it joins (then the whole cabinet once there are three), the counter,
   // the dispatcher's desk, each node's cabinet and cell as it joins, and the order board when the Deployments are applied
   const sp = st.boot && st.cp.spot; if (sp){ const o = OFFV(), z = o.z0 + 1.2, drawer = i => [o.x0 + 11, o.y0 + 7, z + 11 - i*4];
-    if (sp.what === 'office') return { p: [(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, z + 6], z: zoomFor(1.8) };
-    if (sp.what === 'ca') return { p: [o.x0 + 27, o.y0 + 31, z + 5], z: zoomFor(3.2) };
-    if (sp.what === 'drawer') return { p: drawer(sp.i), z: zoomFor(3.2) };
-    if (sp.what === 'bcp3') return sp.t < .9 ? { p: drawer(2), z: zoomFor(3.2) } : { p: [o.x0 + 11, o.y0 + 7, z + 7], z: zoomFor(2.4) };
-    if (sp.what === 'api') return { p: [o.x0 + 15.4, o.y0 + 20, z + 7], z: zoomFor(3) };
-    if (sp.what === 'sched') return { p: [o.x0 + 16, o.y1 - 6, z + 8], z: zoomFor(2.4) };
-    if (sp.what === 'board') return { p: [(o.x0 + o.x1)/2, o.y1 + 1, (o.z0 + o.z1)/2], z: zoomFor(2.8) };
-    const n = st.nodes.find(n => n.name === sp.node); if (n){ if (sp.what === 'cab'){ const cb = cabinet(n); return { p: [(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h/2], z: zoomFor(3) }; } const c = cellBox(n); return { p: [(c.x0 + c.x1)/2, (c.y0 + c.y1)/2, 6], z: zoomFor(2.2) }; } }
+    // frame the subject: a box dx × dy × dz world units projects to about .707(dx+dy) wide and .408(dx+dy) + .816dz tall at the default
+    // yaw and pitch; the zoom makes it fill a fraction f of the viewport, whichever axis is tighter. On a page the toasts and a card can
+    // cover the top of the figure, so the focus is pushed up the screen a little and the subject sits in the lower two thirds
+    const b = view.box(), fit = (dx, dy, dz, f) => Math.min(zoomFor(f*b.w/(.707*(dx + dy))), zoomFor(f*b.h/(.408*(dx + dy) + .816*dz)));
+    const at = (p, zm) => { if (view.isYard()) return { p, z: zm }; const U = view.basis().U, q = V3(...p).addScaledVector(U, .09*b.h/zm); return { p: [q.x, q.z, q.y], z: zm }; };
+    if (sp.what === 'office') return at([(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, z + 6], fit(34, 38, 18, .55));
+    if (sp.what === 'ca') return at([o.x0 + 27, o.y0 + 31, z + 5], fit(8, 8, 10, .4));
+    if (sp.what === 'drawer') return at(drawer(sp.i), fit(4, 8, 13, .42));
+    if (sp.what === 'bcp3') return sp.t < .9 ? at(drawer(2), fit(4, 8, 13, .42)) : at([o.x0 + 11, o.y0 + 7, z + 7], fit(6, 10, 14, .4));
+    if (sp.what === 'api') return at([o.x0 + 15.4, o.y0 + 20, z + 7], fit(6, 10, 10, .4));
+    if (sp.what === 'sched') return at([o.x0 + 16, o.y1 - 6, z + 8], fit(12, 16, 12, .45));
+    if (sp.what === 'board') return at([(o.x0 + o.x1)/2, o.y1 + 1, (o.z0 + o.z1)/2], fit(22, 2, 11, .5));
+    const n = st.nodes.find(n => n.name === sp.node); if (n){ if (sp.what === 'cab'){ const cb = cabinet(n); return at([(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h/2], fit(6, 10, 15, .35)); } const c = cellBox(n); return at([(c.x0 + c.x1)/2, (c.y0 + c.y1)/2, 6], fit(c.x1 - c.x0, c.y1 - c.y0, 10, .6)); } }
   if (st.sec.forged.length){ const f = st.sec.forged[0]; return { p: along(FORGE(), Math.min(1, f.t)), z: zoomFor(3) }; }
   if (st.sec.inspect > 0 || st.sec.refuseT > 0) return { p: [OFF.x0 + ox() + 21, OFF.y0 + 16, OFF.z0 + 6], z: zoomFor(3.2) };
   if (st.net.ann.length){ const a = st.net.ann[0], n = st.nodes.find(n => n.name === a.node); if (n) return { p: along(annPath(n), Math.min(1, a.t)), z: zoomFor(3.2) }; }

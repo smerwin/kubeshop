@@ -14,7 +14,7 @@ const canvas = document.getElementById('gl'), zwrap = document.getElementById('z
 const V3 = (x, y, z) => new THREE.Vector3(x, z, y);
 const COARSE = matchMedia('(pointer:coarse)').matches;
 const { scene, camera } = cfg;
-const YAW0 = 45, PITCH0 = Math.atan(1/Math.SQRT2)*180/Math.PI, ZMIN = .6, ZMAX = 8;
+const YAW0 = 45, PITCH0 = Math.atan(1/Math.SQRT2)*180/Math.PI, ZMIN = .6, ZMAX = 14;
 const cam = { yaw: YAW0, pitch: PITCH0, focus: new THREE.Vector3(), zoom: 1, custom: false };
 let frame = { w: 1, h: 1, ymid: 0 }, box = { w: 1, h: 1, left: 0, top: 0 };
 const YARD_MODE = () => html.classList.contains('yard');
