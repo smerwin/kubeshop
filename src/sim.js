@@ -464,6 +464,7 @@ let loopOn = false;
 let SPEED = 1;
 function tick(dt){
   dt *= SPEED; st.t += dt; let busy = false;
+  if (st.cp.spot){ st.cp.spot.t += dt; if (st.cp.spot.t >= st.cp.spot.dur) st.cp.spot = null; busy = true; } if (st.cp.pulse){ st.cp.pulse.t -= dt; if (st.cp.pulse.t <= 0) st.cp.pulse = null; busy = true; }
   if (st.boot && bootTick(dt)) busy = true;
   // cp.hold: etcd has no leader, so the API server cannot write; controllers and the scheduler wait (the crane finishes
   // a bind it already has, the kubelets carry on, nothing new is created or bound)
@@ -493,19 +494,21 @@ function bootstrap(){
   Object.assign(st.sec, { ca: 0, badges: 0, refuse: [], refuseT: 0, forged: [], inspect: 0, stamp: 0, queue: [] }); for (const n of st.nodes){ n.cert = null; n.csr = false; }
   // the office is a stacked control plane of three: kubeadm init on the first, kubeadm join --control-plane on two more, so the ledger's
   // Raft group really has three members and the elections in the control room have something to elect
+  // the spotlight: while Follow is on, the camera visits each piece as it boots (shop3d's followTarget reads st.cp.spot); a joining etcd member's drawer pulses
+  const spot = (what, dur, x) => { st.cp.spot = { what, t: 0, dur, ...x }; }, pulse = i => { st.cp.pulse = { i, t: 2 }; };
   const V = VOC(); const ev = [
-    [.2, () => say('b0', V.b0)],
-    [1.4, () => { st.sec.ca = 1; st.sec.badges = 3; st.sec.stamp = 1.5; say('bca', V.bca); }],   // the CA first: nothing below can talk to anything without its certificate
-    [2.8, () => { st.cp.etcd = 1; st.cp.members = 1; say('b1', V.b1); }],
-    [4.2, () => { st.cp.api = 1; say('b2', V.b2); }],
-    [5.6, () => { st.cp.ctrl = 1; say('b3', V.b3); }],
-    [7.2, () => { st.cp.members = 2; say('bcp2', 'kubeadm join --control-plane cp-2 (with the certificate key): the second office node runs its own etcd, API server, scheduler and controller manager; etcd-2 joins the Raft group as a learner, then a voter (2 members: both needed for quorum)', 3600); }],
-    [8.9, () => { st.cp.members = 3; say('bcp3', 'kubeadm join --control-plane cp-3: etcd-3 joins; etcd (the ledger) is a group of three, quorum 2, and can lose one member. Three API servers sit behind the control-plane endpoint; one scheduler and one controller manager hold the leader Lease', 3600); }] ];
-  st.nodes.forEach((n, i) => { ev.push([10.8 + i*1.7, () => { n.joining = true; n.csr = true; say('bj' + i, V.bj(n.name)); }]);
-    ev.push([10.8 + i*1.7 + 1.1, () => { issueCert(n); n.ready = true; say('br' + i, V.br(n.name)); }]); });
+    [.2, () => { spot('office', 1.2); say('b0', V.b0); }],
+    [1.4, () => { st.sec.ca = 1; st.sec.badges = 3; st.sec.stamp = 1.5; spot('ca', 1.4); say('bca', V.bca); }],   // the CA first: nothing below can talk to anything without its certificate
+    [2.8, () => { st.cp.etcd = 1; st.cp.members = 1; spot('drawer', 1.4, { i: 0 }); pulse(0); say('b1', V.b1); }],
+    [4.2, () => { st.cp.api = 1; spot('api', 1.4); say('b2', V.b2); }],
+    [5.6, () => { st.cp.ctrl = 1; spot('sched', 1.6); say('b3', V.b3); }],
+    [7.2, () => { st.cp.members = 2; spot('drawer', 1.7, { i: 1 }); pulse(1); say('bcp2', 'kubeadm join --control-plane cp-2 (with the certificate key): the second office node runs its own etcd, API server, scheduler and controller manager; etcd-2 joins the Raft group as a learner, then a voter (2 members: both needed for quorum)', 3600); }],
+    [8.9, () => { st.cp.members = 3; spot('bcp3', 1.9); pulse(2); say('bcp3', 'kubeadm join --control-plane cp-3: etcd-3 joins; etcd (the ledger) is a group of three, quorum 2, and can lose one member. Three API servers sit behind the control-plane endpoint; one scheduler and one controller manager hold the leader Lease', 3600); }] ];
+  st.nodes.forEach((n, i) => { ev.push([10.8 + i*1.7, () => { n.joining = true; n.csr = true; spot('cab', .6, { node: n.name }); say('bj' + i, V.bj(n.name)); }]);
+    ev.push([10.8 + i*1.7 + 1.1, () => { issueCert(n); n.ready = true; spot('cell', 1, { node: n.name }); say('br' + i, V.br(n.name)); }]); });
   const tEnd = 10.8 + st.nodes.length*1.7 + .8;
-  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); say('bapp', V.bapp); }]);
-  ev.push([tEnd + .3, () => { st.boot = null; }]);
+  ev.push([tEnd, () => { st.deploys = JSON.parse(JSON.stringify(DEMO.deployments)).map(d => ({ ...d, ns:'default', kind: d.kind || 'Deployment' })); refreshRegistry(); spot('board', 1.5); say('bapp', V.bapp); }]);
+  ev.push([tEnd + .3, () => { st.boot = null; st.cp.spot = null; }]);
   st.boot = { t: 0, i: 0, ev }; run();
 }
 function bootTick(dt){ const b = st.boot; b.t += dt; while (b.i < b.ev.length && b.t >= b.ev[b.i][0]) b.ev[b.i++][1]();

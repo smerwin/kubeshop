@@ -496,7 +496,12 @@ function syncStatics(){
   const O = Y.office, cp = st.cp, SEC = st.sec; setLamp(O.screens.api, SEC.refuseT > 0 ? LAMP.red : LAMP.green, !!cp.api); setLamp(O.screens.sched, LAMP.blue, !!cp.ctrl);   // the counter's screen goes red while it refuses a request
   setLamp(O.pressLamp, LAMP.green, !!SEC.ca); O.pressHead.position.y = O.pressY - 1.7*Math.abs(Math.sin(Math.max(0, SEC.stamp)*Math.PI*2)); for (const b of O.badges) b.visible = !!SEC.ca;
   O.sign.position.y = O.signY + 2.6*ease(Math.min(1, Math.max(0, SEC.inspect)/.6));
-  const R = window.ControlRoom ? ControlRoom.R : null; O.drawers.forEach((l, i) => { const up = cp.etcd && !(R && R.members[i] && !R.members[i].up); setLamp(l, R && R.leader === i && cp.etcd && !cp.hold ? LAMP.amber : LAMP.green, !!up); });
+  // the ledger's drawers: one per etcd member, lit as each joins (a pulse for the learner-then-voter), the leader amber once there is a quorum of two;
+  // alone, the first member blinks slowly (no quorum yet); outside bootstrap the control room's Break presses turn a stopped member's lamp off
+  const R = window.ControlRoom ? ControlRoom.R : null, members = cp.members || 3, pulse = st.cp.pulse, lead = R ? R.leader : 0;
+  O.drawers.forEach((l, i) => { let on = !!cp.etcd && i < members && !(R && R.members[i] && !R.members[i].up && !st.boot);
+    if (on && pulse && pulse.i === i) on = Math.floor(pulse.t*6) % 2 === 0; else if (on && members === 1 && !cp.hold) on = Math.floor(st.t*1.2) % 2 === 0;
+    setLamp(l, members >= 2 && lead === i && cp.etcd && !cp.hold ? LAMP.amber : LAMP.green, on); });
   const strobe = st.strobe > 0 && Math.floor(st.strobe*12) % 2 === 0; setLamp(O.beacon, LAMP.amber, strobe || !!(st.boot && cp.ctrl && !cp.hold && false)); O.beacon.material.emissiveIntensity = strobe ? 6 : .1;
   const rows = JSON.stringify(boardRows()); if (rows !== Y.boardKey){ Y.boardKey = rows; O.boardDecal.material.map = boardTex(); O.boardDecal.material.needsUpdate = true; }
   const S = Y.station, svc = svcMain(), all = st.pods.filter(p => svc && p.app === (svc.selector || {}).app && p.pos && p.phase !== 'terminating').slice(0, 10), pk = all.map(p => isReady(p) ? 'g' : 'a').join('');
@@ -560,6 +565,17 @@ function bboxOf(a){ const p = a.type === 'pod' && st.pods.find(p => p.id === a.i
     for (const p of ps) for (let i = 0; i < 3; i++){ b[0][i] = Math.min(b[0][i], p.pos[i]); b[1][i] = Math.max(b[1][i], p.pos[i] + [MW, ML, MH + 4][i]); } return b; }
   return null; }
 function followTarget(zoomFor){ const mid = p => [p.pos[0] + MW/2, p.pos[1] + ML/2, p.pos[2] + MH/2];
+  // the bootstrap spotlight: the office, the CA press, each etcd drawer as it joins (then the whole cabinet once there are three), the counter,
+  // the dispatcher's desk, each node's cabinet and cell as it joins, and the order board when the Deployments are applied
+  const sp = st.boot && st.cp.spot; if (sp){ const o = OFFV(), z = o.z0 + 1.2, drawer = i => [o.x0 + 11, o.y0 + 7, z + 11 - i*4];
+    if (sp.what === 'office') return { p: [(o.x0 + o.x1)/2, (o.y0 + o.y1)/2, z + 6], z: zoomFor(1.8) };
+    if (sp.what === 'ca') return { p: [o.x0 + 27, o.y0 + 31, z + 5], z: zoomFor(3.2) };
+    if (sp.what === 'drawer') return { p: drawer(sp.i), z: zoomFor(3.2) };
+    if (sp.what === 'bcp3') return sp.t < .9 ? { p: drawer(2), z: zoomFor(3.2) } : { p: [o.x0 + 11, o.y0 + 7, z + 7], z: zoomFor(2.4) };
+    if (sp.what === 'api') return { p: [o.x0 + 15.4, o.y0 + 20, z + 7], z: zoomFor(3) };
+    if (sp.what === 'sched') return { p: [o.x0 + 16, o.y1 - 6, z + 8], z: zoomFor(2.4) };
+    if (sp.what === 'board') return { p: [(o.x0 + o.x1)/2, o.y1 + 1, (o.z0 + o.z1)/2], z: zoomFor(2.8) };
+    const n = st.nodes.find(n => n.name === sp.node); if (n){ if (sp.what === 'cab'){ const cb = cabinet(n); return { p: [(cb.x0 + cb.x1)/2, (cb.y0 + cb.y1)/2, cb.h/2], z: zoomFor(3) }; } const c = cellBox(n); return { p: [(c.x0 + c.x1)/2, (c.y0 + c.y1)/2, 6], z: zoomFor(2.2) }; } }
   if (st.sec.forged.length){ const f = st.sec.forged[0]; return { p: along(FORGE(), Math.min(1, f.t)), z: zoomFor(3) }; }
   if (st.sec.inspect > 0 || st.sec.refuseT > 0) return { p: [OFF.x0 + ox() + 21, OFF.y0 + 16, OFF.z0 + 6], z: zoomFor(3.2) };
   if (st.net.ann.length){ const a = st.net.ann[0], n = st.nodes.find(n => n.name === a.node); if (n) return { p: along(annPath(n), Math.min(1, a.t)), z: zoomFor(3.2) }; }
