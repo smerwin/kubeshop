@@ -2083,7 +2083,8 @@ const badgeTex = ok => tex('badge|' + ok, 2, 2, (g, w, h) => { g.fillStyle = ok 
 // a cabinet's badge carries the kubelet's identity: the certificate's CN is system:node:<name>, its group system:nodes
 const idBadgeTex = (ok, name) => tex(`idbadge|${ok}|${name}`, 5.2, 2.2, (g, w, h) => { rect(g, 0, 0, w, h, ok ? '#fff1bf' : '#f3c9c4'); g.strokeStyle = '#5a4408'; g.lineWidth = .08; g.strokeRect(.04, .04, w - .08, h - .08);
   g.fillStyle = ok ? '#e8b923' : '#e2483d'; g.beginPath(); g.arc(1.1, 1.1, .85, 0, Math.PI*2); g.fill(); txt(g, ok ? '✓' : '✕', 1.1, 1.15, .95, ok ? '#2b2208' : WHITE);
-  txt(g, 'system:node:', 3.55, .72, .5, '#5e5a52', 800); txt(g, name, 3.55, 1.5, .62, '#1d1f22', 800); }, 48);
+  const mx = 3.5, mw = w - 2.3; fitTxt(g, 'system:node:', mx, .62, .5, mw, '#5e5a52', 800); const ln = nameLines(g, name, .62, mw);
+  if (ln.length === 1) fitTxt(g, name, mx, 1.45, .62, mw, '#1d1f22', 800); else { fitTxt(g, ln[0], mx, 1.2, .5, mw, '#1d1f22', 800); fitTxt(g, ln[1], mx, 1.75, .5, mw, '#1d1f22', 800); } }, 48);
 const hatch = (g, x, y, w, h, c1 = YEL, c2 = '#1d1f22') => { rect(g, x, y, w, h, c1); g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.strokeStyle = c2; g.lineWidth = Math.min(w, h)*.5; for (let s = -h; s < w + h; s += Math.min(w, h)*1.6){ g.beginPath(); g.moveTo(x + s, y + h); g.lineTo(x + s + h, y); g.stroke(); } g.restore(); };
 
 /* ---------- dimensions ---------- */
@@ -2144,7 +2145,7 @@ function rebuildStatic(){
   Y.office = mkOffice(); Y.office.g.position.x = ox(); S.add(Y.office.g);
   if (st.net.managed){ const F = new THREE.Group(); for (let y = -8; y <= 64; y += 12) F.add(cyl(-3, y, 0, 10, .5, M(YEL, { r: .5 }), { n: 8 })); const pm = own('#4a4e54', { a: .35, r: .5, m: .4 }); pm.depthWrite = false; pm.side = THREE.DoubleSide;
     const pnl = new THREE.Mesh(boxG(.15, 8.5, 72), pm); pnl.position.copy(V3(-3, 28, 5.2)); pnl.castShadow = false; F.add(pnl); F.add(rod([-3, -8, 10], [-3, 64, 10], .35, M(YEL, { r: .5 })));
-    F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); txt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.5, 1.3, WHITE); txt(g, 'the office is theirs, the cells are yours · konnectivity tunnel to every cabinet', w/2, 3.2, .85, '#c9d2ea', 700); }, 24)));
+    F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); fitTxt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.1, 1.2, w - 1, WHITE); fitTxt(g, 'the office is theirs, the cells are yours', w/2, 2.45, .8, w - 1, '#c9d2ea', 700); fitTxt(g, 'konnectivity tunnel to every cabinet', w/2, 3.5, .8, w - 1, '#c9d2ea', 700); }, 24)));
     S.add(F); }
   Y.divs = []; for (let r = 0; r < 8; r++){ const Dv = DIVERTER(r); if (!Dv) break; const out = mkDiverter(r, Dv); Y.divs.push(out); S.add(out.g); }
   Y.dnsBoard = mkDnsBoard(); S.add(Y.dnsBoard.g);
@@ -2192,7 +2193,7 @@ function mkOffice(){
   for (const b of out.badges) ins.add(b);
   // the locked drawer (Secrets encrypted at rest) beside the ledger, and the office's key on the counter
   ins.add(box(o.x0 + 3, o.y0 + 12.5, z, o.x0 + 9.5, o.y0 + 18, z + 5, M('#2f3338', { r: .45, m: .4 }), { r: .3 }));
-  ins.add(decal([o.x0 + 9.52, o.y0 + 15.25, z + 2.5], [1, 0, 0], [0, -1, 0], 5, 4, tex('drawer', 5, 4, (g, w, h) => { txt(g, 'SECRETS', w/2, .8, .75, WHITE); txt(g, 'encrypted at rest', w/2, 1.7, .5, '#c9c4b8', 700); g.fillStyle = '#e8b923'; g.beginPath(); g.arc(w/2, 3, .45, 0, Math.PI*2); g.fill(); rect(g, w/2 - .12, 3, .24, .7, '#e8b923'); }, 40)));
+  ins.add(decal([o.x0 + 9.52, o.y0 + 15.25, z + 2.5], [1, 0, 0], [0, -1, 0], 5, 4, tex('drawer', 5, 4, (g, w, h) => { txt(g, 'SECRETS', w/2, .8, .75, WHITE); fitTxt(g, 'encrypted at rest', w/2, 1.7, .5, w - .3, '#c9c4b8', 700); g.fillStyle = '#e8b923'; g.beginPath(); g.arc(w/2, 3, .45, 0, Math.PI*2); g.fill(); rect(g, w/2 - .12, 3, .24, .7, '#e8b923'); }, 40)));
   ins.add(rod([o.x0 + 15, o.y0 + 24.5, z + 5.1], [o.x0 + 16.6, o.y0 + 24.5, z + 5.1], .22, M('#e8b923', { r: .35, m: .8 }))); ins.add(cyl(o.x0 + 14.7, o.y0 + 24.5, z + 5, z + 5.25, .5, M('#e8b923', { r: .35, m: .8 }), { n: 10 }));
   // the inspector at the counter (Pod Security Admission): raises a STOP sign when a job is refused
   const ip = { x: o.x0 + 24.5, y: o.y0 + 11 }; ins.add(cyl(ip.x, ip.y, z, z + 4.2, 1.1, M('#2b3a66', { r: .6 }), { n: 12 })); const head = new THREE.Mesh(sphG(.9), M('#e0b48a', { r: .7 })); head.position.copy(V3(ip.x, ip.y, z + 5.2)); ins.add(head);
@@ -2209,17 +2210,17 @@ function mkOffice(){
   out.annex.add(box(ax.x0, ax.y0, o.z0 - 2.5, ax.x1, ax.y1, o.z0, M(CONCRETE, { r: .8 }), { r: .4 })); out.annex.add(box(ax.x0 - .5, ax.y0 - .5, o.z0, ax.x1 + .5, ax.y1 + .5, o.z0 + 1.2, M(m.l, { r: .5 }), { r: .3 }));
   const ag = own(GLASS, { a: .28, r: .1, m: .2 }); ag.depthWrite = false; ag.side = THREE.DoubleSide; out.annex.add(box(ax.x0, ax.y0, o.z0 + 1.2, ax.x1, ax.y1, o.z0 + 10, ag, { r: 0, shadow: false })); out.annex.add(box(ax.x0 - .6, ax.y0 - .6, o.z0 + 10, ax.x1 + .6, ax.y1 + .6, o.z0 + 11, M(DARKM, { r: .6 }), { r: .2 }));
   out.annex.add(box(ax.x0 + 2, ax.y0 + 3, z, ax.x0 + 8, ax.y1 - 3, z + 4, M(WHITE, { r: .5 }), { r: .3 })); out.annex.add(box(ax.x0 + 3, ax.y0 + 4, z + 4, ax.x0 + 6, ax.y0 + 7, z + 6.6, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); out.annex.add(cyl(ax.x0 + 4.5, ax.y0 + 5.5, z + 6.6, z + 7.6, .8, M('#9b7bd6', { r: .35, m: .6 }), { n: 10 }));
-  out.annex.add(decal([ax.x1 + .02, (ax.y0 + ax.y1)/2, o.z0 + 5.5], [1, 0, 0], [0, -1, 0], 12, 3.6, tex('meshdesk', 12, 3.6, (g, w, h) => { rect(g, 0, 0, w, h, '#3b2a66'); txt(g, 'MESH DESK · istiod / linkerd', w/2, 1, .85, WHITE); txt(g, 'MESH CA: not the cluster CA', w/2, 2.4, .8, '#d9c8ff', 700); }, 24)));
+  out.annex.add(decal([ax.x1 + .02, (ax.y0 + ax.y1)/2, o.z0 + 5.5], [1, 0, 0], [0, -1, 0], 12, 3.6, tex('meshdesk', 12, 3.6, (g, w, h) => { rect(g, 0, 0, w, h, '#3b2a66'); fitTxt(g, 'MESH DESK · istiod / linkerd', w/2, 1, .85, w - .6, WHITE); fitTxt(g, 'MESH CA: not the cluster CA', w/2, 2.4, .8, w - .6, '#d9c8ff', 700); }, 24)));
   out.annex.visible = false; g.add(out.annex);
   return out;
 }
 /* a row's diverter: the top-of-rack switch, a switch arm on the spine belt where the row's spur leaves it, with the route strip of
    what it has learned from the cells on its row (painted on with static routes; a line per announcement with BGP) */
-const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24  ${n.name}  ${n.cut ? 'withdrawn (peer down)' : 'learned'}` : `10.200.${i}.0/24  via ${n.name}  static`, off: !!n.cut }; }); };
+const stripLines = Dv => { const bgp = st.net.fabric === 'bgp'; return Dv.cells.map(n => { const i = st.nodes.indexOf(n); return { text: bgp ? `10.200.${i}.0/24 ${n.name} ${n.cut ? 'withdrawn (peer down)' : 'learned'}` : `10.200.${i}.0/24 via ${n.name} static`, off: !!n.cut }; }); };
 const stripH = Dv => 1.5 + Dv.cells.length*1.05;
 function routeTex(r, Dv){ const bgp = st.net.fabric === 'bgp', lines = stripLines(Dv);
-  return tex(`strip|${r}|${bgp}|${lines.map(l => l.text + l.off).join(';')}`, 9, stripH(Dv), (g, w, h) => { rect(g, 0, 0, w, h, '#f4f2ec'); rect(g, 0, 0, w, .95, '#1d1f22'); txt(g, bgp ? `DIVERTER ${r + 1} · ROUTES LEARNED · BGP` : `DIVERTER ${r + 1} · ROUTES · STATIC`, w/2, .5, .5, WHITE);
-    lines.forEach((l, i) => txt(g, l.text, .3, 1.55 + i*1.05, .5, l.off ? '#9a948a' : '#3a3d42', 700, 'left')); }, 40); }
+  return tex(`strip|${r}|${bgp}|${lines.map(l => l.text + l.off).join(';')}`, 9, stripH(Dv), (g, w, h) => { rect(g, 0, 0, w, h, '#f4f2ec'); rect(g, 0, 0, w, .95, '#1d1f22'); fitTxt(g, bgp ? `DIVERTER ${r + 1} · ROUTES LEARNED · BGP` : `DIVERTER ${r + 1} · ROUTES · STATIC`, w/2, .5, .5, w - .4, WHITE);
+    lines.forEach((l, i) => fitTxt(g, l.text, .3, 1.55 + i*1.05, .5, w - .6, l.off ? '#9a948a' : '#3a3d42', 700, 'left')); }, 40); }
 function mkDiverter(r, Dv){ const g = new THREE.Group(), out = { g, key: '', r, Dv, arms: [] }, x = Dv.x, y = Dv.y, bgp = st.net.fabric === 'bgp', lanes = bgp ? [SPINE2(), LANE] : [LANE], x0 = lanes[0] - 4.5, x1 = x + 4.5;
   // the frame across the belt(s) with a pivot post per belt; the arm lies along the belt and swings across it to send a part down the spur
   const frame = box(x0, y - 3.4, 0, x1, y + 3.4, 1, M('#3d4147', { r: .45, m: .4 }), { r: .2 }); frame.userData.act = { type: 'diverter', row: r }; pickables.push(frame); g.add(frame);
@@ -2260,7 +2261,7 @@ function mkCrib(){ const c = CRIB(), g = new THREE.Group(), out = { g, stacks: n
   const sign = decal([c.x1 + .02, (c.y0 + c.y1)/2, c.h + 1.8], [1, 0, 0], [0, -1, 0], 30, 1.4, tex('cribsign', 30, 1.4, (g, w, h) => txt(g, 'TOOL CRIB · IMAGE REGISTRY', w/2, h/2, 1.1, WHITE), 24)); g.add(sign);
   for (const z of [1.2, 7.4, 13.6]) g.add(box(c.x0 + 2, c.y0 + 2, z, c.x1 - 2, c.y1 - 2, z + .5, M(STEEL, { r: .4, m: .5 }), { r: 0 }));
   g.add(out.stacks); g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 10, c.y1 - c.y0 + 10)); return out; }
-function crate(x0, y0, z0, pm, app, ver, w = 7, d = 7, h = 5){ const g = new THREE.Group(); g.add(box(x0, y0, z0, x0 + w, y0 + d, z0 + h, M(pm.l, { r: .55 }), { r: .3 }));
+function crate(x0, y0, z0, pm, app, ver, w = 7, d = 7, h = 5){ const g = new THREE.Group(); app = String(app).split('/').pop(); g.add(box(x0, y0, z0, x0 + w, y0 + d, z0 + h, M(pm.l, { r: .55 }), { r: .3 }));
   // the label fits its face whatever the name's length; the tamper seal (the image's signature) sits in the bottom corner beside the version
   g.add(decal([x0 + w + .02, y0 + d/2, z0 + h/2], [1, 0, 0], [0, -1, 0], d - 1, h - 1, tex(`crate|${app}|${ver}|${d}|${h}`, d - 1, h - 1, (g, ww, hh) => { const r = Math.min(.5, hh*.14);
     nameBlock(g, ww, hh, app, ver, { size: Math.min(1.4, hh*.36), vsize: Math.min(1.1, hh*.28), pad: .5, vmax: ww - 2*r - 1.2, yv: .74, yv2: .8 });
@@ -2277,7 +2278,8 @@ function mkStation(){ const s = STATION(), g = new THREE.Group(), out = { g, cas
   const body = box(s.x0, s.y0, 2, s.x1, s.y1, 12, own(WHITE, { r: .5 }), { r: .5 }); body.userData.act = { type: 'kiosk' }; pickables.push(body); g.add(body); out.cases.push(body);
   g.add(box(s.x0 - .6, s.y0 - .6, 12, s.x1 + .6, s.y1 + .6, 13.4, M(m.l, { r: .5 }), { r: .3 }));
   g.add(box(s.x1 - 1, s.y0 + 2, 13.4, s.x1 + .2, s.y1 - 2, 19, M(DARKM, { r: .5 }), { r: .3 }));
-  const svc = svcMain(); g.add(decal([s.x1 + .22, (s.y0 + s.y1)/2, 16.2], [1, 0, 0], [0, -1, 0], s.y1 - s.y0 - 5, 4.6, tex(`stsign|${svc ? svc.name + (svc.ports || [])[0] : ''}`, 13, 4.6, (g, w, h) => { txt(g, 'SORTING STATION', w/2, 1.3, 1.1, WHITE); txt(g, svc ? `${svc.name}:${(svc.ports || [])[0] || 80}` : 'no service', w/2, 3.3, 1.5, LAMP.amber); }, 24)));
+  const svc = svcMain(); g.add(decal([s.x1 + .22, (s.y0 + s.y1)/2, 16.2], [1, 0, 0], [0, -1, 0], s.y1 - s.y0 - 5, 4.6, tex(`stsign|${svc ? svc.name + (svc.ports || [])[0] : ''}`, 13, 4.6, (g, w, h) => { txt(g, 'SORTING STATION', w/2, 1.2, 1.1, WHITE); if (!svc) return txt(g, 'no service', w/2, 3.3, 1.5, LAMP.amber); const port = (svc.ports || [])[0] || 80, ln = nameLines(g, svc.name, 1.5, w - .8);
+    if (ln.length === 1) fitTxt(g, `${svc.name}:${port}`, w/2, 3.3, 1.5, w - .8, LAMP.amber); else { fitTxt(g, ln[0], w/2, 2.55, 1.05, w - .8, LAMP.amber); fitTxt(g, `${ln[1]}:${port}`, w/2, 3.75, 1.05, w - .8, LAMP.amber); } }, 24)));
   g.add(box(s.x1 - 2, s.y0 + 1, 2, s.x1 - 1.2, s.y1 - 1, 7, M('#2b2e32'), { r: .2 })); out.panel = new THREE.Group(); g.add(out.panel);
   const ins = new THREE.Group(); ins.add(box(s.x0 + 2, s.y0 + 2, 2, s.x0 + 5, s.y1 - 2, 9, M('#4a4f55', { r: .5, m: .3 }), { r: .3 })); for (let i = 0; i < 5; i++) ins.add(rod([s.x0 + 5, s.y0 + 4 + i*2.4, 7], [s.x0 + 9, s.y0 + 4 + i*2.4, 7], .3, M('#2d7bd6')));
   g.add(ins); out.insides.push(ins); g.add(ao((s.x0 + s.x1)/2, (s.y0 + s.y1)/2, 24, 28)); return out; }
@@ -2302,13 +2304,13 @@ function mkNode(n){
   const g = new THREE.Group(), out = { g, cases: [], insides: [], key: '', crates: new THREE.Group(), crateKey: '' }, c = cellBox(n), cb = cabinet(n), rk = rackOf(n), m = m0();
   out.rise = new THREE.Group(); g.add(out.rise);
   const plate = new THREE.Mesh(new THREE.PlaneGeometry(c.x1 - c.x0, c.y1 - c.y0), new THREE.MeshStandardMaterial({ map: bayTex(n), roughness: .9 })); plate.rotation.x = -Math.PI/2; plate.position.copy(V3((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, .12)); plate.receiveShadow = true; plate.userData.act = { type: 'node', node: n.name }; pickables.push(plate); out.plate = plate; out.rise.add(plate); out.rise.add(bayLines(n));
-  out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => txt(g, n.name.toUpperCase(), w/2, h/2, 3.2, '#5e5a52'), 12)));   // reads left to right from the front, tops toward the back of the hall
+  out.rise.add(decal([c.x1 - 3, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 4, tex(`cellname|${n.name}`, 40, 4, (g, w, h) => fitTxt(g, n.name.toUpperCase(), w/2, h/2, 3.2, w - 1, '#5e5a52'), 12)));   // reads left to right from the front, tops toward the back of the hall
   // the cell's PodCIDR (where its machines' addresses come from) and the routes to the other cells' ranges, painted under the name
   const ni = Math.max(0, st.nodes.indexOf(n)), cidr = k => `10.200.${k}.0/24`, others = st.nodes.filter(m => m !== n).slice(0, 3);
   out.rise.add(decal([c.x1 - 7.1, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 40, 2.4, tex(`cidr|${ni}`, 40, 2.4, (g, w, h) => txt(g, `PodCIDR ${cidr(ni)}`, w/2, h/2, 1.7, '#5e5a52'), 12)));
   // the host's routes to the other cells' ranges, one per line, painted on the free strip in front of the fence (the lanes start there)
   if (others.length){ const lh = 1.6, rh = 1.3 + lh*(others.length + 1); out.rise.add(decal([c.x1 + 1.2 + rh/2, (c.y0 + c.y1)/2, .2], [0, 0, 1], [0, -1, 0], 36, rh, tex(`routes|${ni}|${others.map(m => m.name).join(',')}`, 36, rh, (g, w, h) => {
-    txt(g, `ROUTES FROM ${n.name.toUpperCase()}`, w/2, .9, 1.2, '#5e5a52'); others.forEach((m, k) => txt(g, `${cidr(st.nodes.indexOf(m))}  via  ${m.name}`, w/2, 2.1 + lh*k + .5, 1.25, '#6f6a60', 800)); }, 12))); }
+    fitTxt(g, `ROUTES FROM ${n.name.toUpperCase()}`, w/2, .9, 1.2, w - 1, '#5e5a52'); others.forEach((m, k) => fitTxt(g, `${cidr(st.nodes.indexOf(m))}  via  ${m.name}`, w/2, 2.1 + lh*k + .5, 1.25, w - 1, '#6f6a60', 800)); }, 12))); }
   const nx = st.nodes[ni + 1]; if (nx && nx.row === n.row) out.rise.add(decal([c.x1 - 9, c.y1 + NGAP/2, .2], [0, 0, 1], [0, -1, 0], 14, 2.6, tex('route', 14, 2.6, (g, w, h) => txt(g, 'ROUTE', w/2, h/2, 2, '#e3c766'), 12)));   // the lane between two cells is the route between their ranges
   // the fence: yellow posts and mesh panels, open along the aisle side (the cabinet side) for the AGV
   const postM = M(YEL, { r: .5 }), panelM = own('#4a4e54', { a: .35, r: .5, m: .4 }); panelM.depthWrite = false; panelM.side = THREE.DoubleSide;
@@ -2374,7 +2376,7 @@ function mkNode(n){
   out.cut.visible = false; g.add(out.cut);
   g.add(ao((c.x0 + c.x1)/2, (c.y0 + c.y1)/2, c.x1 - c.x0 + 24, c.y1 - c.y0 + 10)); return out;
 }
-const svcTex = mode => tex('svc|' + mode, 5.2, 1.2, (g, w, h) => { rect(g, 0, 0, w, h, mode === 'ebpf' ? '#1f4034' : '#3a3d42'); txt(g, mode === 'ebpf' ? 'eBPF · no kube-proxy' : 'kube-proxy · iptables', w/2, h/2, .5, WHITE); }, 48);
+const svcTex = mode => tex('svc|' + mode, 5.2, 1.2, (g, w, h) => { rect(g, 0, 0, w, h, mode === 'ebpf' ? '#1f4034' : '#3a3d42'); fitTxt(g, mode === 'ebpf' ? 'eBPF · no kube-proxy' : 'kube-proxy · iptables', w/2, h/2, .5, w - .3, WHITE); }, 48);
 function gaugeMesh(n, out){ const cb = cabinet(n), cap = cellCap(), frac = Math.min(1, n.used.size/cap), q = Math.round(frac*20)/20, key = q + '|' + cap; if (out.gaugeKey === key) return; out.gaugeKey = key;
   dispose(out.gauge); out.gauge = new THREE.Group(); out.rise.add(out.gauge); const col = frac > .85 ? LAMP.red : frac > .6 ? LAMP.amber : LAMP.green;
   out.gauge.add(box(cb.x1 - .1, cb.y0 + 1, 2, cb.x1 + .3, cb.y0 + 2.6, 8.5, M('#1f2226'), { r: .1 })); out.gauge.add(box(cb.x1 + .3, cb.y0 + 1.2, 2.2, cb.x1 + .5, cb.y0 + 2.4, 2.2 + Math.max(.2, 6.1*q), own(col, { e: 1.4, r: .4 }), { r: 0, shadow: false })); }
