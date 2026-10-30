@@ -141,6 +141,7 @@ function rebuildStatic(){
     S.add(box(LANE - 1.7, Dv.y - 1.7, TZ - 1.7, LANE + 1.7, Dv.y + 1.7, TZ + 1.7, M('#5a6068', { r: .4, m: .5 }), { r: .3 })); S.add(box(Dv.cx - 1.5, Dv.y - 1.5, TZ - 1.5, Dv.cx + 1.5, Dv.y + 1.5, TZ + 1.5, M('#5a6068', { r: .4, m: .5 }), { r: .3 })); }
   for (const y of [60, 130, 200]) if (y < D - 24) S.add(rod([LANE + 3.2, y, 0], [LANE + 3.2, y, TZ - .4], .4, M(DARKM, { r: .5 })));   // hangers off the belt's edge
   Y.office = mkOffice(); Y.office.g.position.x = ox(); S.add(Y.office.g);
+  Y.office.g.traverse(o => { if (o.isMesh || o.isLine) o.layers.set(OFFICE_LAYER); });   // the office hangs just under the truss fills, which would wash its interior out: it sees the key, the sky and the environment only
   if (st.net.managed){ const F = new THREE.Group(); for (let y = -8; y <= 64; y += 12) F.add(cyl(-3, y, 0, 10, .5, M(YEL, { r: .5 }), { n: 8 })); const pm = own('#4a4e54', { a: .35, r: .5, m: .4 }); pm.depthWrite = false; pm.side = THREE.DoubleSide;
     const pnl = new THREE.Mesh(boxG(.15, 8.5, 72), pm); pnl.position.copy(V3(-3, 28, 5.2)); pnl.castShadow = false; F.add(pnl); F.add(rod([-3, -8, 10], [-3, 64, 10], .35, M(YEL, { r: .5 })));
     F.add(box(-3.3, 14, 10, -2.7, 42, 15, M(WHITE, { r: .5 }), { r: .15 })); F.add(decal([-2.68, 28, 12.5], [1, 0, 0], [0, -1, 0], 26, 4.4, tex('provider', 26, 4.4, (g, w, h) => { rect(g, 0, 0, w, h, '#2b3a66'); fitTxt(g, 'PROVIDER · MANAGED CONTROL PLANE', w/2, 1.1, 1.2, w - 1, WHITE); fitTxt(g, 'the office is theirs, the cells are yours', w/2, 2.45, .8, w - 1, '#c9d2ea', 700); fitTxt(g, 'konnectivity tunnel to every cabinet', w/2, 3.5, .8, w - 1, '#c9d2ea', 700); }, 24)));
@@ -169,14 +170,14 @@ function mkOffice(){
   const z = o.z0 + 1.2, ins = new THREE.Group();
   // the counter (API server) by the tube's mouth, with a screen
   ins.add(box(o.x0 + 14, o.y0 + 14, z, o.x0 + 22, o.y0 + 26, z + 5, M(PAPER, { r: .9 }), { r: .4 }));
-  out.screens.api = box(o.x0 + 14.4, o.y0 + 16, z + 5, o.x0 + 16.4, o.y0 + 24, z + 9, own(LAMP.green, { e: 1.6, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.api);
+  out.screens.api = box(o.x0 + 14.4, o.y0 + 16, z + 5, o.x0 + 16.4, o.y0 + 24, z + 9, own(LAMP.green, { e: .9, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.api);
   ins.add(cyl(OFF.x0 + 18, OFFICE[1], z, OFFICE[2], 1.4, M(DARKM), { n: 12 }));
   // the ledger: a cabinet with three drawers (the Raft members), a lamp each
   ins.add(box(o.x0 + 3, o.y0 + 3, z, o.x0 + 11, o.y0 + 11, z + 13, M('#4a4f55', { r: .5, m: .3 }), { r: .4 }));
   out.drawers = [0, 1, 2].map(i => { const l = lamp(o.x0 + 11.2, o.y0 + 7, z + 11 - i*4, LAMP.green, .55); ins.add(box(o.x0 + 11, o.y0 + 4, z + 9.6 - i*4, o.x0 + 11.4, o.y0 + 10, z + 12.4 - i*4, M('#5b6168', { r: .5, m: .3 }), { r: .15 })); ins.add(l); return l; });
   // the dispatcher's desk with its screen
   ins.add(box(o.x0 + 4, o.y1 - 16, z, o.x0 + 13, o.y1 - 4, z + 4.5, M(PAPER, { r: .9 }), { r: .4 }));
-  out.screens.sched = box(o.x0 + 12.6, o.y1 - 14, z + 4.5, o.x0 + 13.6, o.y1 - 6, z + 9.5, own(LAMP.blue, { e: 1.3, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.sched);
+  out.screens.sched = box(o.x0 + 12.6, o.y1 - 14, z + 4.5, o.x0 + 13.6, o.y1 - 6, z + 9.5, own(LAMP.blue, { e: .8, r: .3 }), { r: .2, shadow: false }); ins.add(out.screens.sched);
   ins.add(cyl(o.x0 + 8.5, o.y1 - 10, z + 4.5, z + 5.3, 2.2, M(DARKM), { n: 12 }));
   // the seal press (the cluster CA) on a bench behind the counter: its head stamps the badges at kubeadm init; a lamp while the CA exists
   const sp = { x: o.x0 + 27, y: o.y0 + 31 };
@@ -523,12 +524,13 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05; renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture; scene.environmentIntensity = .45; pmrem.dispose();
 const key = new THREE.DirectionalLight('#fff0dc', 2.4); key.castShadow = true; key.shadow.mapSize.set(COARSE ? 1024 : 2048, COARSE ? 1024 : 2048); key.shadow.bias = -.0006; key.shadow.normalBias = .6; key.shadow.radius = 3; scene.add(key, key.target);
-scene.add(new THREE.HemisphereLight('#e6ecff', '#5e584f', .55));
+const hemi = new THREE.HemisphereLight('#e6ecff', '#5e584f', .55); scene.add(hemi);
+const OFFICE_LAYER = 1; [key, key.shadow.camera, hemi].forEach(o => o.layers.enable(OFFICE_LAYER));
 const fills = [0, 1, 2].map(() => { const l = new THREE.PointLight('#ffe9c4', 900, 220, 2); scene.add(l); return l; });
 function placeLights(){ const c = V3(W/2, D/2, 0); key.position.copy(c).add(V3(-.55, .35, 1).normalize().multiplyScalar(500)); key.target.position.copy(c); key.target.updateMatrixWorld();
   const s = key.shadow.camera, R = Math.max(W, D)*.62; s.left = -R; s.right = R; s.top = R; s.bottom = -R; s.near = 1; s.far = 1200; s.updateProjectionMatrix();
   fills.forEach((l, i) => l.position.copy(V3(W/2, D*(.2 + .3*i), TRUSS_Z - 4))); }
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2400);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2400); camera.layers.enable(OFFICE_LAYER);
 const composer = new EffectComposer(renderer), renderPass = new RenderPass(scene, camera), bloom = new UnrealBloomPass(new THREE.Vector2(2, 2), .38, .55, .86), outPass = new OutputPass();
 composer.addPass(renderPass); composer.addPass(bloom); composer.addPass(outPass);
 let vp = { w: 1, h: 1 }, sizeKey = '', bloomOK = true, slowRest = 0;
