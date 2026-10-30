@@ -24,6 +24,8 @@ pulling its image, one at a time per cell and in parallel across cells, slow fro
 
 [![Scaling web to 8: job cards through the tube, the cells' AGVs fetching images, machines coming up](docs/scale.gif)](https://smerwin.github.io/kubeshop/?press=Scale>8@900)
 
+[![Bootstrapping the cluster with Follow on: the CA, etcd's drawers lighting one by one, the API server, the scheduler, each node joining, then the first Pods](docs/bootstrap.gif)](https://smerwin.github.io/kubeshop/?chapter=boot&press=Bootstrap@900)
+
 **Live:** the figure at <https://smerwin.github.io/kubeshop/> and the guide at
 <https://smerwin.github.io/kubeshop/guide.html> (GitHub Pages, built from `main`; on a phone the figure opens full
 screen by itself, `?yard=1` forces it). A README can only show pictures of it; click either image to open the real thing.
